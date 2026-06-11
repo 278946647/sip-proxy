@@ -1,0 +1,18 @@
+[Unit]
+Description=GFC Forward Node Agent
+After=network-online.target gfc-api.service
+Wants=gfc-api.service
+
+[Service]
+Type=simple
+User=root
+EnvironmentFile=-/var/socks/gfc.env
+WorkingDirectory=/var/socks/node-agent
+ExecStart=/var/socks/deploy/vm/run-node-agent.sh
+Restart=always
+RestartSec=3
+StandardOutput=append:/var/socks/logs/gfc-node.log
+StandardError=append:/var/socks/logs/gfc-node.log
+
+[Install]
+WantedBy=multi-user.target

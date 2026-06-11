@@ -1,0 +1,39 @@
+services:
+  api:
+    build:
+      context: ./control-plane/api
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      GFC_DATABASE_URL: sqlite+aiosqlite:////data/gfc.db
+      GFC_PKI_DIR: /data/pki
+      GFC_BOOTSTRAP_TOKENS: ${GFC_BOOTSTRAP_TOKENS:-demo-bootstrap}
+      GFC_ADMIN_DEFAULT_PASSWORD: ${GFC_ADMIN_DEFAULT_PASSWORD:-admin123}
+      GFC_AUTH_SECRET: ${GFC_AUTH_SECRET:-change-me-in-production}
+    volumes:
+      - gfc-data:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./web-ui
+      dockerfile: Dockerfile
+    ports:
+      - "5173:80"
+    depends_on:
+      - api
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+    restart: unless-stopped
+
+volumes:
+  gfc-data:

@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gfc-node-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gfc-node-agent
+  template:
+    metadata:
+      labels:
+        app: gfc-node-agent
+    spec:
+      containers:
+        - name: node-agent
+          image: gfc/node-agent:0.1.0
+          env:
+            - name: SERVER_URL
+              value: "http://gfc-control-plane-api:8080"
+            - name: BOOTSTRAP_TOKEN
+              value: "demo-bootstrap"
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: REGION
+              value: "unknown"
+          args:
+            - "-m"
+            - "node_agent"
+            - "run"
+            - "--server"
+            - "$(SERVER_URL)"
+            - "--bootstrap-token"
+            - "$(BOOTSTRAP_TOKEN)"
+            - "--node-name"
+            - "$(NODE_NAME)"
+            - "--region"
+            - "$(REGION)"
+            - "--state-file"
+            - "/state/node_state.json"
+            - "--config-dir"
+            - "/state/dataplane"
+            - "--poll-seconds"
+            - "10"
+          volumeMounts:
+            - name: state
+              mountPath: /state
+      volumes:
+        - name: state
+          emptyDir: {}
+

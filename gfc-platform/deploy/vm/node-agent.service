@@ -1,0 +1,16 @@
+[Unit]
+Description=GFC Forward Node Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/opt/gfc-node-agent/node-agent.env
+WorkingDirectory=/opt/gfc-node-agent
+ExecStart=/opt/gfc-node-agent/.venv/bin/python /opt/gfc-node-agent/run_agent.py --server ${SERVER_URL} --bootstrap-token ${BOOTSTRAP_TOKEN} --node-name ${NODE_NAME} --region ${REGION} --state-file /opt/gfc-node-agent/state/node_state.json --config-dir /opt/gfc-node-agent/state/dataplane --poll-seconds 10
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+

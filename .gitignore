@@ -1,0 +1,52 @@
+# sip-proxy monorepo
+
+# Secrets
+**/.env
+!**/.env.example
+**/gfc.env
+**/install.env
+!**/install.env.example
+!**/node.env.example
+!scripts/gfc-control.env.example
+!scripts/gfc.env.example
+
+# Database / PKI
+**/*.db
+**/data/pki/
+*.pem
+*.crt
+*.key
+!**/*.example
+
+# Python
+**/.venv/
+**/venv/
+**/__pycache__/
+*.py[cod]
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+
+# Node
+**/node_modules/
+**/web-ui/dist/
+**/.npm/
+
+# Runtime
+**/logs/
+**/run/
+*.log
+*.pid
+
+# Build output
+**/dist/
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~
+
+docker-compose.override.yml

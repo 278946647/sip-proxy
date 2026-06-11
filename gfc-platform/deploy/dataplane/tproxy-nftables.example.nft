@@ -1,0 +1,20 @@
+#!/usr/sbin/nft -f
+
+flush ruleset
+
+define TPROXY_PORT = 12345
+define FW_MARK = 1
+
+table inet singbox {
+  chain prerouting {
+    type filter hook prerouting priority mangle; policy accept;
+    ip protocol tcp meta mark set $FW_MARK tproxy ip to :$TPROXY_PORT
+    ip protocol udp meta mark set $FW_MARK tproxy ip to :$TPROXY_PORT
+  }
+
+  chain output {
+    type route hook output priority mangle; policy accept;
+    ip protocol { tcp, udp } meta mark set $FW_MARK
+  }
+}
+
