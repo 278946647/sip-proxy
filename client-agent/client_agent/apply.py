@@ -134,6 +134,9 @@ def reapply_local_config(config_dir: Path | None = None) -> tuple[bool, str]:
     cfg_dir = config_dir or CONFIG_BUNDLE.parent
     payload = _load_payload(cfg_dir)
     if not _payload_has_node(payload) or not is_line_activated():
-        return ensure_bootstrap_dataplane(try_download=False)
+        from .easymosdns_config import EASYMODNS_DIR
+
+        need_fetch = not (EASYMODNS_DIR / "config.yaml").is_file() or not MOSDNS_CONFIG.is_file()
+        return ensure_bootstrap_dataplane(try_download=need_fetch)
     payload["routingMode"] = read_routing_mode()
     return apply_payload(payload, cfg_dir)

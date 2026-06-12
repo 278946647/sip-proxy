@@ -72,9 +72,13 @@ def ensure_easymosdns_tree(*, try_download: bool = True) -> Path:
     EASYMODNS_RULES.mkdir(parents=True, exist_ok=True)
 
     template_path = EASYMODNS_DIR / "config.yaml"
-    if not template_path.is_file() and try_download:
-        raw = fetch(EASYMODNS_CONFIG_URL).decode("utf-8", errors="replace")
-        template_path.write_text(raw, encoding="utf-8")
+    if not template_path.is_file():
+        try:
+            raw = fetch(EASYMODNS_CONFIG_URL).decode("utf-8", errors="replace")
+            template_path.write_text(raw, encoding="utf-8")
+        except RuntimeError:
+            if try_download:
+                raise
 
     if try_download and shutil.which("curl"):
         from .easymosdns_update import update_easymosdns_rules

@@ -21,9 +21,8 @@ systemctl stop gfc-client-agent 2>/dev/null || true
 echo "==> Bootstrap / reapply dataplane"
 cd "$AGENT_DIR"
 PYTHONPATH="$AGENT_DIR" "$PY" -c "
-from client_agent.apply import reapply_local_config
-from client_agent.bootstrap import ensure_services_running
-ok, msg = reapply_local_config()
+from client_agent.bootstrap import ensure_bootstrap_dataplane, ensure_services_running
+ok, msg = ensure_bootstrap_dataplane(try_download=True)
 print(msg)
 if not ok:
     raise SystemExit(1)
