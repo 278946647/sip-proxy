@@ -52,6 +52,22 @@ def singbox_config_ok(path: Path | None = None) -> tuple[bool, str]:
     return False, (r.stderr or r.stdout or "check failed").strip()
 
 
+def _route_exclude_addresses() -> list[str]:
+    """Keep LAN/management traffic off the TUN default route."""
+    exclude = [
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "127.0.0.0/8",
+        "169.254.0.0/16",
+        "224.0.0.0/4",
+    ]
+    lan_cidr = (os.environ.get("GFC_LAN_CIDR") or "192.168.68.0/24").strip()
+    if lan_cidr and lan_cidr not in exclude:
+        exclude.append(lan_cidr)
+    return exclude
+
+
 def _direct_ip_rule(*hosts: str) -> dict[str, Any] | None:
     cidrs: list[str] = []
     for host in hosts:
@@ -139,18 +155,23 @@ def render_singbox_config(payload: dict[str, Any]) -> dict[str, Any]:
         route_rules.insert(0, {"inbound": "tproxy-in", "action": "sniff"})
     else:
         auto_route = proxy_mode == "gateway"
-        inbounds = [
-            {
-                "type": "tun",
-                "tag": "tun-in",
-                "interface_name": "gfc0",
-                "address": ["172.19.0.1/30"],
-                "mtu": 9000,
-                "auto_route": auto_route,
-                "strict_route": auto_route,
-                "stack": "mixed",
-            }
-        ]
+        tun_inbound: dict[str, Any] = {
+            "type": "tun",
+            "tag": "tun-in",
+            "interface_name": "gfc0",
+            "address": ["172.19.0.1/30"],
+            "mtu": 9000,
+            "auto_route": auto_route,
+            "strict_route": auto_route,
+            "stack": "mixed",
+        }
+        if auto_route:
+            # Capture local + forwarded LAN traffic (gateway mode). Without this,
+            # only host-originated packets use TUN; LAN clients NAT straight to WAN.
+            tun_inbound["auto_redirect"] = True
+            tun_inbound["route_address"] = ["0.0.0.0/1", "128.0.0.0/1"]
+            tun_inbound["route_exclude_address"] = _route_exclude_addresses()
+        inbounds = [tun_inbound]
         route_rules.insert(0, {"inbound": "tun-in", "action": "sniff"})
 
     routing_mode = (payload.get("routingMode") or read_routing_mode()).strip().lower()
