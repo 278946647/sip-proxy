@@ -68,8 +68,16 @@ def apply_proxy_mode(
     mode = (mode or "gateway").strip().lower()
     messages: list[str] = [f"mode={mode}"]
 
-    subprocess.run(["nft", "delete", "table", "inet", "gfc_client"], check=False)
-    subprocess.run(["nft", "delete", "table", "ip", "gfc_client_nat"], check=False)
+    subprocess.run(
+        ["nft", "delete", "table", "inet", "gfc_client"],
+        capture_output=True,
+        check=False,
+    )
+    subprocess.run(
+        ["nft", "delete", "table", "ip", "gfc_client_nat"],
+        capture_output=True,
+        check=False,
+    )
 
     if mode == "transparent":
         if not lan_iface:

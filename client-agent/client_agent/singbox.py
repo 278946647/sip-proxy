@@ -105,18 +105,13 @@ def render_singbox_config(payload: dict[str, Any]) -> dict[str, Any]:
         route_rules.append({"domain_suffix": domestic_suffixes, "outbound": "direct"})
     route_rules.append({"outbound": "proxy"})
 
+    # sing-box 1.13+: 仅保留一个 DNS server，否则 check 强制要求 domain_resolver
     dns_servers: list[dict[str, Any]] = [
         {
             "type": "udp",
             "tag": "mosdns",
             "server": MOSDNS_ADDR.split(":")[0],
             "server_port": int(MOSDNS_ADDR.split(":")[1]),
-            "detour": "direct",
-        },
-        {
-            "type": "udp",
-            "tag": "domestic-fallback",
-            "server": (dns_cfg.get("domesticServer") or "223.5.5.5").strip(),
             "detour": "direct",
         },
     ]

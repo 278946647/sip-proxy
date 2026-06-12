@@ -168,7 +168,7 @@ GFC_CLIENT_FLASH_PORT=81
 GFC_CLIENT_HTTPS_PORT=443
 GFC_CLIENT_HTTPS=1
 GFC_CLIENT_WEB_ROOT=${GFC_ROOT}/client-web
-GFC_WEB_MODE=admin
+GFC_WEB_MODE=both
 GFC_STATUS_FILE=/var/lib/gfc-client/status.json
 GFC_ENV_FILE=/etc/gfc-client/gfc.env
 GFC_LOG_DIR=/var/log/gfc-client
@@ -315,7 +315,9 @@ echo "==> OpenWrt-style WAN/LAN (first NIC=WAN DHCP, others=LAN 192.168.68.1/24 
 ) || echo "    WARN: network apply deferred to agent start"
 
 systemctl daemon-reload
-systemctl enable gfc-client-agent gfc-mosdns gfc-client-web gfc-client-flash
+systemctl enable gfc-client-agent gfc-mosdns gfc-client-web
+systemctl disable gfc-client-flash 2>/dev/null || true
+systemctl mask gfc-client-flash 2>/dev/null || true
 if command -v sing-box >/dev/null 2>&1; then
   systemctl enable gfc-client-sing-box
 else

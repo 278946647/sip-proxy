@@ -290,6 +290,16 @@ class ClientWebHandler(BaseHTTPRequestHandler):
             _json_response(self, HTTPStatus.INTERNAL_SERVER_ERROR, {"error": str(exc)})
 
 
+def _port_listening(port: int) -> bool:
+    import socket
+
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+            return True
+    except OSError:
+        return False
+
+
 def _run_server(
     port: int,
     mode: str,
@@ -297,7 +307,11 @@ def _run_server(
     *,
     use_tls: bool = False,
 ) -> None:
-    server = ThreadingHTTPServer(("0.0.0.0", port), ClientWebHandler)
+    try:
+        server = ThreadingHTTPServer(("0.0.0.0", port), ClientWebHandler)
+    except OSError as exc:
+        print(f"FATAL: cannot bind 0.0.0.0:{port} mode={mode}: {exc}", flush=True)
+        raise
     server.web_root = web_root  # type: ignore[attr-defined]
     server.web_mode = mode  # type: ignore[attr-defined]
     scheme = "http"
@@ -351,22 +365,36 @@ def main(argv: list[str] | None = None) -> int:
         ]
         if enable_https:
             listeners.append((https_port, "admin", True))
+        errors: list[str] = []
         for port, mode, tls in listeners:
             t = threading.Thread(
                 target=_run_server,
                 args=(port, mode, web_root),
                 kwargs={"use_tls": tls},
                 name=f"gfc-web-{port}{'-tls' if tls else ''}",
-                daemon=True,
+                daemon=False,
             )
             t.start()
             threads.append(t)
+
+        import time
+
+        time.sleep(0.8)
+        for port, mode, _tls in listeners:
+            if not _port_listening(port):
+                errors.append(f":{port} ({mode}) not listening")
+
         print(
             f"gfc-client-web listeners: http admin=:{admin_port}"
             f" flash=:{flash_port}"
             + (f" https admin=:{https_port}" if enable_https else ""),
             flush=True,
         )
+        if errors:
+            for msg in errors:
+                print(f"FATAL: {msg}", flush=True)
+            raise RuntimeError("web listener failed: " + ", ".join(errors))
+
         for t in threads:
             t.join()
         return 0

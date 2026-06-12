@@ -1,17 +1,14 @@
 #!/usr/bin/env bash
-# Import easymosdns rules (same as rules/update) into GFC mosdns tables
+# easymosdns rules/update — github or cdn (curl + bootstrap DNS)
 set -euo pipefail
 
 GFC_ROOT="${GFC_ROOT:-/opt/gfc-client}"
-AGENT_DIR="${AGENT_DIR:-$GFC_ROOT/client-agent}"
-SRC_ROOT="${SRC_ROOT:-/opt/sip-proxy-src/client-agent}"
-[[ -d "$SRC_ROOT/client_agent" ]] && AGENT_DIR="$SRC_ROOT"
-
+AGENT_DIR="${GFC_ROOT}/client-agent"
 export PYTHONPATH="$AGENT_DIR"
 PY="${AGENT_DIR}/.venv/bin/python"
 [[ -x "$PY" ]] || PY="$(command -v python3)"
 
-SOURCE="${1:-github}"
+SOURCE="${1:-cdn}"
 case "$SOURCE" in
   github|cdn) ;;
   *)
@@ -20,9 +17,15 @@ case "$SOURCE" in
     ;;
 esac
 
+systemctl stop gfc-client-agent 2>/dev/null || true
+
 "$PY" -c "
 from client_agent.easymosdns_update import update_easymosdns_rules
 import json
 r = update_easymosdns_rules('$SOURCE')
 print(json.dumps(r, ensure_ascii=False, indent=2))
+if not r.get('ok'):
+    raise SystemExit(1)
 "
+
+systemctl start gfc-client-agent 2>/dev/null || true
