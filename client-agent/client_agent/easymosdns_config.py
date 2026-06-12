@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 
 from .dns_lists import LIST_FILES, ensure_default_lists
-from .easymosdns_update import CDN_BASE, GITHUB_BASE, _fetch, update_easymosdns_rules
+from .easymosdns_fetch import fetch
 
 EASYMODNS_CONFIG_URL = "https://raw.githubusercontent.com/pmkol/easymosdns/main/config.yaml"
 
@@ -73,10 +73,12 @@ def ensure_easymosdns_tree(*, try_download: bool = True) -> Path:
 
     template_path = EASYMODNS_DIR / "config.yaml"
     if not template_path.is_file() and try_download:
-        raw = _fetch(EASYMODNS_CONFIG_URL).decode("utf-8", errors="replace")
+        raw = fetch(EASYMODNS_CONFIG_URL).decode("utf-8", errors="replace")
         template_path.write_text(raw, encoding="utf-8")
 
     if try_download and shutil.which("curl"):
+        from .easymosdns_update import update_easymosdns_rules
+
         try:
             update_easymosdns_rules("cdn")
         except RuntimeError:
@@ -89,7 +91,7 @@ def ensure_easymosdns_tree(*, try_download: bool = True) -> Path:
         dst = EASYMODNS_DIR / name
         if not dst.is_file():
             try:
-                dst.write_bytes(_fetch(f"https://raw.githubusercontent.com/pmkol/easymosdns/main/{name}"))
+                dst.write_bytes(fetch(f"https://raw.githubusercontent.com/pmkol/easymosdns/main/{name}"))
             except RuntimeError:
                 dst.write_text("# placeholder\n", encoding="utf-8")
 

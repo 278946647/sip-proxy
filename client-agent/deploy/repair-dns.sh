@@ -8,7 +8,6 @@ CLIENT_ROOT="$(cd "$_DIR/.." && pwd)"
 GFC_ROOT="${GFC_ROOT:-/opt/gfc-client}"
 AGENT_DIR="${GFC_ROOT}/client-agent"
 export GFC_ETC=/etc/gfc-client
-export PYTHONPATH="$AGENT_DIR"
 PY="${AGENT_DIR}/.venv/bin/python"
 [[ -x "$PY" ]] || PY="$(command -v python3)"
 
@@ -27,7 +26,8 @@ bash "$_DIR/upgrade-mosdns-x.sh" || echo "WARN: mosdns-x upgrade skipped"
 systemctl stop gfc-client-agent 2>/dev/null || true
 
 echo "==> Bootstrap / reapply dataplane"
-"$PY" -c "
+cd "$AGENT_DIR"
+PYTHONPATH="$AGENT_DIR" "$PY" -c "
 from client_agent.apply import reapply_local_config
 from client_agent.bootstrap import ensure_services_running
 ok, msg = reapply_local_config()

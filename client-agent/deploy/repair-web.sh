@@ -81,7 +81,15 @@ if [[ -f /etc/gfc-client/gfc.env ]]; then
   elif ! grep -q '^GFC_WEB_MODE=' /etc/gfc-client/gfc.env; then
     echo 'GFC_WEB_MODE=both' >>/etc/gfc-client/gfc.env
   fi
+  if grep -q '^GFC_CLIENT_HTTPS=' /etc/gfc-client/gfc.env; then
+    sed -i 's/^GFC_CLIENT_HTTPS=.*/GFC_CLIENT_HTTPS=0/' /etc/gfc-client/gfc.env
+  else
+    echo 'GFC_CLIENT_HTTPS=0' >>/etc/gfc-client/gfc.env
+  fi
 fi
+
+install -m 755 "$CLIENT_ROOT/deploy/gfc-client-flash-start.sh" /usr/local/bin/gfc-client-flash-start 2>/dev/null || true
+install -m 755 "$CLIENT_ROOT/deploy/gfc-client-web-start.sh" /usr/local/bin/gfc-client-web-start 2>/dev/null || true
 
 systemctl restart gfc-client-web
 systemctl restart gfc-client-flash 2>/dev/null || true

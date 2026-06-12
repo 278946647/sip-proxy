@@ -28,11 +28,10 @@ echo "==> repair-dns + bootstrap dataplane"
 bash "$_DIR/repair-dns.sh"
 
 echo "==> apply LAN bridge (bridge_lan)"
-"$PY" -c "from client_agent.network import apply_network; ok, msg = apply_network(); print(msg); exit(0 if ok else 1)"
+cd "$AGENT_DIR" && PYTHONPATH="$AGENT_DIR" "$PY" -c "from client_agent.network import apply_network; ok, msg = apply_network(); print(msg); exit(0 if ok else 1)"
 
 echo "==> easymosdns rules (CDN, bootstrap DNS 223.5.5.5)"
-export PYTHONPATH="$AGENT_DIR"
-if "$PY" -c "from client_agent.easymosdns_update import update_easymosdns_rules; update_easymosdns_rules('cdn')" 2>/dev/null; then
+if cd "$AGENT_DIR" && PYTHONPATH="$AGENT_DIR" "$PY" -c "from client_agent.easymosdns_update import update_easymosdns_rules; update_easymosdns_rules('cdn')" 2>/dev/null; then
   echo "    easymosdns rules updated"
 else
   echo "    WARN: easymosdns update skipped (no network) — use Web DNS 分流 later"
