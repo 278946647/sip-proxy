@@ -24,24 +24,7 @@ if [[ -f "$ENV_FILE" ]]; then
   source "$ENV_FILE"
 fi
 
-echo "==> Sync client-agent -> $GFC_ROOT"
-rsync -a "$CLIENT_ROOT/client_agent/" "$GFC_ROOT/client-agent/client_agent/"
-cp -f "$CLIENT_ROOT/setup.py" "$CLIENT_ROOT/requirements.txt" "$GFC_ROOT/client-agent/" 2>/dev/null || true
-rsync -a "$CLIENT_ROOT/deploy/"*.sh /usr/local/bin/
-chmod +x /usr/local/bin/gfc-client-*.sh
-
-if [[ -d "$CLIENT_ROOT/client-web" ]]; then
-  echo "==> Sync client-web"
-  rsync -a "$CLIENT_ROOT/client-web/" "$GFC_ROOT/client-web/"
-else
-  echo "WARN: $CLIENT_ROOT/client-web missing"
-fi
-
-if [[ -x "$GFC_ROOT/client-agent/.venv/bin/pip" ]]; then
-  "$GFC_ROOT/client-agent/.venv/bin/pip" install -q -U pip setuptools wheel
-  "$GFC_ROOT/client-agent/.venv/bin/pip" install -q -r "$CLIENT_ROOT/requirements.txt"
-  "$GFC_ROOT/client-agent/.venv/bin/pip" install -q -e "$GFC_ROOT/client-agent"
-fi
+bash "$_DIR/sync-code.sh"
 
 # 若 80 被其他进程占用，提示
 if ss -lnt 2>/dev/null | grep ':80 ' | grep -qv python; then
