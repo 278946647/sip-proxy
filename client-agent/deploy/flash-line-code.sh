@@ -13,6 +13,13 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
+_self="${BASH_SOURCE[0]:-$0}"
+_DIR="$(cd "$(dirname "$_self")" && pwd)"
+# Ensure public DNS if resolver is broken (activate uses IP; git/curl may not)
+if ! getent hosts github.com >/dev/null 2>&1; then
+  bash "$_DIR/bootstrap-dns.sh" || true
+fi
+
 GFC_ROOT="${GFC_ROOT:-/opt/gfc-client}"
 AGENT_DIR="${AGENT_DIR:-$GFC_ROOT/client-agent}"
 
