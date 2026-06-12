@@ -1252,6 +1252,26 @@ async def update_client_device(
     return await get_client_device(device_id, session)
 
 
+@router.delete("/client-devices/{device_id}")
+async def delete_client_device(
+    device_id: int,
+    session: AsyncSession = Depends(get_session),
+    operator: str = Query("admin"),
+) -> dict[str, str | bool]:
+    device = await session.get(ClientDevice, device_id)
+    if not device:
+        raise HTTPException(404, "client device not found")
+
+    label = device.name or device.device_key
+    await _log_op(session, operator, "delete_client_device", label, f"id={device_id}")
+    await session.delete(device)
+    await session.commit()
+    return {
+        "ok": True,
+        "message": "设备记录已删除；客户端仍在线时会通过线路码自动重新注册",
+    }
+
+
 @router.get("/lines/{line_id}/line-code")
 async def get_line_code(
     line_id: int,

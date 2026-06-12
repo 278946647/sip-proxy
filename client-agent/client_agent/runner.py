@@ -158,6 +158,23 @@ def _write_idle_status(
     )
 
 
+def _clear_client_state(state_file: str) -> None:
+    try:
+        os.remove(state_file)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        pass
+
+
+def _is_control_plane_auth_error(exc: BaseException) -> bool:
+    import requests
+
+    if isinstance(exc, requests.HTTPError) and exc.response is not None:
+        return exc.response.status_code == 401
+    return False
+
+
 def run_loop(args: argparse.Namespace) -> None:
     import time
 
@@ -278,6 +295,11 @@ def run_loop(args: argparse.Namespace) -> None:
             else:
                 print(f"config unchanged version={version}", flush=True)
         except Exception as e:  # noqa: BLE001
+            if _is_control_plane_auth_error(e) and state is not None:
+                print("control plane rejected token — re-activate on next loop", flush=True)
+                state = None
+                client = None
+                _clear_client_state(args.state_file)
             print(f"error: {e}", flush=True)
         time.sleep(args.poll_seconds)
 

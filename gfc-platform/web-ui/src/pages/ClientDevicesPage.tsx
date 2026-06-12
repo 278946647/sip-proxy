@@ -4,6 +4,7 @@ import {
   Input,
   InputNumber,
   Modal,
+  Popconfirm,
   Select,
   Space,
   Table,
@@ -12,11 +13,11 @@ import {
   message,
 } from "antd";
 import { LineCodeField } from "../components/LineCodeField";
-import { EyeOutlined, ReloadOutlined } from "@ant-design/icons";
+import { DeleteOutlined, EyeOutlined, ReloadOutlined } from "@ant-design/icons";
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import dayjs from "dayjs";
-import { apiGet, apiPatch } from "../api/client";
+import { apiDelete, apiGet, apiPatch } from "../api/client";
 import { mapClientDevice, type ClientDeviceListItem, type LineListItem } from "../types";
 import { mapLineItem } from "../types";
 
@@ -80,6 +81,18 @@ export function ClientDevicesPage() {
     });
   };
 
+  const deleteRow = async (row: ClientDeviceListItem) => {
+    try {
+      const res = await apiDelete<{ ok: boolean; message?: string }>(
+        `/admin/client-devices/${row.id}?operator=${localStorage.getItem("gfc_user") || "admin"}`
+      );
+      message.success(res.message || "已删除");
+      void load();
+    } catch (e) {
+      message.error(String(e));
+    }
+  };
+
   const saveRow = async (row: ClientDeviceListItem) => {
     const draft = getDraft(row);
     try {
@@ -134,7 +147,7 @@ export function ClientDevicesPage() {
         type="info"
         showIcon
         style={{ marginBottom: 16 }}
-        message="设备通过线路码激活后出现在此列表。反向 SSH 端口用于远程 WebSSH 连接；页面每 15 秒自动刷新在线状态。"
+        message="设备通过线路码激活后出现在此列表。可删除误注册记录；在线设备会在下次心跳时凭线路码自动重新注册。反向 SSH 端口用于远程 WebSSH。"
       />
 
       <div style={{ marginBottom: 12, color: "#64748b", fontSize: 13 }}>
@@ -236,6 +249,15 @@ export function ClientDevicesPage() {
                   icon={<EyeOutlined />}
                   onClick={() => nav(`/client-devices/${row.id}`)}
                 />
+                <Popconfirm
+                  title="删除此客户端记录？"
+                  description="在线设备将自动重新注册；线路码仍有效。"
+                  onConfirm={() => void deleteRow(row)}
+                >
+                  <Button size="small" danger icon={<DeleteOutlined />}>
+                    删除
+                  </Button>
+                </Popconfirm>
               </Space>
             ),
           },

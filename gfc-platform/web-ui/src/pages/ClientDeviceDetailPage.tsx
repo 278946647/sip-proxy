@@ -1,9 +1,9 @@
-import { ArrowLeftOutlined } from "@ant-design/icons";
-import { Button, Card, Col, Progress, Row, Space, Statistic, Tag, Typography, message } from "antd";
+import { ArrowLeftOutlined, DeleteOutlined } from "@ant-design/icons";
+import { Button, Card, Col, Popconfirm, Progress, Row, Space, Statistic, Tag, Typography, message } from "antd";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import dayjs from "dayjs";
-import { apiGet } from "../api/client";
+import { apiDelete, apiGet } from "../api/client";
 import { mapClientDeviceDetail, type ClientDeviceDetail } from "../types";
 
 function pct(n: number | undefined, fallback = 0) {
@@ -18,6 +18,19 @@ export function ClientDeviceDetailPage() {
   const load = async () => {
     const raw = await apiGet<Record<string, unknown>>(`/admin/client-devices/${id}`);
     setDevice(mapClientDeviceDetail(raw));
+  };
+
+  const removeDevice = async () => {
+    if (!id) return;
+    try {
+      const res = await apiDelete<{ ok: boolean; message?: string }>(
+        `/admin/client-devices/${id}?operator=${localStorage.getItem("gfc_user") || "admin"}`
+      );
+      message.success(res.message || "已删除");
+      nav("/client-devices");
+    } catch (e) {
+      message.error(String(e));
+    }
   };
 
   useEffect(() => {
@@ -48,6 +61,15 @@ export function ClientDeviceDetailPage() {
             远程连接
           </Button>
         )}
+        <Popconfirm
+          title="删除此客户端？"
+          description="在线设备将凭线路码自动重新注册。"
+          onConfirm={() => void removeDevice()}
+        >
+          <Button danger icon={<DeleteOutlined />}>
+            删除
+          </Button>
+        </Popconfirm>
       </Space>
 
       <Typography.Title level={4}>
