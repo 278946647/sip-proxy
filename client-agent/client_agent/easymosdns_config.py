@@ -66,12 +66,56 @@ GFC_SEQUENCE_PREFIX = """
 """
 
 
+LEGACY_MOSDNS = GFC_ETC / "mosdns.yaml"
+
+
+def remove_legacy_mosdns_files() -> None:
+    if LEGACY_MOSDNS.is_file():
+        LEGACY_MOSDNS.unlink(missing_ok=True)
+
+
+def mosdns_binary_ok() -> tuple[bool, str]:
+    mosdns_bin = "/usr/local/bin/mosdns"
+    if not Path(mosdns_bin).exists():
+        from shutil import which
+
+        mosdns_bin = which("mosdns") or ""
+    if not mosdns_bin:
+        return False, "mosdns binary not found"
+    r = subprocess.run(
+        [mosdns_bin, "version"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    out = f"{r.stdout or ''}{r.stderr or ''}".strip()
+    if re.search(r"\bv5\.\d", out):
+        return False, f"mosdns v5 detected ({out}), need mosdns-x"
+    if "build time" not in out and "main" not in out.lower():
+        return False, f"unknown mosdns build: {out or 'no output'}"
+    return True, out
+
+
+def _validate_easymosdns_schema(raw: str) -> None:
+    if "domain_set" in raw or "block_domains" in raw:
+        raise RuntimeError("legacy mosdns v5 yaml (domain_set) — need easymosdns template")
+    if "main_sequence" not in raw and "data_providers" not in raw:
+        raise RuntimeError("not easymosdns schema (missing main_sequence/data_providers)")
+
+
 def ensure_easymosdns_tree(*, try_download: bool = True) -> Path:
+    remove_legacy_mosdns_files()
     ensure_default_lists()
     EASYMODNS_DIR.mkdir(parents=True, exist_ok=True)
     EASYMODNS_RULES.mkdir(parents=True, exist_ok=True)
 
     template_path = EASYMODNS_DIR / "config.yaml"
+    if template_path.is_file():
+        try:
+            _validate_easymosdns_schema(template_path.read_text(encoding="utf-8"))
+        except RuntimeError:
+            template_path.unlink(missing_ok=True)
+
     if not template_path.is_file():
         try:
             raw = fetch(EASYMODNS_CONFIG_URL).decode("utf-8", errors="replace")
@@ -149,6 +193,7 @@ def render_mosdns_config_file(*, try_download: bool = True) -> str:
 
     raw = _patch_paths(src.read_text(encoding="utf-8"), base)
     raw = _inject_gfc_overlay(raw)
+    _validate_easymosdns_schema(raw)
 
     MOSDNS_CONFIG.parent.mkdir(parents=True, exist_ok=True)
     MOSDNS_CONFIG.write_text(raw, encoding="utf-8")
@@ -159,22 +204,34 @@ def mosdns_config_ok(path: Path | None = None) -> tuple[bool, str]:
     cfg = path or MOSDNS_CONFIG
     if not cfg.is_file():
         return False, "missing config"
+    try:
+        _validate_easymosdns_schema(cfg.read_text(encoding="utf-8"))
+    except RuntimeError as exc:
+        return False, str(exc)
+
+    ok_bin, bin_msg = mosdns_binary_ok()
+    if not ok_bin:
+        return False, bin_msg
+
     mosdns_bin = "/usr/local/bin/mosdns"
     if not Path(mosdns_bin).exists():
         from shutil import which
 
-        if not which("mosdns"):
+        found = which("mosdns")
+        if not found:
             return False, "mosdns binary not found"
-        mosdns_bin = "mosdns"
+        mosdns_bin = found
 
-    workdir = cfg.parent
     r = subprocess.run(
-        ["timeout", "3", mosdns_bin, "start", "-c", str(cfg)],
+        ["timeout", "5", mosdns_bin, "start", "-c", str(cfg)],
         capture_output=True,
         text=True,
         check=False,
+        cwd=str(cfg.parent),
     )
     if r.returncode == 124:
-        return True, ""
+        return True, bin_msg
     err = (r.stderr or r.stdout or "config check failed").strip()
+    if "not defined" in err or "failed to init" in err:
+        return False, err
     return False, err

@@ -19,12 +19,15 @@ case "$arch" in
 esac
 
 if command -v mosdns >/dev/null 2>&1; then
-  ver="$(mosdns version 2>/dev/null || true)"
-  if [[ -n "$ver" ]] && ! echo "$ver" | grep -qE '^v?5\.'; then
+  ver="$(mosdns version 2>&1 || true)"
+  if [[ -n "$ver" ]] && echo "$ver" | grep -qE '\bv5\.'; then
+    echo "Current mosdns: ${ver} — upgrading to mosdns-x ${MOSDNS_X_VERSION}"
+  elif [[ "${FORCE_MOSDNS_X:-0}" != "1" ]] && echo "$ver" | grep -qi 'build time'; then
     echo "mosdns already mosdns-x: $ver"
     exit 0
+  else
+    echo "mosdns: ${ver:-unknown} — installing mosdns-x ${MOSDNS_X_VERSION}"
   fi
-  echo "Current mosdns: ${ver:-unknown} — upgrading to mosdns-x ${MOSDNS_X_VERSION}"
 else
   echo "mosdns not found — installing mosdns-x ${MOSDNS_X_VERSION}"
 fi
