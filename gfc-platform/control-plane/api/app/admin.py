@@ -183,7 +183,7 @@ def _parse_static_routes_json(raw: str | None) -> list[dict[str, Any]]:
         return []
 
 
-def _socks_to_out(sp: SocksProfile) -> SocksProfileOut:
+def _socks_to_out(sp: SocksProfile, *, line_binding_count: int = 0) -> SocksProfileOut:
     return SocksProfileOut(
         id=sp.id,
         name=sp.name,
@@ -196,8 +196,20 @@ def _socks_to_out(sp: SocksProfile) -> SocksProfileOut:
         remark=sp.remark,
         address_display=format_socks_address(sp.host, sp.port, sp.username, sp.password),
         is_healthy=sp.is_healthy,
+        line_binding_count=line_binding_count,
         created_at=sp.created_at,
     )
+
+
+async def _socks_line_binding_counts(session: AsyncSession) -> dict[int, int]:
+    rows = (
+        await session.execute(
+            select(Line.socks_profile_id, func.count(Line.id))
+            .where(Line.socks_profile_id.isnot(None))
+            .group_by(Line.socks_profile_id)
+        )
+    ).all()
+    return {int(sid): int(cnt) for sid, cnt in rows if sid is not None}
 
 
 def _line_to_list_item(line: Line) -> LineListItem:
@@ -781,7 +793,8 @@ async def delete_line(
 @router.get("/socks", response_model=list[SocksProfileOut])
 async def list_socks(session: AsyncSession = Depends(get_session)) -> list[SocksProfileOut]:
     rows = (await session.execute(select(SocksProfile).order_by(SocksProfile.id.desc()))).scalars().all()
-    return [_socks_to_out(r) for r in rows]
+    bindings = await _socks_line_binding_counts(session)
+    return [_socks_to_out(r, line_binding_count=bindings.get(r.id, 0)) for r in rows]
 
 
 @router.post("/socks", response_model=SocksProfileOut)

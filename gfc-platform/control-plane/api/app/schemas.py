@@ -167,6 +167,7 @@ class SocksProfileOut(BaseModel):
     remark: str | None = None
     address_display: str = ""
     is_healthy: bool = True
+    line_binding_count: int = 0
     created_at: dt.datetime | None = None
 
 

@@ -27,6 +27,7 @@ import {
   type SocksProfile,
 } from "../types";
 import { mapSocks } from "../types";
+import { SocksProfileSelect } from "../components/SocksProfileSelect";
 
 export function LinesPage() {
   const nav = useNavigate();
@@ -114,7 +115,14 @@ export function LinesPage() {
         <Typography.Title level={4} style={{ margin: 0 }}>
           线路管理
         </Typography.Title>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>
+        <Button
+          type="primary"
+          icon={<PlusOutlined />}
+          onClick={() => {
+            setModalOpen(true);
+            void load();
+          }}
+        >
           添加线路
         </Button>
       </div>
@@ -294,11 +302,7 @@ export function LinesPage() {
             <Select options={nodes.map((n) => ({ label: nodeOptionLabel(n), value: n.id }))} />
           </Form.Item>
           <Form.Item name="socksProfileId" label="绑定 SOCKS（留空则走节点本地出口）">
-            <Select
-              allowClear
-              placeholder="节点本地网络出局"
-              options={socks.map((s) => ({ label: `${s.name} (${s.host}:${s.port})`, value: s.id }))}
-            />
+            <SocksProfileSelect profiles={socks} />
           </Form.Item>
           <Form.Item name="country" label="国家/地区">
             <Input placeholder="马来西亚" />

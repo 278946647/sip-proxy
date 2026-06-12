@@ -116,6 +116,7 @@ export type SocksProfile = {
   remark: string | null;
   addressDisplay: string;
   isHealthy: boolean;
+  lineBindingCount: number;
   createdAt: string | null;
 };
 
@@ -283,6 +284,7 @@ export function mapSocks(raw: Record<string, unknown>): SocksProfile {
     remark: raw.remark as string | null,
     addressDisplay: (raw.address_display as string) || "",
     isHealthy: raw.is_healthy as boolean,
+    lineBindingCount: (raw.line_binding_count as number) ?? 0,
     createdAt: raw.created_at as string | null,
   };
 }
