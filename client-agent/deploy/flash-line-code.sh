@@ -49,6 +49,8 @@ try:
     print('activate:', json.dumps(act, ensure_ascii=False, indent=2))
     if not act.get('ok'):
         raise SystemExit(1)
+    if act.get('ack_warning'):
+        print('WARN: ack deferred (config applied locally):', act['ack_warning'])
 except Exception as exc:
     print('activate FAILED:', exc)
     traceback.print_exc()

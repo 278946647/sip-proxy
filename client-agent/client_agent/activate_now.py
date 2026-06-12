@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import json
 import os
 import uuid
 from pathlib import Path
 from typing import Any
 
 from .activation import ACTIVATION_FILE, STATE_FILE
-from .apply import apply_payload
+from .apply import apply_payload, restart_dataplane_services
 from .client import ControlPlaneClient
 from .line_code import decode_line_code, is_line_activation_payload
 from .routing_mode import read_routing_mode
@@ -85,14 +84,27 @@ def activate_and_apply(
     body = cfg["payload"]
     body["proxyMode"] = proxy
     body["routingMode"] = read_routing_mode()
+    body["controlPlaneServers"] = servers
 
-    ok, msg = apply_payload(body, cfg_dir)
+    # Write configs first; ack while WAN still reachable, then restart sing-box/mosdns.
+    ok, msg = apply_payload(body, cfg_dir, restart_services=False)
+    ack_warning = ""
+    try:
+        if ok:
+            client.ack_config(version, "applied", msg)
+            state.applied_version = version
+            save_state(str(st_path), state)
+        else:
+            client.ack_config(version, "failed", msg)
+    except requests.RequestException as exc:
+        ack_warning = str(exc)
+        if ok:
+            state.applied_version = version
+            save_state(str(st_path), state)
+
+    restart_msg = ""
     if ok:
-        client.ack_config(version, "applied", msg)
-        state.applied_version = version
-        save_state(str(st_path), state)
-    else:
-        client.ack_config(version, "failed", msg)
+        restart_msg = restart_dataplane_services()
 
     return {
         "ok": ok,
@@ -102,4 +114,6 @@ def activate_and_apply(
         "server": client.server,
         "config_version": version,
         "apply_message": msg,
+        "restart_message": restart_msg,
+        "ack_warning": ack_warning or None,
     }

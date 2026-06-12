@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import subprocess
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from .routing_mode import read_routing_mode
 
@@ -50,6 +52,27 @@ def singbox_config_ok(path: Path | None = None) -> tuple[bool, str]:
     return False, (r.stderr or r.stdout or "check failed").strip()
 
 
+def _direct_ip_rule(*hosts: str) -> dict[str, Any] | None:
+    cidrs: list[str] = []
+    for host in hosts:
+        raw = (host or "").strip()
+        if not raw:
+            continue
+        if "://" in raw:
+            raw = urlparse(raw).hostname or raw
+        raw = raw.split("/", 1)[0]
+        if raw.startswith("[") and raw.endswith("]"):
+            raw = raw[1:-1]
+        try:
+            ipaddress.ip_address(raw)
+            cidrs.append(f"{raw}/32")
+        except ValueError:
+            continue
+    if not cidrs:
+        return None
+    return {"ip_cidr": cidrs, "outbound": "direct"}
+
+
 def render_singbox_config(payload: dict[str, Any]) -> dict[str, Any]:
     node = payload.get("node") or {}
     vless = payload.get("vless") or {}
@@ -91,8 +114,17 @@ def render_singbox_config(payload: dict[str, Any]) -> dict[str, Any]:
     route_rules: list[dict[str, Any]] = [
         {"protocol": "dns", "action": "hijack-dns"},
         {"ip_is_private": True, "outbound": "direct"},
-        {"ip_cidr": ["223.5.5.5/32", "223.6.6.6/32", "119.29.29.29/32"], "outbound": "direct"},
+        {"ip_cidr": ["223.5.5.5/32", "223.6.6.6/32", "119.29.29.29/32", "8.8.8.8/32", "1.1.1.1/32"], "outbound": "direct"},
     ]
+    direct_hosts = [address]
+    for url in payload.get("controlPlaneServers") or []:
+        direct_hosts.append(str(url))
+    for env_key in ("SERVER_URL", "SERVER_URL_FALLBACK"):
+        if os.environ.get(env_key):
+            direct_hosts.append(os.environ[env_key])
+    direct_rule = _direct_ip_rule(*direct_hosts)
+    if direct_rule:
+        route_rules.insert(2, direct_rule)
 
     inbounds: list[dict[str, Any]]
     if proxy_mode == "transparent":

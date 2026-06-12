@@ -73,7 +73,12 @@ def _payload_has_node(payload: dict[str, Any]) -> bool:
     return bool((payload.get("node") or {}).get("address"))
 
 
-def apply_payload(payload: dict[str, Any], config_dir: Path) -> tuple[bool, str]:
+def apply_payload(
+    payload: dict[str, Any],
+    config_dir: Path,
+    *,
+    restart_services: bool = True,
+) -> tuple[bool, str]:
     if not _payload_has_node(payload):
         return ensure_bootstrap_dataplane(try_download=False)
 
@@ -119,10 +124,21 @@ def apply_payload(payload: dict[str, Any], config_dir: Path) -> tuple[bool, str]
         json.dumps({"mode": "active", "activated": True}, indent=2),
         encoding="utf-8",
     )
-    messages.append(_restart_unit("gfc-mosdns.service"))
-    messages.append(_restart_unit("gfc-client-sing-box.service"))
+    if restart_services:
+        messages.append(_restart_unit("gfc-mosdns.service"))
+        messages.append(_restart_unit("gfc-client-sing-box.service"))
+    else:
+        messages.append("dataplane restart deferred")
 
     return True, "; ".join(messages)
+
+
+def restart_dataplane_services() -> str:
+    msgs = [
+        _restart_unit("gfc-mosdns.service"),
+        _restart_unit("gfc-client-sing-box.service"),
+    ]
+    return "; ".join(msgs)
 
 
 def apply_dns_config(config_dir: Path | None = None) -> tuple[bool, str]:

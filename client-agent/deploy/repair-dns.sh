@@ -34,5 +34,8 @@ if [[ -f /etc/gfc-client/sing-box.json ]]; then
   sing-box check -c /etc/gfc-client/sing-box.json
 fi
 
+rm -f /etc/dnsmasq.d/gfc-client-bootstrap.conf 2>/dev/null || true
+systemctl restart dnsmasq 2>/dev/null || true
+
 systemctl is-active gfc-mosdns gfc-client-sing-box gfc-client-web gfc-client-flash 2>/dev/null || true
 echo "Done."
