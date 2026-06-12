@@ -13,6 +13,28 @@ MOSDNS_ADDR = "127.0.0.1:5335"
 DOMAIN_RESOLVER: dict[str, str] = {"server": "mosdns"}
 
 
+def render_singbox_idle_config() -> dict[str, Any]:
+    """No TUN / no hijack — used before line code is activated."""
+    return {
+        "log": {"level": "info", "timestamp": True},
+        "dns": {
+            "servers": [{"type": "local", "tag": "local"}],
+            "final": "local",
+        },
+        "inbounds": [],
+        "outbounds": [{"type": "direct", "tag": "direct"}],
+        "route": {"final": "direct"},
+    }
+
+
+def write_singbox_idle_config(path: Path | None = None) -> Path:
+    cfg_path = path or SINGBOX_CONFIG
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    data = render_singbox_idle_config()
+    cfg_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    return cfg_path
+
+
 def singbox_config_ok(path: Path | None = None) -> tuple[bool, str]:
     cfg = path or SINGBOX_CONFIG
     if not cfg.is_file():

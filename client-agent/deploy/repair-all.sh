@@ -26,7 +26,7 @@ systemctl mask gfc-client-flash 2>/dev/null || true
 echo "==> repair-web"
 bash "$_DIR/repair-web.sh"
 
-echo "==> repair-dns + sing-box"
+echo "==> repair-dns + bootstrap dataplane"
 bash "$_DIR/repair-dns.sh"
 
 echo "==> apply LAN bridge (bridge_lan)"

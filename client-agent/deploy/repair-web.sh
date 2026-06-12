@@ -53,7 +53,8 @@ systemctl daemon-reload
 systemctl enable gfc-client-web 2>/dev/null || true
 systemctl stop gfc-client-flash 2>/dev/null || true
 systemctl disable gfc-client-flash 2>/dev/null || true
-systemctl mask gfc-client-flash 2>/dev/null || true
+systemctl unmask gfc-client-flash 2>/dev/null || true
+systemctl enable gfc-client-flash 2>/dev/null || true
 
 if [[ -f /etc/gfc-client/gfc.env ]]; then
   if grep -q '^GFC_WEB_MODE=admin' /etc/gfc-client/gfc.env; then

@@ -29,6 +29,7 @@ SERVER_URL="${SERVER_URL:-}"
 SERVER_URL_FALLBACK="${SERVER_URL_FALLBACK:-}"
 SINGBOX_VERSION="${SINGBOX_VERSION:-1.13.4}"
 MOSDNS_VERSION="${MOSDNS_VERSION:-5.3.3}"
+MOSDNS_X_VERSION="${MOSDNS_X_VERSION:-26.05.25}"
 REVERSE_SSH_PORT="${REVERSE_SSH_PORT:-}"
 
 if [[ -f /etc/gfc-client/gfc.env ]]; then
@@ -100,10 +101,23 @@ install_mosdns() {
     echo "    mosdns from offline bin/"
     return 0
   fi
-  local tmp url zip
+  local tmp asset url
+  tmp=$(mktemp -d)
+  for asset in "mosdns-linux-${MOS_ARCH}.zip" "mosdns-x-linux-${MOS_ARCH}.zip"; do
+    url="https://github.com/pmkol/mosdns-x/releases/download/v${MOSDNS_X_VERSION}/${asset}"
+    echo "    Try mosdns-x: $url"
+    if curl -fsSL "$url" -o "$tmp/mosdns.zip" 2>/dev/null; then
+      unzip -q "$tmp/mosdns.zip" -d "$tmp"
+      install -m 755 "$(find "$tmp" -name mosdns -type f | head -1)" /usr/local/bin/mosdns
+      rm -rf "$tmp"
+      echo "    mosdns-x ${MOSDNS_X_VERSION} installed"
+      return 0
+    fi
+  done
+  rm -rf "$tmp"
   tmp=$(mktemp -d)
   url="https://github.com/IrineSistiana/mosdns/releases/download/v${MOSDNS_VERSION}/mosdns-linux-${MOS_ARCH}.zip"
-  echo "    Download mosdns: $url"
+  echo "    Fallback mosdns v5: $url"
   curl -fsSL "$url" -o "$tmp/mosdns.zip"
   unzip -q "$tmp/mosdns.zip" -d "$tmp"
   install -m 755 "$(find "$tmp" -name mosdns -type f | head -1)" /usr/local/bin/mosdns
@@ -183,29 +197,18 @@ GFC_ROUTING_MODE=split
 EOF
 chmod 600 /etc/gfc-client/gfc.env
 
-echo "==> Bootstrap mosdns (easymosdns-style lists + valid config)"
+echo "==> Bootstrap dataplane (easymosdns + sing-box idle)"
 export PYTHONPATH="${GFC_ROOT}/client-agent"
+export FETCH_EASYMODNS_LISTS="${FETCH_EASYMODNS_LISTS:-1}"
 "${GFC_ROOT}/client-agent/.venv/bin/python" -c "
-from client_agent.dns_lists import ensure_default_lists
-from client_agent.mosdns import MOSDNS_CONFIG, render_mosdns_config
-ensure_default_lists()
-MOSDNS_CONFIG.write_text(render_mosdns_config({}), encoding='utf-8')
-print('    wrote', MOSDNS_CONFIG)
+from client_agent.bootstrap import ensure_bootstrap_dataplane, ensure_services_running
+import os
+ok, msg = ensure_bootstrap_dataplane(try_download=os.environ.get('FETCH_EASYMODNS_LISTS','1')=='1')
+print(msg)
+if not ok:
+    raise SystemExit(1)
+ensure_services_running()
 "
-if [[ "${FETCH_EASYMODNS_LISTS:-1}" == "1" ]] && command -v curl >/dev/null 2>&1; then
-  CHINA_URL="https://raw.githubusercontent.com/pmkol/easymosdns/main/rules/china_domain_list.txt"
-  if curl -fsSL --connect-timeout 15 "$CHINA_URL" -o /tmp/gfc-china-domains.txt 2>/dev/null; then
-    export PYTHONPATH="${GFC_ROOT}/client-agent"
-    "${GFC_ROOT}/client-agent/.venv/bin/python" -c "
-from pathlib import Path
-from client_agent.dns_lists import import_list_text
-text = Path('/tmp/gfc-china-domains.txt').read_text(encoding='utf-8')
-n = len(import_list_text('china', text, replace=True))
-print(f'    easymosdns china list: {n} domains')
-"
-    rm -f /tmp/gfc-china-domains.txt
-  fi
-fi
 
 touch "$ACTIVATION_FILE"
 chmod 600 "$ACTIVATION_FILE"
@@ -252,12 +255,13 @@ EOF
 
 cat >/etc/systemd/system/gfc-mosdns.service <<EOF
 [Unit]
-Description=GFC Client mosdns
+Description=GFC Client mosdns (easymosdns)
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/mosdns start -c /etc/gfc-client/mosdns.yaml
+WorkingDirectory=/etc/gfc-client/mosdns
+ExecStart=/usr/local/bin/mosdns start -c /etc/gfc-client/mosdns/config.yaml
 Restart=on-failure
 RestartSec=3
 StandardOutput=append:/var/log/gfc-client/mosdns.log
@@ -316,19 +320,15 @@ echo "==> OpenWrt-style WAN/LAN (first NIC=WAN DHCP, others=LAN 192.168.68.1/24 
 ) || echo "    WARN: network apply deferred to agent start"
 
 systemctl daemon-reload
-systemctl enable gfc-client-agent gfc-mosdns gfc-client-web
-systemctl disable gfc-client-flash 2>/dev/null || true
-systemctl mask gfc-client-flash 2>/dev/null || true
+systemctl enable gfc-client-agent gfc-mosdns gfc-client-web gfc-client-flash
+systemctl unmask gfc-client-flash 2>/dev/null || true
 if command -v sing-box >/dev/null 2>&1; then
   systemctl enable gfc-client-sing-box
 else
   systemctl disable gfc-client-sing-box 2>/dev/null || true
 fi
 
-systemctl restart gfc-mosdns || true
-systemctl restart gfc-client-agent
-systemctl restart gfc-client-web || true
-systemctl restart gfc-client-flash || true
+systemctl restart gfc-mosdns gfc-client-sing-box gfc-client-web gfc-client-flash gfc-client-agent || true
 
 if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qi "active"; then
   ufw allow 80/tcp comment 'gfc-client-web' 2>/dev/null || true

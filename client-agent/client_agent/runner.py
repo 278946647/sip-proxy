@@ -7,7 +7,9 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from .activation import is_line_activated
 from .apply import apply_payload
+from .bootstrap import ensure_bootstrap_dataplane
 from .routing_mode import read_routing_mode
 from .client import ControlPlaneClient, ClientState
 from .device_info import collect_device_info
@@ -164,6 +166,10 @@ def run_loop(args: argparse.Namespace) -> None:
         print(f"network: {net_msg}" if ok else f"network skip/fail: {net_msg}", flush=True)
 
     print(f"sysctl: {ensure_network_tuning()}", flush=True)
+
+    if not is_line_activated():
+        ok, boot_msg = ensure_bootstrap_dataplane(try_download=False)
+        print(f"bootstrap: {boot_msg}" if ok else f"bootstrap warn: {boot_msg}", flush=True)
 
     device_name = args.device_name or os.environ.get("HOSTNAME", "gfc-client")
     lan_mac = _mac_address()

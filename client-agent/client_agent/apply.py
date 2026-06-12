@@ -6,8 +6,10 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from .activation import is_line_activated
+from .bootstrap import ensure_bootstrap_dataplane
 from .dns_lists import ensure_default_lists
-from .mosdns import MOSDNS_CONFIG, mosdns_config_ok, render_mosdns_config
+from .easymosdns_config import MOSDNS_CONFIG, mosdns_config_ok, render_mosdns_config_file
 from .proxy_mode import apply_proxy_mode
 from .routing_mode import read_routing_mode
 from .singbox import singbox_config_ok, write_singbox_config
@@ -20,11 +22,6 @@ CONFIG_BUNDLE = Path(
         "/opt/gfc-client/client-agent/state/dataplane/config_bundle.json",
     )
 )
-
-
-def _write_text(path: Path, content: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
 
 
 def _write_json(path: Path, data: dict[str, Any]) -> None:
@@ -72,7 +69,14 @@ def _load_payload(config_dir: Path) -> dict[str, Any]:
     return {}
 
 
+def _payload_has_node(payload: dict[str, Any]) -> bool:
+    return bool((payload.get("node") or {}).get("address"))
+
+
 def apply_payload(payload: dict[str, Any], config_dir: Path) -> tuple[bool, str]:
+    if not _payload_has_node(payload):
+        return ensure_bootstrap_dataplane(try_download=False)
+
     config_dir.mkdir(parents=True, exist_ok=True)
     payload = dict(payload)
     payload["routingMode"] = payload.get("routingMode") or read_routing_mode()
@@ -85,11 +89,11 @@ def apply_payload(payload: dict[str, Any], config_dir: Path) -> tuple[bool, str]
     wan_iface = (os.environ.get("GFC_WAN_IFACE") or "").strip() or _detect_default_iface()
 
     ensure_default_lists()
-    _write_text(MOSDNS_CONFIG, render_mosdns_config(payload))
+    render_mosdns_config_file(try_download=False)
     ok_md, md_err = mosdns_config_ok(MOSDNS_CONFIG)
     if not ok_md:
         return False, f"mosdns check fail: {md_err}"
-    messages.append("mosdns config ok")
+    messages.append("mosdns easymosdns ok")
 
     try:
         sb_path = write_singbox_config(payload)
@@ -99,7 +103,7 @@ def apply_payload(payload: dict[str, Any], config_dir: Path) -> tuple[bool, str]
     ok_sb, sb_err = singbox_config_ok(sb_path)
     if not ok_sb:
         return False, f"sing-box check fail: {sb_err}"
-    messages.append("sing-box config ok")
+    messages.append("sing-box active config ok")
 
     ok_pm, pm_msg = apply_proxy_mode(
         proxy_mode,
@@ -111,6 +115,10 @@ def apply_payload(payload: dict[str, Any], config_dir: Path) -> tuple[bool, str]
         return False, "; ".join(messages)
 
     Path("/var/lib/gfc-client").mkdir(parents=True, exist_ok=True)
+    (GFC_ETC / "dataplane-mode.json").write_text(
+        json.dumps({"mode": "active", "activated": True}, indent=2),
+        encoding="utf-8",
+    )
     messages.append(_restart_unit("gfc-mosdns.service"))
     messages.append(_restart_unit("gfc-client-sing-box.service"))
 
@@ -118,22 +126,14 @@ def apply_payload(payload: dict[str, Any], config_dir: Path) -> tuple[bool, str]
 
 
 def apply_dns_config(config_dir: Path | None = None) -> tuple[bool, str]:
-    cfg_dir = config_dir or CONFIG_BUNDLE.parent
-    payload = _load_payload(cfg_dir)
-    ensure_default_lists()
-    _write_text(MOSDNS_CONFIG, render_mosdns_config(payload))
-    ok_md, md_err = mosdns_config_ok(MOSDNS_CONFIG)
-    if not ok_md:
-        return False, f"mosdns check fail: {md_err}"
-    return True, _restart_unit("gfc-mosdns.service")
+    del config_dir
+    return ensure_bootstrap_dataplane(try_download=False)
 
 
 def reapply_local_config(config_dir: Path | None = None) -> tuple[bool, str]:
     cfg_dir = config_dir or CONFIG_BUNDLE.parent
     payload = _load_payload(cfg_dir)
-    node = (payload.get("node") or {}).get("address")
-    if not node:
-        ok, msg = apply_dns_config(cfg_dir)
-        return ok, f"dns only (no line config): {msg}"
+    if not _payload_has_node(payload) or not is_line_activated():
+        return ensure_bootstrap_dataplane(try_download=False)
     payload["routingMode"] = read_routing_mode()
     return apply_payload(payload, cfg_dir)
