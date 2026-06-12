@@ -15,6 +15,7 @@ bash "$_DIR/sync-code.sh"
 
 echo "==> mosdns-x (easymosdns requires mosdns-x, not v5)"
 bash "$_DIR/upgrade-mosdns-x.sh" || echo "WARN: mosdns-x upgrade skipped"
+bash "$_DIR/fix-mosdns-unit.sh"
 
 systemctl stop gfc-client-agent 2>/dev/null || true
 

@@ -14,9 +14,7 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 GFC_ROOT="${GFC_ROOT:-/opt/gfc-client}"
-SRC_ROOT="${SRC_ROOT:-/opt/sip-proxy-src/client-agent}"
 AGENT_DIR="${AGENT_DIR:-$GFC_ROOT/client-agent}"
-[[ -d "$SRC_ROOT/client_agent" ]] && AGENT_DIR="$SRC_ROOT"
 
 export PYTHONPATH="$AGENT_DIR"
 PY="${AGENT_DIR}/.venv/bin/python"

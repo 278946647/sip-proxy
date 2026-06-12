@@ -52,15 +52,15 @@ done
 echo ""
 
 echo "--- mosdns / sing-box ---"
-for f in /etc/gfc-client/mosdns.yaml /etc/gfc-client/sing-box.json; do
+for f in /etc/gfc-client/mosdns/config.yaml /etc/gfc-client/sing-box.json; do
   [[ -f "$f" ]] && echo "  OK $f" || echo "  MISSING $f"
 done
 for f in /etc/gfc-client/mosdns/block.txt /etc/gfc-client/mosdns/china.txt /etc/gfc-client/mosdns/global.txt; do
   [[ -f "$f" ]] && echo "  OK $f ($(wc -l <"$f") lines)" || echo "  MISSING $f"
 done
-if command -v mosdns >/dev/null 2>&1 && [[ -f /etc/gfc-client/mosdns.yaml ]]; then
+if command -v mosdns >/dev/null 2>&1 && [[ -f /etc/gfc-client/mosdns/config.yaml ]]; then
   rc=0
-  timeout 2 mosdns start -c /etc/gfc-client/mosdns.yaml >/dev/null 2>&1 || rc=$?
+  timeout 2 mosdns start -c /etc/gfc-client/mosdns/config.yaml >/dev/null 2>&1 || rc=$?
   if [[ "$rc" -eq 124 || "$rc" -eq 0 ]]; then
     echo "  mosdns config: OK"
   else
