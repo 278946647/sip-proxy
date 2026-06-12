@@ -62,11 +62,21 @@ def activate_and_apply(
     if not servers:
         raise ValueError("no control plane URL in line code or gfc.env")
 
+    import requests
+
     client = ControlPlaneClient(servers)
     lan_mac = _mac_address()
     device_id = _device_id_from_mac(lan_mac)
 
-    state = client.activate(raw, name, lan_mac, device_id, proxy)
+    try:
+        state = client.activate(raw, name, lan_mac, device_id, proxy)
+    except requests.HTTPError as exc:
+        detail = ""
+        if exc.response is not None:
+            detail = (exc.response.text or "").strip()[:800]
+        raise RuntimeError(
+            f"activate failed HTTP {exc.response.status_code if exc.response else '?'}: {detail or exc}"
+        ) from exc
     client = ControlPlaneClient(servers, state.client_token)
     save_state(str(st_path), state)
 

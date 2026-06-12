@@ -81,6 +81,11 @@ app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(clients_router)
 
+
+@app.get("/health")
+async def health() -> dict[str, bool]:
+    return {"ok": True}
+
 hb_counter = Counter("gfc_node_heartbeats_total", "Total node heartbeats", ["node_id"])
 node_last_seen = Gauge("gfc_node_last_seen_seconds", "Node last seen epoch seconds", ["node_id"])
 

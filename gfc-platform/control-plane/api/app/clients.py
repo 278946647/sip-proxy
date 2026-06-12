@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import logging
 import secrets
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -27,6 +29,7 @@ from .settings import settings
 from .timeutil import utc_now
 
 router = APIRouter(prefix="/clients", tags=["clients"])
+logger = logging.getLogger(__name__)
 
 
 async def _auth_client(
@@ -62,6 +65,14 @@ def _device_key_from_mac(lan_mac: str | None, device_id: str | None) -> str:
     return secrets.token_hex(8).upper()
 
 
+def _reverse_ssh_port(device_key: str) -> int:
+    try:
+        offset = int(device_key[:4], 16) % 1000
+    except ValueError:
+        offset = secrets.randbelow(1000)
+    return settings.client_ssh_port_base + offset
+
+
 @router.post("/activate", response_model=ClientActivateResponse)
 async def activate_client(
     body: ClientActivateIn,
@@ -92,6 +103,14 @@ async def activate_client(
         await session.execute(select(ClientDevice).where(ClientDevice.device_key == device_key))
     ).scalars().first()
 
+    bound = line.client_device
+    if bound and (not existing or bound.id != existing.id):
+        if existing and existing.line_id and existing.line_id != line.id:
+            raise HTTPException(409, "device already bound to another line")
+        bound.line_id = None
+        session.add(bound)
+        await session.flush()
+
     if existing:
         device = existing
         if existing.line_id and existing.line_id != line.id:
@@ -102,6 +121,7 @@ async def activate_client(
         device.device_id = body.device_id or device_key
         device.proxy_mode = body.proxy_mode
         device.agent_version = body.agent_version
+        device.is_active = True
     else:
         device = ClientDevice(
             device_key=device_key,
@@ -111,8 +131,7 @@ async def activate_client(
             line_id=line.id,
             proxy_mode=body.proxy_mode,
             agent_version=body.agent_version,
-            reverse_ssh_port=settings.client_ssh_port_base
-            + (int(device_key[:4], 16) % 1000 if len(device_key) >= 4 else secrets.randbelow(1000)),
+            reverse_ssh_port=_reverse_ssh_port(device_key),
         )
         session.add(device)
         await session.flush()
@@ -128,12 +147,28 @@ async def activate_client(
     )
     node = line.node
     if node and not node.reality_config_json:
-        from .reality_util import default_reality_config
+        try:
+            from .reality_util import default_reality_config
 
-        node.reality_config_json = json.dumps(default_reality_config(), ensure_ascii=False)
-        session.add(node)
+            node.reality_config_json = json.dumps(
+                default_reality_config(), ensure_ascii=False
+            )
+            session.add(node)
+        except RuntimeError as exc:
+            logger.warning("reality keygen deferred: %s", exc)
 
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(409, "device or line binding conflict") from exc
+    except OperationalError as exc:
+        await session.rollback()
+        raise HTTPException(
+            503,
+            "client database not ready — restart control-plane API to apply migrations",
+        ) from exc
+
     await session.refresh(device)
 
     return ClientActivateResponse(

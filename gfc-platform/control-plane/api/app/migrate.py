@@ -92,6 +92,50 @@ def _migrate_sync(sync_conn: Connection) -> None:
             if col not in existing:
                 sync_conn.execute(text(sql))
 
+    if not _table_exists(sync_conn, "client_devices"):
+        sync_conn.execute(
+            text(
+                """
+                CREATE TABLE client_devices (
+                    id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                    device_key VARCHAR(64) NOT NULL,
+                    name VARCHAR(128) NOT NULL,
+                    lan_mac VARCHAR(32),
+                    device_id VARCHAR(32),
+                    line_id INTEGER,
+                    reverse_ssh_port INTEGER,
+                    proxy_mode VARCHAR(32) DEFAULT 'gateway',
+                    agent_version VARCHAR(32),
+                    last_seen_at DATETIME,
+                    last_metrics_json TEXT,
+                    is_active BOOLEAN DEFAULT 1,
+                    created_at DATETIME,
+                    FOREIGN KEY(line_id) REFERENCES lines (id) ON DELETE SET NULL,
+                    UNIQUE (device_key),
+                    UNIQUE (line_id)
+                )
+                """
+            )
+        )
+
+    if not _table_exists(sync_conn, "client_tokens"):
+        sync_conn.execute(
+            text(
+                """
+                CREATE TABLE client_tokens (
+                    id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                    device_id INTEGER NOT NULL,
+                    token_hash VARCHAR(128) NOT NULL,
+                    created_at DATETIME,
+                    expires_at DATETIME,
+                    revoked_at DATETIME,
+                    FOREIGN KEY(device_id) REFERENCES client_devices (id) ON DELETE CASCADE,
+                    UNIQUE (token_hash)
+                )
+                """
+            )
+        )
+
 
 async def migrate_sqlite(engine: AsyncEngine) -> None:
     async with engine.begin() as conn:
