@@ -58,6 +58,10 @@ systemctl restart gfc-client-web
 sleep 2
 echo ""
 echo "==> Port check (both :80 and :81 should be python, single process)"
+if ! ss -lntup | grep -qE ':81 '; then
+  echo "WARN: :81 not listening — check GFC_WEB_MODE in gfc.env (should use --mode both in gfc-client-web-start)"
+  journalctl -u gfc-client-web -n 30 --no-pager 2>/dev/null | tail -15
+fi
 ss -lntup | grep -E ':80 |:81 ' || echo "WARN: 80/81 still not listening — run: sudo bash deploy/diagnose-web.sh"
 echo ""
 journalctl -u gfc-client-web -n 20 --no-pager 2>/dev/null || tail -20 /var/log/gfc-client/gfc-client-web.log 2>/dev/null || true

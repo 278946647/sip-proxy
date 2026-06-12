@@ -39,8 +39,17 @@ def _md5_hex(data: bytes) -> str:
     return hashlib.md5(data).hexdigest()
 
 
-def _load_md5_reference(text: str) -> set[str]:
-    return {line.strip().lower() for line in text.splitlines() if line.strip()}
+def _load_md5_reference(text: str) -> dict[str, str]:
+    """Parse easymosdns md5_hash_list.txt lines: '<md5> <filename>'."""
+    refs: dict[str, str] = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split()
+        if len(parts) >= 2:
+            refs[parts[1]] = parts[0].lower()
+    return refs
 
 
 def update_easymosdns_rules(source: Source = "github") -> dict:
@@ -52,6 +61,9 @@ def update_easymosdns_rules(source: Source = "github") -> dict:
         raise RuntimeError(f"{label}: 无法下载 md5_hash_list.txt")
 
     md5_ref = _load_md5_reference(md5_raw)
+    if not md5_ref:
+        raise RuntimeError(f"{label}: md5_hash_list.txt 格式无效")
+
     EASYMODNS_RULES_DIR.mkdir(parents=True, exist_ok=True)
 
     saved: dict[str, int] = {}
@@ -66,8 +78,12 @@ def update_easymosdns_rules(source: Source = "github") -> dict:
             continue
 
         digest = _md5_hex(raw)
-        if digest not in md5_ref:
-            errors.append(f"{name}: MD5 校验失败 ({digest})")
+        expected = md5_ref.get(name)
+        if expected and digest != expected:
+            errors.append(f"{name}: MD5 校验失败 (got {digest}, want {expected})")
+            continue
+        if not expected and digest not in md5_ref.values():
+            errors.append(f"{name}: MD5 不在参考列表 ({digest})")
             continue
 
         (EASYMODNS_RULES_DIR / name).write_bytes(raw)

@@ -10,6 +10,7 @@ from .routing_mode import read_routing_mode
 
 SINGBOX_CONFIG = Path(os.environ.get("GFC_ETC", "/etc/gfc-client")) / "sing-box.json"
 MOSDNS_ADDR = "127.0.0.1:5335"
+DOMAIN_RESOLVER: dict[str, str] = {"server": "mosdns"}
 
 
 def singbox_config_ok(path: Path | None = None) -> tuple[bool, str]:
@@ -43,7 +44,7 @@ def render_singbox_config(payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("vless uuid missing")
 
     outbounds: list[dict[str, Any]] = [
-        {"type": "direct", "tag": "direct"},
+        {"type": "direct", "tag": "direct", "domain_resolver": DOMAIN_RESOLVER},
         {
             "type": "vless",
             "tag": "proxy",
@@ -51,7 +52,7 @@ def render_singbox_config(payload: dict[str, Any]) -> dict[str, Any]:
             "server_port": port,
             "uuid": uuid,
             "flow": vless.get("flow") or "xtls-rprx-vision",
-            "domain_resolver": "mosdns",
+            "domain_resolver": DOMAIN_RESOLVER,
             "tls": {
                 "enabled": True,
                 "server_name": vless.get("serverName") or "www.microsoft.com",
@@ -132,7 +133,7 @@ def render_singbox_config(payload: dict[str, Any]) -> dict[str, Any]:
         "route": {
             "auto_detect_interface": True,
             "final": "proxy",
-            "default_domain_resolver": "mosdns",
+            "default_domain_resolver": DOMAIN_RESOLVER,
             "rules": route_rules,
         },
         "experimental": {
