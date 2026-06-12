@@ -105,8 +105,8 @@ docker-compose logs api 2>&1 | grep "GFC] Security"   # 首次安装可见自动
 浏览器访问：`http://<控制面IP>:5173`
 
 - 用户：`admin`
-- 初始密码：**系统设置 → 平台安全**（锁定态灰色只读框可复制），或 API 启动日志
-- 首次登录须修改密码
+- 用户名 `admin`，初始密码 **`admin123`**（登录页显示；亦可在 API 日志 `grep 'GFC] Security'` 查看）
+- **首次登录须修改密码**（改密前 `generated_admin_password` 保留，流程不变）
 
 ### 3.3 平台安全页说明
 

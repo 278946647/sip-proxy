@@ -29,10 +29,6 @@ def _generate_auth_secret() -> str:
     return secrets.token_urlsafe(48)
 
 
-def _generate_admin_password() -> str:
-    return secrets.token_urlsafe(12)
-
-
 def _is_default_bootstrap(value: str) -> bool:
     return value.strip() in ("", "demo-bootstrap")
 
@@ -47,6 +43,12 @@ def _is_default_auth_secret(value: str) -> bool:
 
 def _is_default_admin_password_env() -> bool:
     return settings.admin_default_password in ("", "admin123")
+
+
+def initial_admin_password() -> str:
+    """Fixed first-login password when using default env (still requires change on first login)."""
+    pwd = (settings.admin_default_password or "").strip()
+    return pwd if pwd else "admin123"
 
 
 def get_bootstrap_tokens() -> set[str]:
@@ -117,7 +119,7 @@ async def ensure_platform_secrets(session: AsyncSession) -> dict[str, Any]:
 
     generated_admin_password: str | None = None
     if _is_default_admin_password_env():
-        generated_admin_password = _generate_admin_password()
+        generated_admin_password = initial_admin_password()
 
     data = {
         "bootstrap_tokens": bootstrap,

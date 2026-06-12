@@ -6,3 +6,4 @@ sqlalchemy==2.0.32
 aiosqlite==0.20.0
 python-multipart==0.0.9
 cryptography>=42.0.0
+prometheus-client>=0.20.0
