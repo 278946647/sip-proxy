@@ -103,7 +103,13 @@ INSTALL_ARGS=()
 [[ $NON_INTERACTIVE -eq 1 ]] && INSTALL_ARGS+=(--yes)
 bash "$CLIENT_ROOT/deploy/install.sh" "${INSTALL_ARGS[@]}"
 
-echo "==> 5) 一键修复（最新脚本）"
+echo "==> 5) 应用 LAN 桥接 bridge_lan"
+GFC_ROOT="${GFC_ROOT:-/opt/gfc-client}"
+export PYTHONPATH="${GFC_ROOT}/client-agent"
+"${GFC_ROOT}/client-agent/.venv/bin/python" -c \
+  "from client_agent.network import apply_network; ok, msg = apply_network(); print(msg)"
+
+echo "==> 6) 一键修复（最新脚本）"
 if [[ -f "$CLIENT_ROOT/deploy/repair-all.sh" ]]; then
   bash "$CLIENT_ROOT/deploy/repair-all.sh" || true
 fi

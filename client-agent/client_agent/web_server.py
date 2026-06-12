@@ -16,9 +16,11 @@ from .network import network_status
 from .web_actions import (
     LOG_FILES,
     SERVICE_UNITS,
+    apply_bridge_network,
     easymosdns_update,
     export_dns_list,
     flash_line_code,
+    get_bridge_network,
     get_dns_lists,
     get_singbox_routing,
     import_dns_list,
@@ -134,6 +136,10 @@ class ClientWebHandler(BaseHTTPRequestHandler):
 
             if path == "/api/network":
                 _json_response(self, HTTPStatus.OK, network_status())
+                return
+
+            if path == "/api/network/bridge":
+                _json_response(self, HTTPStatus.OK, get_bridge_network())
                 return
 
             if self._mode == "flash":
@@ -273,6 +279,12 @@ class ClientWebHandler(BaseHTTPRequestHandler):
                 body = _read_json_body(self)
                 mode = str(body.get("mode", "")).strip()
                 result = set_singbox_routing(mode)
+                _json_response(self, HTTPStatus.OK, result)
+                return
+
+            if path == "/api/network/bridge":
+                body = _read_json_body(self)
+                result = apply_bridge_network(body)
                 _json_response(self, HTTPStatus.OK, result)
                 return
 

@@ -172,6 +172,7 @@ GFC_WEB_MODE=both
 GFC_STATUS_FILE=/var/lib/gfc-client/status.json
 GFC_ENV_FILE=/etc/gfc-client/gfc.env
 GFC_LOG_DIR=/var/log/gfc-client
+GFC_BRIDGE_NAME=bridge_lan
 GFC_LAN_ADDRESS=192.168.68.1
 GFC_LAN_NETWORK=192.168.68.0
 GFC_LAN_PREFIX=24

@@ -577,6 +577,20 @@ textarea {
   overflow: auto;
 }
 
+.checkbox-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 0;
+}
+
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
 .dns-add-input,
 .dns-list-view {
   width: 100%;

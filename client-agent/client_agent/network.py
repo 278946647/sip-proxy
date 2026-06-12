@@ -12,7 +12,9 @@ GFC_ENV = Path(os.environ.get("GFC_ENV_FILE", "/etc/gfc-client/gfc.env"))
 NETPLAN_FILE = Path("/etc/netplan/99-gfc-client.yaml")
 DNSMASQ_FILE = Path("/etc/dnsmasq.d/gfc-client.conf")
 NFT_BOOT = GFC_ETC / "gfc-boot.nft"
+BRIDGE_CONFIG_FILE = GFC_ETC / "network-bridge.json"
 
+DEFAULT_BRIDGE_NAME = os.environ.get("GFC_BRIDGE_NAME", "bridge_lan")
 LAN_ADDRESS = os.environ.get("GFC_LAN_ADDRESS", "192.168.68.1")
 LAN_PREFIX = int(os.environ.get("GFC_LAN_PREFIX", "24"))
 LAN_NETWORK = os.environ.get("GFC_LAN_NETWORK", "192.168.68.0")
@@ -39,6 +41,8 @@ def list_physical_interfaces() -> list[str]:
         name = p.name
         if _SKIP_IFACE_RE.match(name):
             continue
+        if name.startswith(DEFAULT_BRIDGE_NAME):
+            continue
         if (p / "device").exists() or name.startswith(("eth", "en", "eno", "ens", "enp")):
             names.append(name)
 
@@ -53,16 +57,67 @@ def detect_wan_lan(
     wan: str | None = None,
     lan: str | None = None,
 ) -> tuple[str | None, str | None, list[str]]:
+    cfg = load_bridge_config()
     ifaces = list_physical_interfaces()
     if not ifaces:
         return wan, lan, ifaces
 
-    wan_iface = (wan or os.environ.get("GFC_WAN_IFACE") or "").strip() or ifaces[0]
+    wan_iface = (wan or cfg.get("wan") or os.environ.get("GFC_WAN_IFACE") or "").strip() or ifaces[0]
+
+    if cfg.get("mode") == "bridge" and cfg.get("bridgeName"):
+        lan_iface = (lan or cfg["bridgeName"]).strip()
+        return wan_iface, lan_iface, ifaces
+
     remaining = [i for i in ifaces if i != wan_iface]
     lan_iface = (lan or os.environ.get("GFC_LAN_IFACE") or "").strip()
     if not lan_iface and remaining:
         lan_iface = remaining[0]
     return wan_iface, lan_iface or None, ifaces
+
+
+def default_bridge_config() -> dict[str, Any]:
+    ifaces = list_physical_interfaces()
+    wan = ifaces[0] if ifaces else ""
+    members: list[str] = [ifaces[-1]] if len(ifaces) >= 2 else []
+    return {
+        "mode": "bridge",
+        "bridgeName": DEFAULT_BRIDGE_NAME,
+        "wan": wan,
+        "members": members,
+        "lanAddress": LAN_ADDRESS,
+        "lanPrefix": LAN_PREFIX,
+        "dhcpStart": DHCP_START,
+        "dhcpEnd": DHCP_END,
+    }
+
+
+def load_bridge_config() -> dict[str, Any]:
+    if BRIDGE_CONFIG_FILE.is_file():
+        try:
+            data = json.loads(BRIDGE_CONFIG_FILE.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return {**default_bridge_config(), **data}
+        except (OSError, json.JSONDecodeError):
+            pass
+    return default_bridge_config()
+
+
+def save_bridge_config(data: dict[str, Any]) -> dict[str, Any]:
+    cfg = default_bridge_config()
+    cfg.update({k: v for k, v in data.items() if v is not None})
+    cfg["mode"] = "bridge"
+    if not cfg.get("bridgeName"):
+        cfg["bridgeName"] = DEFAULT_BRIDGE_NAME
+    members = cfg.get("members") or []
+    if isinstance(members, str):
+        members = [m.strip() for m in members.split(",") if m.strip()]
+    cfg["members"] = [m for m in members if m in list_physical_interfaces()]
+    BRIDGE_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    BRIDGE_CONFIG_FILE.write_text(
+        json.dumps(cfg, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return cfg
 
 
 def _read_env_lines() -> list[str]:
@@ -89,7 +144,50 @@ def _write_env_value(key: str, value: str) -> None:
     os.chmod(GFC_ENV, 0o600)
 
 
-def render_netplan(wan: str, lan: str | None) -> str:
+def render_netplan_bridge(cfg: dict[str, Any]) -> str:
+    wan = cfg["wan"]
+    bridge = cfg["bridgeName"]
+    members: list[str] = cfg.get("members") or []
+    addr = cfg.get("lanAddress", LAN_ADDRESS)
+    prefix = int(cfg.get("lanPrefix", LAN_PREFIX))
+
+    eth_lines = [
+        f"""    {wan}:
+      dhcp4: true
+      optional: true""",
+    ]
+    for m in members:
+        if m == wan:
+            continue
+        eth_lines.append(
+            f"""    {m}:
+      dhcp4: false
+      optional: true"""
+        )
+
+    member_yaml = ", ".join(members) if members else ""
+    bridge_block = f"""
+  bridges:
+    {bridge}:
+      interfaces: [{member_yaml}]
+      addresses:
+        - {addr}/{prefix}
+      parameters:
+        stp: false
+        forward-delay: 0
+      optional: true"""
+
+    return f"""# GFC client — WAN + LAN bridge (managed by gfc-client-agent)
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+{chr(10).join(eth_lines)}
+{bridge_block}
+"""
+
+
+def render_netplan_direct(wan: str, lan: str | None) -> str:
     lan_block = ""
     if lan:
         lan_block = f"""
@@ -98,7 +196,7 @@ def render_netplan(wan: str, lan: str | None) -> str:
       addresses:
         - {LAN_ADDRESS}/{LAN_PREFIX}
       optional: true"""
-    return f"""# GFC client box — OpenWrt-style WAN/LAN (managed by gfc-client-agent)
+    return f"""# GFC client — OpenWrt-style WAN/LAN direct (managed by gfc-client-agent)
 network:
   version: 2
   renderer: networkd
@@ -164,15 +262,43 @@ def apply_network(
     *,
     wan: str | None = None,
     lan: str | None = None,
+    bridge_config: dict[str, Any] | None = None,
     force: bool = False,
 ) -> tuple[bool, str]:
-    wan_iface, lan_iface, all_ifaces = detect_wan_lan(wan, lan)
-    if not wan_iface:
+    if bridge_config:
+        cfg = save_bridge_config(bridge_config)
+    else:
+        cfg = load_bridge_config()
+
+    ifaces = list_physical_interfaces()
+    if not ifaces:
         return False, "no physical network interfaces found"
 
-    messages: list[str] = [f"ifaces={all_ifaces}", f"wan={wan_iface}", f"lan={lan_iface or 'none'}"]
+    wan_iface = (wan or cfg.get("wan") or "").strip() or ifaces[0]
+    cfg["wan"] = wan_iface
 
-    NETPLAN_FILE.write_text(render_netplan(wan_iface, lan_iface), encoding="utf-8")
+    use_bridge = cfg.get("mode") == "bridge" and cfg.get("bridgeName")
+    if use_bridge:
+        if not cfg.get("members"):
+            remaining = [i for i in ifaces if i != wan_iface]
+            cfg["members"] = [remaining[-1]] if remaining else []
+            save_bridge_config(cfg)
+        lan_iface = cfg["bridgeName"]
+        netplan = render_netplan_bridge(cfg)
+    else:
+        _, lan_iface, _ = detect_wan_lan(wan_iface, lan)
+        netplan = render_netplan_direct(wan_iface, lan_iface)
+
+    messages: list[str] = [
+        f"ifaces={ifaces}",
+        f"wan={wan_iface}",
+        f"lan={lan_iface or 'none'}",
+        f"mode={'bridge' if use_bridge else 'direct'}",
+    ]
+    if use_bridge:
+        messages.append(f"bridge_members={cfg.get('members')}")
+
+    NETPLAN_FILE.write_text(netplan, encoding="utf-8")
     messages.append(f"netplan -> {NETPLAN_FILE}")
 
     if lan_iface:
@@ -190,6 +316,8 @@ def apply_network(
     _write_env_value("GFC_WAN_IFACE", wan_iface)
     if lan_iface:
         _write_env_value("GFC_LAN_IFACE", lan_iface)
+    if use_bridge:
+        _write_env_value("GFC_BRIDGE_NAME", cfg["bridgeName"])
     _write_env_value("GFC_PROXY_MODE", os.environ.get("GFC_PROXY_MODE", "gateway"))
 
     if Path("/usr/sbin/netplan").exists():
@@ -211,8 +339,11 @@ def apply_network(
             {
                 "wan": wan_iface,
                 "lan": lan_iface,
-                "all": all_ifaces,
-                "lanAddress": LAN_ADDRESS,
+                "all": ifaces,
+                "mode": cfg.get("mode", "bridge"),
+                "bridgeName": cfg.get("bridgeName"),
+                "bridgeMembers": cfg.get("members", []),
+                "lanAddress": cfg.get("lanAddress", LAN_ADDRESS),
                 "lanNetwork": f"{LAN_NETWORK}/{LAN_PREFIX}",
                 "dhcpRange": [DHCP_START, DHCP_END],
             },
@@ -225,6 +356,7 @@ def apply_network(
 
 
 def network_status() -> dict[str, Any]:
+    cfg = load_bridge_config()
     wan, lan, all_ifaces = detect_wan_lan()
     roles_file = GFC_ETC / "network-roles.json"
     roles: dict[str, Any] = {}
@@ -237,6 +369,7 @@ def network_status() -> dict[str, Any]:
         "wan": wan,
         "lan": lan,
         "interfaces": all_ifaces,
+        "bridge": cfg,
         "lanAddress": LAN_ADDRESS,
         "lanPrefix": LAN_PREFIX,
         "lanNetwork": f"{LAN_NETWORK}/{LAN_PREFIX}",
@@ -246,6 +379,7 @@ def network_status() -> dict[str, Any]:
             "enabled": bool(lan),
             "start": DHCP_START,
             "end": DHCP_END,
+            "interface": lan,
         },
         "roles": roles,
     }

@@ -11,6 +11,7 @@ from .apply import apply_dns_config, reapply_local_config
 from .easymosdns_update import update_easymosdns_rules
 from .dns_lists import LIST_FILES, append_domains, export_list_text, import_list_text, read_list
 from .line_code import code_kind, decode_line_code, is_platform_payload
+from .network import apply_network, load_bridge_config, network_status, save_bridge_config
 from .routing_mode import read_routing_mode, write_routing_mode
 
 GFC_ENV = Path(os.environ.get("GFC_ENV_FILE", "/etc/gfc-client/gfc.env"))
@@ -258,6 +259,26 @@ def export_dns_list(name: str) -> dict[str, Any]:
     if name not in LIST_FILES:
         raise ValueError(f"unknown list: {name}")
     return {"list": name, "content": export_list_text(name)}  # type: ignore[arg-type]
+
+
+def get_bridge_network() -> dict[str, Any]:
+    return {"config": load_bridge_config(), "status": network_status()}
+
+
+def apply_bridge_network(data: dict[str, Any]) -> dict[str, Any]:
+    cfg = save_bridge_config(
+        {
+            "bridgeName": str(data.get("bridgeName", "")).strip() or None,
+            "wan": str(data.get("wan", "")).strip() or None,
+            "members": data.get("members") if isinstance(data.get("members"), list) else None,
+            "lanAddress": str(data.get("lanAddress", "")).strip() or None,
+            "lanPrefix": int(data["lanPrefix"]) if data.get("lanPrefix") not in (None, "") else None,
+        }
+    )
+    ok, msg = apply_network(bridge_config=cfg)
+    if not ok:
+        raise RuntimeError(msg)
+    return {"ok": True, "config": cfg, "message": msg}
 
 
 def easymosdns_update(source: str) -> dict[str, Any]:

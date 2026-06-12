@@ -21,14 +21,20 @@ if not ok:
     raise SystemExit(1)
 "
 
-echo "==> sing-box check"
-sing-box check -c /etc/gfc-client/sing-box.json
-
-echo "==> Restart mosdns + sing-box"
+echo "==> Restart mosdns"
 systemctl restart gfc-mosdns.service
 sleep 1
-systemctl restart gfc-client-sing-box.service
-sleep 1
 
-systemctl is-active gfc-mosdns.service gfc-client-sing-box.service
+if [[ -f /etc/gfc-client/sing-box.json ]]; then
+  echo "==> sing-box check"
+  sing-box check -c /etc/gfc-client/sing-box.json
+  systemctl restart gfc-client-sing-box.service
+  sleep 1
+  systemctl is-active gfc-client-sing-box.service
+else
+  echo "==> skip sing-box (未刷线路码，无 sing-box.json — 刷码后 agent 会自动生成)"
+  systemctl stop gfc-client-sing-box.service 2>/dev/null || true
+fi
+
+systemctl is-active gfc-mosdns.service
 echo "Done."

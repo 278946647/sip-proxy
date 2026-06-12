@@ -80,6 +80,14 @@ const API = {
   easymosdnsUpdate(source = "github") {
     return this.post("/api/dns/easymosdns-update", { source });
   },
+
+  bridgeNetwork() {
+    return this.get("/api/network/bridge");
+  },
+
+  applyBridgeNetwork(data) {
+    return this.post("/api/network/bridge", data);
+  },
 };
 
 function fmtMbps(v) {
