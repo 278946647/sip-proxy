@@ -65,4 +65,4 @@ python -m node_agent --server http://localhost:8080 \
   --bootstrap-token demo-bootstrap --node-name demo --region ap-southeast-1
 ```
 
-Docker：`cp .env.example .env && docker compose up -d --build`
+Docker：`cp .env.example .env && ./gfc-compose up -d`（勿直接用 `docker-compose up` 替换容器，见 `deploy/control/gfc-compose.sh`）

@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Repo-local entry; install-docker.sh also installs /usr/local/bin/gfc-compose
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+exec bash "$ROOT/deploy/control/gfc-compose.sh" "$@"

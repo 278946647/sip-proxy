@@ -34,8 +34,9 @@ fi
 echo "==> build api + web"
 "${COMPOSE[@]}" build --no-cache api web
 
-echo "==> replace containers (avoid docker-compose 1.29 ContainerConfig bug)"
+echo "==> safe replace all containers (gfc_compose_safe_up)"
 gfc_compose_safe_up "$ROOT" 0
+install -m 755 "$ROOT/deploy/control/gfc-compose.sh" /usr/local/bin/gfc-compose 2>/dev/null || true
 gfc_compose_wait_api 8080 30 || true
 
 echo ""

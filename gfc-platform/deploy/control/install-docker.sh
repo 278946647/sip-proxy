@@ -61,6 +61,7 @@ fi
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq git curl ca-certificates docker.io docker-compose
+apt-get install -y -qq docker-compose-plugin 2>/dev/null || true
 
 systemctl enable --now docker
 
@@ -128,8 +129,10 @@ fi
 
 gfc_cp_write_env_file "$REPO_ROOT/.env" "$REPO_ROOT/deploy/control/install.env"
 
+install -m 755 "$REPO_ROOT/deploy/control/gfc-compose.sh" /usr/local/bin/gfc-compose
+
 cd "$REPO_ROOT"
-echo "==> Building and starting control plane..."
+echo "==> Building and starting control plane (gfc-compose safe up)..."
 gfc_compose_safe_up "$REPO_ROOT" 1
 gfc_compose_wait_api "${GFC_PUBLIC_PORT:-8080}" 30 || true
 
@@ -149,4 +152,9 @@ echo ""
 echo "==> 初始管理员账号（首次安装）"
 echo "  用户名: admin"
 echo "  初始密码: admin123（登录页亦会显示，登录后须立即修改）"
-echo "  Bootstrap Token: ${COMPOSE[*]} logs api 2>&1 | grep 'GFC] Security'"
+echo "  Bootstrap Token: gfc-compose logs api 2>&1 | grep 'GFC] Security'"
+echo ""
+echo "日常运维请用 gfc-compose（勿直接用 docker-compose up 替换容器）:"
+echo "  gfc-compose up -d          # 全栈"
+echo "  gfc-compose up -d web      # 仅 Web"
+echo "  sudo bash deploy/control/redeploy-web.sh"

@@ -201,21 +201,25 @@ sudo bash deploy/control/redeploy-web.sh
 
 适用于只改 UI、不动 API 的场景；不触碰数据库。
 
-### 6.3 手工等价命令（脚本失败时）
+### 6.3 日常 Compose 命令（统一用 gfc-compose）
+
+安装脚本会把 `gfc-compose` 装到 `/usr/local/bin/`。**不要**直接用 `docker-compose up -d` 替换已有容器（1.29 会报 `ContainerConfig`）。
 
 ```bash
-cd /opt/gfc
-git fetch origin
-git checkout -B main origin/main
+cd /opt/sip-proxy/gfc-platform   # 或你的 gfc-platform 目录
 
-docker-compose build --no-cache api web    # 或仅 web
-docker stop gfc_api_1 gfc_web_1 2>/dev/null; docker rm gfc_api_1 gfc_web_1 2>/dev/null
-docker-compose up -d
+gfc-compose build --no-cache web   # 或 api web
+gfc-compose up -d                  # 全栈安全重启
+gfc-compose up -d web              # 仅 Web（不动 API）
+gfc-compose ps
+gfc-compose logs --tail=50 api
 
-curl -fsS http://127.0.0.1:8080/healthz
+# 或使用 Makefile
+make redeploy-web
+make upgrade
 ```
 
-**勿使用** `docker-compose up -d --force-recreate`（docker-compose 1.29 可能报 `KeyError: ContainerConfig`）。
+等价脚本：`sudo bash deploy/control/redeploy-web.sh`、`sudo bash deploy/control/upgrade-control.sh`
 
 ### 6.4 控制平台换机 / 新装后重连已有转发节点
 
@@ -288,14 +292,14 @@ sudo systemctl restart gfc-node-agent
 | 现象 | 处理 |
 |------|------|
 | `git pull`: You are not currently on a branch | `git fetch origin && git checkout -B main origin/main` |
-| `KeyError: ContainerConfig` | `sudo bash deploy/control/repair-control.sh`（先删容器再 up） |
+| `KeyError: ContainerConfig` | 改用 `gfc-compose up -d web` 或 `sudo bash deploy/control/repair-control.sh` |
 | `redeploy-web.sh` 不存在 | 先 `git checkout -B main origin/main` 再 pull |
 | Bootstrap 403 | 节点 `BOOTSTRAP_TOKEN` 与控制面「平台安全」不一致 |
 | 平台安全仍是输入框 | 执行 `redeploy-web.sh`，浏览器 Ctrl+Shift+R |
 | 节点控制台离线但业务正常 | 控制面不可达或心跳中断；数据面可能仍在转发 |
 | DNS 不通 / 无 fwmark | `force-reapply.sh` 或 `repair_forward_node.py` |
-| SOCKS 探测 curl skipped | 重建 API：`docker-compose build --no-cache api` 并替换容器 |
-| `docker-compose-plugin` 找不到 | `apt install docker-compose`，命令用 `docker-compose` |
+| SOCKS 探测 curl skipped | `gfc-compose build --no-cache api && gfc-compose up -d api` |
+| 误用 docker-compose 报错 | 一律改用 `gfc-compose`（见 6.3） |
 
 ---
 
