@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .apply import apply_dns_config, reapply_local_config
+from .easymosdns_update import update_easymosdns_rules
 from .dns_lists import LIST_FILES, append_domains, export_list_text, import_list_text, read_list
 from .line_code import code_kind, decode_line_code, is_platform_payload
 from .routing_mode import read_routing_mode, write_routing_mode
@@ -257,6 +258,13 @@ def export_dns_list(name: str) -> dict[str, Any]:
     if name not in LIST_FILES:
         raise ValueError(f"unknown list: {name}")
     return {"list": name, "content": export_list_text(name)}  # type: ignore[arg-type]
+
+
+def easymosdns_update(source: str) -> dict[str, Any]:
+    src = source.strip().lower()
+    if src not in ("github", "cdn"):
+        raise ValueError("source 必须是 github（update）或 cdn（update-cdn）")
+    return update_easymosdns_rules(src)  # type: ignore[arg-type]
 
 
 def get_singbox_routing() -> dict[str, Any]:

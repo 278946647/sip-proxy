@@ -76,6 +76,10 @@ const API = {
   setSingboxRouting(mode) {
     return this.post("/api/singbox/routing", { mode });
   },
+
+  easymosdnsUpdate(source = "github") {
+    return this.post("/api/dns/easymosdns-update", { source });
+  },
 };
 
 function fmtMbps(v) {

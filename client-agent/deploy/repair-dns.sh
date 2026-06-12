@@ -22,9 +22,9 @@ echo "==> Ensure DNS lists + rewrite mosdns.yaml"
 "$PY" -c "
 from client_agent.apply import apply_dns_config, reapply_local_config
 ok, msg = apply_dns_config()
-print(msg)
+print('mosdns:', msg)
 ok2, msg2 = reapply_local_config()
-print(msg2)
+print('full:', msg2)
 "
 
 echo "==> Restart services"

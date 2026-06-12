@@ -51,6 +51,7 @@ def render_singbox_config(payload: dict[str, Any]) -> dict[str, Any]:
             "server_port": port,
             "uuid": uuid,
             "flow": vless.get("flow") or "xtls-rprx-vision",
+            "domain_resolver": "mosdns",
             "tls": {
                 "enabled": True,
                 "server_name": vless.get("serverName") or "www.microsoft.com",
@@ -131,6 +132,7 @@ def render_singbox_config(payload: dict[str, Any]) -> dict[str, Any]:
         "route": {
             "auto_detect_interface": True,
             "final": "proxy",
+            "default_domain_resolver": "mosdns",
             "rules": route_rules,
         },
         "experimental": {

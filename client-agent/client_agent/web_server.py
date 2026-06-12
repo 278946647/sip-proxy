@@ -16,6 +16,7 @@ from .network import network_status
 from .web_actions import (
     LOG_FILES,
     SERVICE_UNITS,
+    easymosdns_update,
     export_dns_list,
     flash_line_code,
     get_dns_lists,
@@ -272,6 +273,13 @@ class ClientWebHandler(BaseHTTPRequestHandler):
                 body = _read_json_body(self)
                 mode = str(body.get("mode", "")).strip()
                 result = set_singbox_routing(mode)
+                _json_response(self, HTTPStatus.OK, result)
+                return
+
+            if path == "/api/dns/easymosdns-update":
+                body = _read_json_body(self)
+                source = str(body.get("source", "github")).strip().lower()
+                result = easymosdns_update(source)
                 _json_response(self, HTTPStatus.OK, result)
                 return
 

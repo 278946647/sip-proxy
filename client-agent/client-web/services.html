@@ -85,9 +85,22 @@
         </div>
 
         <div class="tab-panel" id="panel-dns" hidden>
+          <div class="panel">
+            <div class="panel-header">easymosdns 规则更新</div>
+            <div class="panel-body">
+              <p class="hint" style="margin-top:0">
+                easymosdns 是 <strong>mosdns 的规则集与配置方案</strong>，不是二选一。GFC 用 mosdns 跑 DNS，规则表来自 easymosdns 的
+                <code>rules/update</code>（GitHub）与 <code>rules/update-cdn</code>（CDN 镜像），并映射到 block / china / global 三表。
+              </p>
+              <div class="btn-row">
+                <button class="btn btn-primary" id="btn-em-update" type="button">update（GitHub）</button>
+                <button class="btn btn-secondary" id="btn-em-update-cdn" type="button">update-cdn（CDN）</button>
+              </div>
+              <pre class="update-log" id="em-update-log" hidden></pre>
+            </div>
+          </div>
           <p class="hint" style="margin:0 0 12px">
-            基于 mosdns 的 easymosdns 风格三表分流（block / china / global）。每行一个域名，支持 <code>full:example.com</code>。
-            可从 <a href="https://github.com/pmkol/easymosdns" target="_blank" rel="noopener">easymosdns</a> 导入规则文件。
+            手动编辑三表（block / china / global）。每行一个域名，支持 <code>full:example.com</code>。
           </p>
           <div id="dns-panels"></div>
         </div>
@@ -292,6 +305,32 @@
         });
       });
     }
+
+    async function runEasymosdnsUpdate(source) {
+      const logEl = document.getElementById("em-update-log");
+      hideAlert(alertEl);
+      logEl.hidden = false;
+      logEl.textContent = "正在下载并校验规则…";
+      try {
+        const r = await API.easymosdnsUpdate(source);
+        const lines = [
+          `${r.label}: ${r.ok ? "成功" : "部分失败"}`,
+          `导入 block=${r.imported?.block ?? 0} china=${r.imported?.china ?? 0} global=${r.imported?.global ?? 0}`,
+          r.apply_message || "",
+          ...(r.errors || []),
+        ].filter(Boolean);
+        logEl.textContent = lines.join("\n");
+        showAlert(alertEl, r.ok ? "success" : "error", `${r.label} 完成`);
+        await loadDnsPanels();
+        await refreshServices();
+      } catch (e) {
+        logEl.textContent = e.message;
+        showAlert(alertEl, "error", e.message);
+      }
+    }
+
+    document.getElementById("btn-em-update").addEventListener("click", () => runEasymosdnsUpdate("github"));
+    document.getElementById("btn-em-update-cdn").addEventListener("click", () => runEasymosdnsUpdate("cdn"));
 
     document.getElementById("refresh-btn").addEventListener("click", () => {
       refreshServices().catch(console.error);
