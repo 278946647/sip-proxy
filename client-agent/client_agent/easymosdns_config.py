@@ -24,7 +24,7 @@ GFC_DATA_PROVIDERS = """
     file: {china}
     auto_reload: true
   - tag: gfc_global
-    file: {global}
+    file: {global_list}
     auto_reload: true
 """
 
@@ -115,7 +115,7 @@ def _inject_gfc_overlay(raw: str) -> str:
     china = LIST_FILES["china"]
     global_f = LIST_FILES["global"]
 
-    providers = GFC_DATA_PROVIDERS.format(block=block, china=china, global=global_f)
+    providers = GFC_DATA_PROVIDERS.format(block=block, china=china, global_list=global_f)
     if "data_providers:" in raw:
         raw = raw.replace("data_providers:", "data_providers:" + providers, 1)
     elif "plugins:" in raw:

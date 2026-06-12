@@ -19,9 +19,7 @@ PY="${AGENT_DIR}/.venv/bin/python"
 
 echo "==> Stop agent (prevent overwriting sing-box.json during repair)"
 systemctl stop gfc-client-agent 2>/dev/null || true
-systemctl stop gfc-client-flash 2>/dev/null || true
-systemctl disable gfc-client-flash 2>/dev/null || true
-systemctl mask gfc-client-flash 2>/dev/null || true
+systemctl unmask gfc-client-flash 2>/dev/null || true
 
 echo "==> repair-web"
 bash "$_DIR/repair-web.sh"
@@ -45,7 +43,7 @@ systemctl start gfc-client-agent
 
 echo ""
 echo "======== Summary ========"
-systemctl is-active gfc-client-web gfc-mosdns gfc-client-sing-box gfc-client-agent 2>/dev/null || true
+systemctl is-active gfc-client-web gfc-client-flash gfc-mosdns gfc-client-sing-box gfc-client-agent 2>/dev/null || true
 ss -lntup | grep -E ':80 |:81 ' || true
 if [[ -f /etc/gfc-client/sing-box.json ]]; then
   sing-box check -c /etc/gfc-client/sing-box.json

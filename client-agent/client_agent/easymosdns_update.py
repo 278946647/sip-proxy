@@ -28,7 +28,7 @@ RULE_FILES = (
 )
 
 GFC_ETC = Path(os.environ.get("GFC_ETC", "/etc/gfc-client"))
-EASYMODNS_RULES_DIR = GFC_ETC / "mosdns" / "easymosdns-rules"
+EASYMODNS_RULES_DIR = GFC_ETC / "mosdns" / "easymosdns" / "rules"
 
 
 def _fetch_curl(url: str, timeout: int = 180) -> bytes:

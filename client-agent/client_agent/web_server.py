@@ -318,30 +318,40 @@ def _run_server(
     web_root: Path,
     *,
     use_tls: bool = False,
+    optional: bool = False,
 ) -> None:
     try:
         server = ThreadingHTTPServer(("0.0.0.0", port), ClientWebHandler)
-    except OSError as exc:
-        print(f"FATAL: cannot bind 0.0.0.0:{port} mode={mode}: {exc}", flush=True)
-        raise
-    server.web_root = web_root  # type: ignore[attr-defined]
-    server.web_mode = mode  # type: ignore[attr-defined]
-    scheme = "http"
-    if use_tls:
-        from .web_tls import ensure_self_signed_cert
+        server.web_root = web_root  # type: ignore[attr-defined]
+        server.web_mode = mode  # type: ignore[attr-defined]
+        scheme = "http"
+        if use_tls:
+            from .web_tls import ensure_self_signed_cert
 
-        lan_ip = os.environ.get("GFC_LAN_ADDRESS", "192.168.68.1")
-        cert, key = ensure_self_signed_cert(lan_ip)
-        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
-        ctx.load_cert_chain(certfile=str(cert), keyfile=str(key))
-        server.socket = ctx.wrap_socket(server.socket, server_side=True)
-        scheme = "https"
-    print(
-        f"gfc-client-web mode={mode} {scheme}://0.0.0.0:{port} root={web_root}",
-        flush=True,
-    )
-    server.serve_forever()
+            lan_ip = os.environ.get("GFC_LAN_ADDRESS", "192.168.68.1")
+            cert, key = ensure_self_signed_cert(lan_ip)
+            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+            ctx.load_cert_chain(certfile=str(cert), keyfile=str(key))
+            server.socket = ctx.wrap_socket(server.socket, server_side=True)
+            scheme = "https"
+        print(
+            f"gfc-client-web mode={mode} {scheme}://0.0.0.0:{port} root={web_root}",
+            flush=True,
+        )
+        server.serve_forever()
+    except OSError as exc:
+        msg = f"cannot bind 0.0.0.0:{port} mode={mode}: {exc}"
+        if optional:
+            print(f"WARN: {msg}", flush=True)
+            return
+        print(f"FATAL: {msg}", flush=True)
+        raise
+    except Exception as exc:
+        if optional:
+            print(f"WARN: listener :{port} ({mode}) failed: {exc}", flush=True)
+            return
+        raise
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -371,18 +381,21 @@ def main(argv: list[str] | None = None) -> int:
             "no",
         )
         threads: list[threading.Thread] = []
-        listeners: list[tuple[int, str, bool]] = [
+        required: list[tuple[int, str, bool]] = [
             (admin_port, "admin", False),
             (flash_port, "flash", False),
         ]
+        optional: list[tuple[int, str, bool]] = []
         if enable_https:
-            listeners.append((https_port, "admin", True))
+            optional.append((https_port, "admin", True))
+        listeners = required + optional
         errors: list[str] = []
         for port, mode, tls in listeners:
+            is_optional = (port, mode, tls) in optional
             t = threading.Thread(
                 target=_run_server,
                 args=(port, mode, web_root),
-                kwargs={"use_tls": tls},
+                kwargs={"use_tls": tls, "optional": is_optional},
                 name=f"gfc-web-{port}{'-tls' if tls else ''}",
                 daemon=False,
             )
@@ -392,9 +405,12 @@ def main(argv: list[str] | None = None) -> int:
         import time
 
         time.sleep(0.8)
-        for port, mode, _tls in listeners:
+        for port, mode, _tls in required:
             if not _port_listening(port):
                 errors.append(f":{port} ({mode}) not listening")
+        for port, mode, _tls in optional:
+            if not _port_listening(port):
+                print(f"WARN: optional :{port} ({mode}) not listening", flush=True)
 
         print(
             f"gfc-client-web listeners: http admin=:{admin_port}"

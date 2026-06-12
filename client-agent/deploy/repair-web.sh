@@ -49,12 +49,31 @@ if ss -lnt 2>/dev/null | grep ':80 ' | grep -qv python; then
   ss -lntup | grep ':80 ' || true
 fi
 
+_free_port() {
+  local port="$1"
+  if ! ss -lntup 2>/dev/null | grep -q ":${port} "; then
+    return 0
+  fi
+  local pids
+  pids="$(ss -lntup 2>/dev/null | grep ":${port} " | sed -n 's/.*pid=\([0-9]*\).*/\1/p' | sort -u)"
+  for pid in $pids; do
+    [[ -n "$pid" ]] || continue
+    comm="$(ps -p "$pid" -o comm= 2>/dev/null || true)"
+    if [[ "$comm" == python* ]] || [[ "$comm" == "python3" ]]; then
+      echo "    free :${port} — stop stale python pid=$pid"
+      kill "$pid" 2>/dev/null || true
+      sleep 0.5
+    fi
+  done
+}
+
 systemctl daemon-reload
 systemctl enable gfc-client-web 2>/dev/null || true
-systemctl stop gfc-client-flash 2>/dev/null || true
-systemctl disable gfc-client-flash 2>/dev/null || true
 systemctl unmask gfc-client-flash 2>/dev/null || true
 systemctl enable gfc-client-flash 2>/dev/null || true
+
+_free_port 80
+_free_port 81
 
 if [[ -f /etc/gfc-client/gfc.env ]]; then
   if grep -q '^GFC_WEB_MODE=admin' /etc/gfc-client/gfc.env; then
@@ -65,6 +84,7 @@ if [[ -f /etc/gfc-client/gfc.env ]]; then
 fi
 
 systemctl restart gfc-client-web
+systemctl restart gfc-client-flash 2>/dev/null || true
 
 sleep 2
 echo ""
