@@ -14,6 +14,8 @@ set -euo pipefail
 _SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=deploy/control/install-config.sh
 source "$_SCRIPT_DIR/install-config.sh"
+# shellcheck source=deploy/control/compose-util.sh
+source "$_SCRIPT_DIR/compose-util.sh"
 
 CLONE_URL=""
 CLONE_DIR=""
@@ -126,18 +128,14 @@ fi
 
 gfc_cp_write_env_file "$REPO_ROOT/.env" "$REPO_ROOT/deploy/control/install.env"
 
-if docker compose version >/dev/null 2>&1; then
-  COMPOSE=(docker compose)
-else
-  COMPOSE=(docker-compose)
-fi
-
+cd "$REPO_ROOT"
 echo "==> Building and starting control plane..."
-docker rm -f gfc_api_1 gfc_web_1 2>/dev/null || true
-"${COMPOSE[@]}" up -d --build
+gfc_compose_safe_up "$REPO_ROOT" 1
+gfc_compose_wait_api "${GFC_PUBLIC_PORT:-8080}" 30 || true
 
 echo ""
 echo "==> Done"
+gfc_compose_cmd
 "${COMPOSE[@]}" ps
 echo ""
 local_ip=$(gfc_cp_default_ip)

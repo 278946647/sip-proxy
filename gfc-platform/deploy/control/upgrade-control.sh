@@ -8,16 +8,15 @@ set -euo pipefail
 ROOT="${GFC_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}"
 cd "$ROOT"
 
+# shellcheck source=deploy/control/compose-util.sh
+source "$(dirname "$0")/compose-util.sh"
+
 if [[ $EUID -ne 0 ]]; then
   echo "Run as root: sudo bash $0"
   exit 1
 fi
 
-if docker compose version >/dev/null 2>&1; then
-  COMPOSE=(docker compose)
-else
-  COMPOSE=(docker-compose)
-fi
+gfc_compose_cmd
 
 echo "==> sync code from origin/main"
 git fetch origin
@@ -36,18 +35,8 @@ echo "==> build api + web"
 "${COMPOSE[@]}" build --no-cache api web
 
 echo "==> replace containers (avoid docker-compose 1.29 ContainerConfig bug)"
-docker stop gfc_api_1 gfc_web_1 2>/dev/null || true
-docker rm gfc_api_1 gfc_web_1 2>/dev/null || true
-"${COMPOSE[@]}" up -d
-
-echo "==> wait for API"
-for _ in $(seq 1 30); do
-  if curl -fsS http://127.0.0.1:8080/healthz >/dev/null 2>&1; then
-    echo "OK: API healthy"
-    break
-  fi
-  sleep 2
-done
+gfc_compose_safe_up "$ROOT" 0
+gfc_compose_wait_api 8080 30 || true
 
 echo ""
 "${COMPOSE[@]}" ps

@@ -8,16 +8,17 @@ set -euo pipefail
 ROOT="${GFC_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}"
 cd "$ROOT"
 
+# shellcheck source=deploy/control/compose-util.sh
+source "$(dirname "$0")/compose-util.sh"
+
 if [[ $EUID -ne 0 ]]; then
   echo "Run as root: sudo bash $0"
   exit 1
 fi
 
-if docker compose version >/dev/null 2>&1; then
-  COMPOSE=(docker compose)
-else
-  COMPOSE=(docker-compose)
-fi
+gfc_compose_cmd
+PROJECT=$(gfc_compose_project_name "$ROOT")
+WEB_NAME="${PROJECT}_web_1"
 
 echo "==> sync code from origin/main"
 git fetch origin
@@ -40,8 +41,9 @@ echo "==> build web (no cache)"
 "${COMPOSE[@]}" build --no-cache web
 
 echo "==> remove old web container"
-docker stop gfc_web_1 2>/dev/null || true
-docker rm gfc_web_1 2>/dev/null || true
+docker stop "$WEB_NAME" 2>/dev/null || true
+docker rm "$WEB_NAME" 2>/dev/null || true
+docker rm -f gfc_web_1 "${PROJECT}_web_1" 2>/dev/null || true
 
 echo "==> start web only (--no-deps, do not touch api)"
 "${COMPOSE[@]}" up -d --no-deps web
@@ -50,7 +52,7 @@ echo "==> wait for nginx"
 sleep 2
 
 echo "==> verify new UI bundle in container"
-if docker exec gfc_web_1 sh -c "grep -rq '安全设置界面 v2' /usr/share/nginx/html/assets/ 2>/dev/null"; then
+if docker exec "$WEB_NAME" sh -c "grep -rq '安全设置界面 v2' /usr/share/nginx/html/assets/ 2>/dev/null"; then
   echo "OK: security settings UI v2 is in the running web image"
 else
   echo "ERROR: bundle missing '安全设置界面 v2' — build did not include latest SettingsPage.tsx"

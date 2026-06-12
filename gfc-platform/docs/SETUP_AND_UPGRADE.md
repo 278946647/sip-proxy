@@ -288,7 +288,7 @@ sudo systemctl restart gfc-node-agent
 | 现象 | 处理 |
 |------|------|
 | `git pull`: You are not currently on a branch | `git fetch origin && git checkout -B main origin/main` |
-| `KeyError: ContainerConfig` | 不用 `--force-recreate`；`docker rm` 后 `docker-compose up -d` |
+| `KeyError: ContainerConfig` | `sudo bash deploy/control/repair-control.sh`（先删容器再 up） |
 | `redeploy-web.sh` 不存在 | 先 `git checkout -B main origin/main` 再 pull |
 | Bootstrap 403 | 节点 `BOOTSTRAP_TOKEN` 与控制面「平台安全」不一致 |
 | 平台安全仍是输入框 | 执行 `redeploy-web.sh`，浏览器 Ctrl+Shift+R |
