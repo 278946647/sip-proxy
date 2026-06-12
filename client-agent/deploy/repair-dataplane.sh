@@ -21,7 +21,7 @@ systemctl stop gfc-client-agent 2>/dev/null || true
 
 echo "==> Reapply active dataplane"
 cd "$AGENT_DIR"
-PYTHONPATH="$AGENT_DIR" export GFC_ETC=/etc/gfc-client
+export GFC_ETC=/etc/gfc-client
 PYTHONPATH="$AGENT_DIR" "$PY" -c "
 from client_agent.activation import is_line_activated
 from client_agent.apply import reapply_local_config, restart_dataplane_services
