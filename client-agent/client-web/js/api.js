@@ -52,6 +52,30 @@ const API = {
   restartService(name) {
     return this.post("/api/service/restart", { service: name });
   },
+
+  dnsLists() {
+    return this.get("/api/dns/lists");
+  },
+
+  updateDnsList(list, domains, action = "append") {
+    return this.post("/api/dns/lists", { list, domains, action });
+  },
+
+  importDnsList(list, content, replace = true) {
+    return this.post("/api/dns/import", { list, content, replace });
+  },
+
+  exportDnsList(list) {
+    return this.get(`/api/dns/export?list=${encodeURIComponent(list)}`);
+  },
+
+  singboxRouting() {
+    return this.get("/api/singbox/routing");
+  },
+
+  setSingboxRouting(mode) {
+    return this.post("/api/singbox/routing", { mode });
+  },
 };
 
 function fmtMbps(v) {

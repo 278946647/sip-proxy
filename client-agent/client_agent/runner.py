@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .apply import apply_payload
+from .routing_mode import read_routing_mode
 from .client import ControlPlaneClient, ClientState
 from .device_info import collect_device_info
 from .line_code import decode_line_code, is_line_activation_payload
@@ -241,6 +242,7 @@ def run_loop(args: argparse.Namespace) -> None:
             version = cfg["version"]
             payload = cfg["payload"]
             payload["proxyMode"] = args.proxy_mode
+            payload["routingMode"] = read_routing_mode()
 
             need_apply = state.applied_version != version
             if not need_apply:

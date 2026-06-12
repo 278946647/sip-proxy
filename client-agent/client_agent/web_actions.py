@@ -7,7 +7,10 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from .apply import apply_dns_config, reapply_local_config
+from .dns_lists import LIST_FILES, append_domains, export_list_text, import_list_text, read_list
 from .line_code import code_kind, decode_line_code, is_platform_payload
+from .routing_mode import read_routing_mode, write_routing_mode
 
 GFC_ENV = Path(os.environ.get("GFC_ENV_FILE", "/etc/gfc-client/gfc.env"))
 ACTIVATION_FILE = Path(
@@ -206,6 +209,73 @@ def restart_service(name: str) -> dict[str, Any]:
     if not ok:
         raise RuntimeError(f"重启 {name} 失败")
     return {"ok": True, "service": name}
+
+
+def get_dns_lists() -> dict[str, Any]:
+    return {
+        "lists": {
+            name: {
+                "path": str(path),
+                "domains": read_list(name),
+                "count": len(read_list(name)),
+            }
+            for name, path in LIST_FILES.items()
+        }
+    }
+
+
+def update_dns_list(name: str, domains: list[str], *, action: str = "append") -> dict[str, Any]:
+    if name not in LIST_FILES:
+        raise ValueError(f"unknown list: {name}")
+    cleaned = [d.strip() for d in domains if d.strip()]
+    if not cleaned:
+        raise ValueError("域名不能为空")
+    if action == "replace":
+        merged = import_list_text(name, "\n".join(cleaned), replace=True)  # type: ignore[arg-type]
+    elif action == "append":
+        merged = append_domains(name, cleaned)  # type: ignore[arg-type]
+    else:
+        raise ValueError("action 必须是 append 或 replace")
+    ok, msg = apply_dns_config()
+    return {
+        "ok": ok,
+        "list": name,
+        "count": len(merged),
+        "apply_message": msg,
+    }
+
+
+def import_dns_list(name: str, content: str, *, replace: bool) -> dict[str, Any]:
+    if name not in LIST_FILES:
+        raise ValueError(f"unknown list: {name}")
+    merged = import_list_text(name, content, replace=replace)  # type: ignore[arg-type]
+    ok, msg = apply_dns_config()
+    return {"ok": ok, "list": name, "count": len(merged), "apply_message": msg}
+
+
+def export_dns_list(name: str) -> dict[str, Any]:
+    if name not in LIST_FILES:
+        raise ValueError(f"unknown list: {name}")
+    return {"list": name, "content": export_list_text(name)}  # type: ignore[arg-type]
+
+
+def get_singbox_routing() -> dict[str, Any]:
+    return {"mode": read_routing_mode()}
+
+
+def set_singbox_routing(mode: str) -> dict[str, Any]:
+    mode = mode.strip().lower()
+    if mode not in ("split", "global"):
+        raise ValueError("mode 必须是 split（分流）或 global（全走国际）")
+    write_routing_mode(mode)  # type: ignore[arg-type]
+    ok, msg = reapply_local_config()
+    restart_ok = _restart_service("sing-box")
+    return {
+        "ok": ok,
+        "mode": mode,
+        "apply_message": msg,
+        "sing_box_restarted": restart_ok,
+    }
 
 
 def tail_log(service: str, lines: int = 200) -> dict[str, Any]:

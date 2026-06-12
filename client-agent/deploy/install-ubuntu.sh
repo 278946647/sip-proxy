@@ -178,8 +178,33 @@ GFC_LAN_PREFIX=24
 GFC_LAN_NETMASK=255.255.255.0
 GFC_DHCP_START=192.168.68.100
 GFC_DHCP_END=192.168.68.250
+GFC_ROUTING_MODE=split
 EOF
 chmod 600 /etc/gfc-client/gfc.env
+
+echo "==> Bootstrap mosdns (easymosdns-style lists + valid config)"
+export PYTHONPATH="${GFC_ROOT}/client-agent"
+"${GFC_ROOT}/client-agent/.venv/bin/python" -c "
+from client_agent.dns_lists import ensure_default_lists
+from client_agent.mosdns import MOSDNS_CONFIG, render_mosdns_config
+ensure_default_lists()
+MOSDNS_CONFIG.write_text(render_mosdns_config({}), encoding='utf-8')
+print('    wrote', MOSDNS_CONFIG)
+"
+if [[ "${FETCH_EASYMODNS_LISTS:-1}" == "1" ]] && command -v curl >/dev/null 2>&1; then
+  CHINA_URL="https://raw.githubusercontent.com/pmkol/easymosdns/main/rules/china_domain_list.txt"
+  if curl -fsSL --connect-timeout 15 "$CHINA_URL" -o /tmp/gfc-china-domains.txt 2>/dev/null; then
+    export PYTHONPATH="${GFC_ROOT}/client-agent"
+    "${GFC_ROOT}/client-agent/.venv/bin/python" -c "
+from pathlib import Path
+from client_agent.dns_lists import import_list_text
+text = Path('/tmp/gfc-china-domains.txt').read_text(encoding='utf-8')
+n = len(import_list_text('china', text, replace=True))
+print(f'    easymosdns china list: {n} domains')
+"
+    rm -f /tmp/gfc-china-domains.txt
+  fi
+fi
 
 touch "$ACTIVATION_FILE"
 chmod 600 "$ACTIVATION_FILE"

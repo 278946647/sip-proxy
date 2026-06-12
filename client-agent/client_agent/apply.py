@@ -6,15 +6,20 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from .mosdns import render_mosdns_config
+from .dns_lists import ensure_default_lists
+from .mosdns import MOSDNS_CONFIG, mosdns_config_ok, render_mosdns_config
 from .proxy_mode import apply_proxy_mode
+from .routing_mode import read_routing_mode
 from .singbox import singbox_config_ok, write_singbox_config
 from .sysctl_util import ensure_network_tuning
 
 GFC_ETC = Path(os.environ.get("GFC_ETC", "/etc/gfc-client"))
-MOSDNS_CONFIG = GFC_ETC / "mosdns.yaml"
-MOSDNS_DOMAIN_DIR = GFC_ETC / "mosdns"
-DEFAULT_CN_DOMAINS = MOSDNS_DOMAIN_DIR / "cn-domains.txt"
+CONFIG_BUNDLE = Path(
+    os.environ.get(
+        "GFC_CONFIG_BUNDLE",
+        "/opt/gfc-client/client-agent/state/dataplane/config_bundle.json",
+    )
+)
 
 
 def _write_text(path: Path, content: str) -> None:
@@ -25,29 +30,6 @@ def _write_text(path: Path, content: str) -> None:
 def _write_json(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def _ensure_cn_domain_list() -> None:
-    if DEFAULT_CN_DOMAINS.is_file():
-        return
-    MOSDNS_DOMAIN_DIR.mkdir(parents=True, exist_ok=True)
-    DEFAULT_CN_DOMAINS.write_text(
-        "\n".join(
-            [
-                "baidu.com",
-                "qq.com",
-                "taobao.com",
-                "alipay.com",
-                "bilibili.com",
-                "163.com",
-                "126.com",
-                "weixin.qq.com",
-                "cn",
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
 
 
 def _restart_unit(unit: str) -> str:
@@ -76,8 +58,24 @@ def _detect_default_iface() -> str | None:
     return None
 
 
+def _load_payload(config_dir: Path) -> dict[str, Any]:
+    bundle = config_dir / "config_bundle.json"
+    if not bundle.is_file():
+        bundle = CONFIG_BUNDLE
+    if bundle.is_file():
+        try:
+            data = json.loads(bundle.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return data
+        except (OSError, json.JSONDecodeError):
+            pass
+    return {}
+
+
 def apply_payload(payload: dict[str, Any], config_dir: Path) -> tuple[bool, str]:
     config_dir.mkdir(parents=True, exist_ok=True)
+    payload = dict(payload)
+    payload["routingMode"] = payload.get("routingMode") or read_routing_mode()
     _write_json(config_dir / "config_bundle.json", payload)
 
     messages: list[str] = [f"sysctl: {ensure_network_tuning()}"]
@@ -86,9 +84,12 @@ def apply_payload(payload: dict[str, Any], config_dir: Path) -> tuple[bool, str]
     lan_iface = (os.environ.get("GFC_LAN_IFACE") or "").strip() or None
     wan_iface = (os.environ.get("GFC_WAN_IFACE") or "").strip() or _detect_default_iface()
 
-    _ensure_cn_domain_list()
+    ensure_default_lists()
     _write_text(MOSDNS_CONFIG, render_mosdns_config(payload))
-    messages.append("mosdns config written")
+    ok_md, md_err = mosdns_config_ok(MOSDNS_CONFIG)
+    if not ok_md:
+        return False, f"mosdns check fail: {md_err}"
+    messages.append("mosdns config ok")
 
     try:
         sb_path = write_singbox_config(payload)
@@ -114,3 +115,25 @@ def apply_payload(payload: dict[str, Any], config_dir: Path) -> tuple[bool, str]
     messages.append(_restart_unit("gfc-client-sing-box.service"))
 
     return True, "; ".join(messages)
+
+
+def apply_dns_config(config_dir: Path | None = None) -> tuple[bool, str]:
+    cfg_dir = config_dir or CONFIG_BUNDLE.parent
+    payload = _load_payload(cfg_dir)
+    ensure_default_lists()
+    _write_text(MOSDNS_CONFIG, render_mosdns_config(payload))
+    ok_md, md_err = mosdns_config_ok(MOSDNS_CONFIG)
+    if not ok_md:
+        return False, f"mosdns check fail: {md_err}"
+    return True, _restart_unit("gfc-mosdns.service")
+
+
+def reapply_local_config(config_dir: Path | None = None) -> tuple[bool, str]:
+    cfg_dir = config_dir or CONFIG_BUNDLE.parent
+    payload = _load_payload(cfg_dir)
+    node = (payload.get("node") or {}).get("address")
+    if not node:
+        ok, msg = apply_dns_config(cfg_dir)
+        return ok, f"dns only (no line config): {msg}"
+    payload["routingMode"] = read_routing_mode()
+    return apply_payload(payload, cfg_dir)

@@ -16,9 +16,15 @@ from .network import network_status
 from .web_actions import (
     LOG_FILES,
     SERVICE_UNITS,
+    export_dns_list,
     flash_line_code,
+    get_dns_lists,
+    get_singbox_routing,
+    import_dns_list,
     restart_service,
+    set_singbox_routing,
     tail_log,
+    update_dns_list,
     update_settings,
 )
 
@@ -173,6 +179,20 @@ class ClientWebHandler(BaseHTTPRequestHandler):
                 _json_response(self, HTTPStatus.OK, tail_log(service, lines))
                 return
 
+            if path == "/api/dns/lists":
+                _json_response(self, HTTPStatus.OK, get_dns_lists())
+                return
+
+            if path == "/api/dns/export":
+                qs = parse_qs(parsed.query)
+                list_name = (qs.get("list") or [""])[0]
+                _json_response(self, HTTPStatus.OK, export_dns_list(list_name))
+                return
+
+            if path == "/api/singbox/routing":
+                _json_response(self, HTTPStatus.OK, get_singbox_routing())
+                return
+
             if path in ("/activate.html", "/flash.html"):
                 self.send_response(HTTPStatus.MOVED_PERMANENTLY)
                 flash_port = os.environ.get("GFC_CLIENT_FLASH_PORT", str(FLASH_PORT))
@@ -219,6 +239,39 @@ class ClientWebHandler(BaseHTTPRequestHandler):
                 body = _read_json_body(self)
                 name = str(body.get("service", "")).strip()
                 result = restart_service(name)
+                _json_response(self, HTTPStatus.OK, result)
+                return
+
+            if path == "/api/dns/lists":
+                body = _read_json_body(self)
+                list_name = str(body.get("list", "")).strip()
+                action = str(body.get("action", "append")).strip().lower()
+                domains = body.get("domains")
+                if isinstance(domains, str):
+                    domains = [line.strip() for line in domains.splitlines() if line.strip()]
+                if not isinstance(domains, list):
+                    raise ValueError("domains 必须是字符串或数组")
+                result = update_dns_list(
+                    list_name,
+                    [str(d) for d in domains],
+                    action=action,
+                )
+                _json_response(self, HTTPStatus.OK, result)
+                return
+
+            if path == "/api/dns/import":
+                body = _read_json_body(self)
+                list_name = str(body.get("list", "")).strip()
+                content = str(body.get("content", ""))
+                replace = bool(body.get("replace", True))
+                result = import_dns_list(list_name, content, replace=replace)
+                _json_response(self, HTTPStatus.OK, result)
+                return
+
+            if path == "/api/singbox/routing":
+                body = _read_json_body(self)
+                mode = str(body.get("mode", "")).strip()
+                result = set_singbox_routing(mode)
                 _json_response(self, HTTPStatus.OK, result)
                 return
 

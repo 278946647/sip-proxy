@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>GFC · 服务状态</title>
+  <title>GFC · 服务管理</title>
   <link rel="stylesheet" href="/css/app.css" />
 </head>
 <body>
@@ -17,7 +17,7 @@
         <a href="/" data-page="dashboard"><span class="nav-icon">◉</span> 运行概览</a>
         <a href="/activate.html" data-page="activate"><span class="nav-icon">◎</span> 线路激活</a>
         <a href="/settings.html" data-page="settings"><span class="nav-icon">⚙</span> 网络设置</a>
-        <a href="/services.html" data-page="services" class="active"><span class="nav-icon">▣</span> 服务状态</a>
+        <a href="/services.html" data-page="services" class="active"><span class="nav-icon">▣</span> 服务管理</a>
         <a href="/logs.html" data-page="logs"><span class="nav-icon">≡</span> 系统日志</a>
       </nav>
       <div class="sidebar-footer">sing-box · mosdns · agent</div>
@@ -25,27 +25,71 @@
 
     <div class="main">
       <header class="topbar">
-        <h2>服务状态</h2>
+        <h2>服务管理</h2>
         <button class="btn btn-secondary" id="refresh-btn">刷新</button>
       </header>
 
       <div class="content">
         <div id="alert" hidden></div>
-        <div class="panel">
-          <div class="panel-header">系统服务</div>
-          <div class="panel-body">
-            <div class="service-list" id="svc-list">加载中…</div>
+
+        <div class="tabs" role="tablist">
+          <button class="tab active" data-tab="system" type="button">系统服务</button>
+          <button class="tab" data-tab="singbox" type="button">sing-box</button>
+          <button class="tab" data-tab="dns" type="button">DNS 分流</button>
+        </div>
+
+        <div class="tab-panel active" id="panel-system">
+          <div class="panel">
+            <div class="panel-header">系统服务</div>
+            <div class="panel-body">
+              <div class="service-list" id="svc-list">加载中…</div>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-header">组件安装</div>
+            <div class="panel-body">
+              <table class="kv-table">
+                <tr><th>sing-box</th><td id="inst-sb">—</td></tr>
+                <tr><th>mosdns</th><td id="inst-md">—</td></tr>
+              </table>
+            </div>
           </div>
         </div>
 
-        <div class="panel">
-          <div class="panel-header">组件安装</div>
-          <div class="panel-body">
-            <table class="kv-table">
-              <tr><th>sing-box</th><td id="inst-sb">—</td></tr>
-              <tr><th>mosdns</th><td id="inst-md">—</td></tr>
-            </table>
+        <div class="tab-panel" id="panel-singbox" hidden>
+          <div class="panel">
+            <div class="panel-header">路由模式</div>
+            <div class="panel-body">
+              <p class="hint">分流：国内/私网直连，其余走国际节点；全国际：除私网外全部走代理。</p>
+              <div class="routing-toggle">
+                <label class="radio-card">
+                  <input type="radio" name="routing" value="split" />
+                  <span><strong>智能分流</strong><small>.cn 与国内 IP 直连</small></span>
+                </label>
+                <label class="radio-card">
+                  <input type="radio" name="routing" value="global" />
+                  <span><strong>全走国际</strong><small>除局域网外全部代理</small></span>
+                </label>
+              </div>
+              <div style="margin-top:16px">
+                <button class="btn btn-primary" id="save-routing-btn">保存并应用</button>
+              </div>
+            </div>
           </div>
+          <div class="panel">
+            <div class="panel-header">sing-box 状态</div>
+            <div class="panel-body">
+              <div class="service-row" id="sb-status-row">加载中…</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="tab-panel" id="panel-dns" hidden>
+          <p class="hint" style="margin:0 0 12px">
+            基于 mosdns 的 easymosdns 风格三表分流（block / china / global）。每行一个域名，支持 <code>full:example.com</code>。
+            可从 <a href="https://github.com/pmkol/easymosdns" target="_blank" rel="noopener">easymosdns</a> 导入规则文件。
+          </p>
+          <div id="dns-panels"></div>
         </div>
       </div>
     </div>
@@ -61,9 +105,32 @@
       "sing-box": "sing-box (VLESS+REALITY)",
       mosdns: "mosdns (DNS 分流)",
       web: "本地 Web 管理",
+      flash: "刷码服务",
+      dnsmasq: "dnsmasq (LAN DHCP)",
     };
 
-    async function refresh() {
+    const dnsMeta = {
+      block: { title: "屏蔽列表 (block)", hint: "域名及子域名不解析", upstream: "reject" },
+      china: { title: "国内列表 (china)", hint: "走国内 DNS（223.5.5.5 等）", upstream: "domestic" },
+      global: { title: "国际列表 (global)", hint: "走 8.8.8.8 / 1.1.1.1", upstream: "intl" },
+    };
+
+    function switchTab(name) {
+      document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
+      document.querySelectorAll(".tab-panel").forEach((p) => {
+        const on = p.id === `panel-${name}`;
+        p.classList.toggle("active", on);
+        p.hidden = !on;
+      });
+      if (name === "dns") loadDnsPanels().catch(console.error);
+      if (name === "singbox") loadSingbox().catch(console.error);
+    }
+
+    document.querySelectorAll(".tab").forEach((btn) => {
+      btn.addEventListener("click", () => switchTab(btn.dataset.tab));
+    });
+
+    async function refreshServices() {
       const [svcData, status] = await Promise.all([API.services(), API.status()]);
       const svcs = svcData.services || {};
       const m = status.metrics || {};
@@ -94,7 +161,7 @@
           try {
             await API.restartService(btn.dataset.svc);
             showAlert(alertEl, "success", `已重启 ${btn.dataset.svc}`);
-            await refresh();
+            await refreshServices();
           } catch (e) {
             showAlert(alertEl, "error", e.message);
           } finally {
@@ -102,13 +169,139 @@
           }
         });
       });
+
+      const sb = svcs["sing-box"];
+      if (sb) {
+        document.getElementById("sb-status-row").innerHTML = `
+          <div>
+            <div class="service-name">sing-box</div>
+            <div class="service-status">${sb.unit} · ${sb.status || "unknown"}</div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            ${serviceBadge(!!sb.active)}
+            <button class="btn btn-secondary" id="sb-restart-btn">重启</button>
+          </div>`;
+        document.getElementById("sb-restart-btn")?.addEventListener("click", async () => {
+          await API.restartService("sing-box");
+          showAlert(alertEl, "success", "已重启 sing-box");
+          await refreshServices();
+        });
+      }
     }
 
-    document.getElementById("refresh-btn").addEventListener("click", () => refresh().catch(console.error));
-    refresh().catch((e) => {
+    async function loadSingbox() {
+      const data = await API.singboxRouting();
+      document.querySelectorAll('input[name="routing"]').forEach((el) => {
+        el.checked = el.value === data.mode;
+      });
+    }
+
+    document.getElementById("save-routing-btn").addEventListener("click", async () => {
+      const mode = document.querySelector('input[name="routing"]:checked')?.value;
+      if (!mode) return;
+      hideAlert(alertEl);
+      try {
+        const r = await API.setSingboxRouting(mode);
+        showAlert(alertEl, r.ok ? "success" : "error", r.apply_message || "已保存");
+        await refreshServices();
+      } catch (e) {
+        showAlert(alertEl, "error", e.message);
+      }
+    });
+
+    function renderDnsPanel(name, info) {
+      const meta = dnsMeta[name];
+      return `<div class="panel dns-panel" data-list="${name}">
+        <div class="panel-header">${meta.title} <span class="badge-count" id="count-${name}">${info.count} 条</span></div>
+        <div class="panel-body">
+          <p class="hint">${meta.hint}</p>
+          <div class="form-group">
+            <label>添加域名（每行一个）</label>
+            <textarea class="dns-add-input" rows="2" placeholder="example.com"></textarea>
+            <button class="btn btn-secondary btn-dns-add" type="button">追加写入</button>
+          </div>
+          <div class="form-group">
+            <label>当前列表</label>
+            <textarea class="dns-list-view" rows="8" readonly>${(info.domains || []).join("\n")}</textarea>
+          </div>
+          <div class="btn-row">
+            <button class="btn btn-secondary btn-dns-export" type="button">导出</button>
+            <label class="btn btn-secondary btn-import-label">
+              导入替换
+              <input type="file" class="dns-import-file" accept=".txt,.list" hidden />
+            </label>
+            <button class="btn btn-secondary btn-dns-restart" type="button">应用并重启 mosdns</button>
+          </div>
+        </div>
+      </div>`;
+    }
+
+    async function loadDnsPanels() {
+      const data = await API.dnsLists();
+      const lists = data.lists || {};
+      const root = document.getElementById("dns-panels");
+      root.innerHTML = ["block", "china", "global"]
+        .map((name) => renderDnsPanel(name, lists[name] || { domains: [], count: 0 }))
+        .join("");
+
+      root.querySelectorAll(".dns-panel").forEach((panel) => {
+        const list = panel.dataset.list;
+
+        panel.querySelector(".btn-dns-add").addEventListener("click", async () => {
+          const text = panel.querySelector(".dns-add-input").value;
+          if (!text.trim()) return;
+          try {
+            const r = await API.updateDnsList(list, text, "append");
+            showAlert(alertEl, r.ok ? "success" : "error", r.apply_message || "已追加");
+            panel.querySelector(".dns-add-input").value = "";
+            await loadDnsPanels();
+            await refreshServices();
+          } catch (e) {
+            showAlert(alertEl, "error", e.message);
+          }
+        });
+
+        panel.querySelector(".btn-dns-export").addEventListener("click", async () => {
+          const r = await API.exportDnsList(list);
+          const blob = new Blob([r.content], { type: "text/plain" });
+          const a = document.createElement("a");
+          a.href = URL.createObjectURL(blob);
+          a.download = `${list}.txt`;
+          a.click();
+        });
+
+        panel.querySelector(".dns-import-file").addEventListener("change", async (ev) => {
+          const file = ev.target.files?.[0];
+          if (!file) return;
+          const content = await file.text();
+          try {
+            const r = await API.importDnsList(list, content, true);
+            showAlert(alertEl, r.ok ? "success" : "error", `已导入 ${r.count} 条`);
+            await loadDnsPanels();
+            await refreshServices();
+          } catch (e) {
+            showAlert(alertEl, "error", e.message);
+          }
+          ev.target.value = "";
+        });
+
+        panel.querySelector(".btn-dns-restart").addEventListener("click", async () => {
+          await API.restartService("mosdns");
+          showAlert(alertEl, "success", "已重启 mosdns");
+          await refreshServices();
+        });
+      });
+    }
+
+    document.getElementById("refresh-btn").addEventListener("click", () => {
+      refreshServices().catch(console.error);
+    });
+
+    refreshServices().catch((e) => {
       document.getElementById("svc-list").textContent = e.message;
     });
-    setInterval(() => refresh().catch(() => {}), 10000);
+    loadSingbox().catch(() => {});
+    setInterval(() => refreshServices().catch(() => {}), 15000);
   </script>
 </body>
 </html>

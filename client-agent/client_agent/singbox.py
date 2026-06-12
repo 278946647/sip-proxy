@@ -6,6 +6,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from .routing_mode import read_routing_mode
+
 SINGBOX_CONFIG = Path(os.environ.get("GFC_ETC", "/etc/gfc-client")) / "sing-box.json"
 MOSDNS_ADDR = "127.0.0.1:5335"
 
@@ -95,8 +97,10 @@ def render_singbox_config(payload: dict[str, Any]) -> dict[str, Any]:
         ]
         route_rules.insert(0, {"inbound": "tun-in", "action": "sniff"})
 
-    domestic_suffixes = [".cn", ".中国"]
-    route_rules.append({"domain_suffix": domestic_suffixes, "outbound": "direct"})
+    routing_mode = (payload.get("routingMode") or read_routing_mode()).strip().lower()
+    if routing_mode != "global":
+        domestic_suffixes = [".cn", ".中国"]
+        route_rules.append({"domain_suffix": domestic_suffixes, "outbound": "direct"})
     route_rules.append({"outbound": "proxy"})
 
     dns_servers: list[dict[str, Any]] = [
