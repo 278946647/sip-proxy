@@ -5,6 +5,7 @@ from typing import Any
 
 import requests
 
+from .server_url import normalize_server_url, parse_server_url_list
 from .version import AGENT_VERSION
 
 
@@ -17,10 +18,35 @@ class NodeState:
 
 
 class ControlPlaneClient:
-    def __init__(self, server: str, token: str | None = None) -> None:
-        self.server = server.rstrip("/")
+    def __init__(self, servers: str | list[str], token: str | None = None) -> None:
+        if isinstance(servers, str):
+            self.servers = parse_server_url_list(servers)
+        else:
+            self.servers = [normalize_server_url(s) for s in servers]
+        if not self.servers:
+            raise ValueError("at least one control plane SERVER_URL is required")
         self.token = token
         self._headers = {"Authorization": f"Bearer {token}"} if token else {}
+        self._active_idx = 0
+
+    @property
+    def server(self) -> str:
+        return self.servers[self._active_idx]
+
+    def _request(self, method: str, path: str, **kwargs: Any) -> requests.Response:
+        last_exc: requests.RequestException | None = None
+        for idx, base in enumerate(self.servers):
+            try:
+                resp = requests.request(method, f"{base}{path}", **kwargs)
+                resp.raise_for_status()
+                if idx != self._active_idx:
+                    self._active_idx = idx
+                return resp
+            except requests.RequestException as exc:
+                last_exc = exc
+        if last_exc is not None:
+            raise last_exc
+        raise RuntimeError("no control plane URL configured")
 
     def activate(
         self,
@@ -29,8 +55,9 @@ class ControlPlaneClient:
         region: str,
         public_ip: str | None = None,
     ) -> NodeState:
-        resp = requests.post(
-            f"{self.server}/nodes/activate",
+        resp = self._request(
+            "POST",
+            "/nodes/activate",
             json={
                 "bootstrap_token": bootstrap_token,
                 "node_name": node_name,
@@ -40,7 +67,6 @@ class ControlPlaneClient:
             },
             timeout=20,
         )
-        resp.raise_for_status()
         data = resp.json()
         return NodeState(
             node_id=data["node_id"],
@@ -49,8 +75,9 @@ class ControlPlaneClient:
         )
 
     def heartbeat(self, metrics: dict[str, Any], node_name: str, public_ip: str | None) -> None:
-        resp = requests.post(
-            f"{self.server}/nodes/heartbeat",
+        self._request(
+            "POST",
+            "/nodes/heartbeat",
             headers=self._headers,
             json={
                 "public_ip": public_ip,
@@ -60,29 +87,32 @@ class ControlPlaneClient:
             },
             timeout=15,
         )
-        resp.raise_for_status()
 
     def pull_config(self) -> dict[str, Any]:
-        resp = requests.get(
-            f"{self.server}/nodes/me/config",
+        resp = self._request(
+            "GET",
+            "/nodes/me/config",
             headers=self._headers,
             timeout=30,
         )
-        resp.raise_for_status()
         return resp.json()
 
     def ack_config(self, version: str, status: str, message: str | None = None) -> None:
-        resp = requests.post(
-            f"{self.server}/nodes/me/config/ack",
+        self._request(
+            "POST",
+            "/nodes/me/config/ack",
             headers=self._headers,
             json={"version": version, "status": status, "message": message},
             timeout=15,
         )
-        resp.raise_for_status()
 
     def check_reachable(self) -> bool:
-        try:
-            r = requests.get(f"{self.server}/healthz", timeout=5)
-            return r.status_code == 200
-        except requests.RequestException:
-            return False
+        for base in self.servers:
+            try:
+                r = requests.get(f"{base}/healthz", timeout=5)
+                if r.status_code == 200:
+                    self._active_idx = self.servers.index(base)
+                    return True
+            except requests.RequestException:
+                continue
+        return False

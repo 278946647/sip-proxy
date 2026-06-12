@@ -10,6 +10,7 @@ from typing import Any
 
 from .apply import apply_payload, nftables_tproxy_active
 from .client import ControlPlaneClient, NodeState
+from .server_url import parse_server_url_list, resolve_server_urls_from_env
 from .metrics import collect_metrics
 from .env_sync import read_bootstrap_token, sync_bootstrap_token
 from .routes import ROUTES_STATE, egress_snat_active, resolve_snat_iface, tproxy_policy_active
@@ -74,9 +75,31 @@ def detect_public_ip() -> str | None:
         return None
 
 
+def resolve_server_urls(args: argparse.Namespace) -> list[str]:
+    urls = parse_server_url_list(
+        args.server,
+        args.server_fallback,
+        os.environ.get("SERVER_URL_FALLBACK"),
+        os.environ.get("SERVER_URLS"),
+    )
+    if urls:
+        return urls
+    env_urls = resolve_server_urls_from_env()
+    if env_urls:
+        return env_urls
+    raise ValueError("control plane SERVER_URL not set (--server or SERVER_URL env)")
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=f"GFC forward node agent v{AGENT_VERSION}")
-    p.add_argument("--server", required=True, help="Control plane API URL")
+    p.add_argument(
+        "--server",
+        help="Control plane API URL (IP or domain); comma-separated for multiple",
+    )
+    p.add_argument(
+        "--server-fallback",
+        help="Fallback control plane URL when primary is unreachable",
+    )
     p.add_argument("--bootstrap-token", required=True, help="Bootstrap token")
     p.add_argument("--node-name", required=True, help="Node display name (synced to control plane)")
     p.add_argument("--region", required=True, help="Node region")
@@ -87,22 +110,26 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def run_loop(args: argparse.Namespace) -> None:
+    servers = resolve_server_urls(args)
     state = load_state(args.state_file)
     client: ControlPlaneClient
 
     if not state:
-        client = ControlPlaneClient(args.server)
+        client = ControlPlaneClient(servers)
         state = client.activate(
             args.bootstrap_token,
             args.node_name,
             args.region,
             detect_public_ip(),
         )
-        client = ControlPlaneClient(args.server, state.node_token)
+        client = ControlPlaneClient(servers, state.node_token)
         save_state(args.state_file, state)
-        print(f"activated node_id={state.node_id} name={args.node_name}", flush=True)
+        print(
+            f"activated node_id={state.node_id} name={args.node_name} via {client.server}",
+            flush=True,
+        )
     else:
-        client = ControlPlaneClient(args.server, state.node_token)
+        client = ControlPlaneClient(servers, state.node_token)
 
     config_dir = Path(args.config_dir)
     print(f"sysctl: {ensure_network_tuning()}", flush=True)
@@ -110,7 +137,7 @@ def run_loop(args: argparse.Namespace) -> None:
     while True:
         try:
             reachable = client.check_reachable()
-            metrics = collect_metrics(args.server, reachable, Path(args.config_dir))
+            metrics = collect_metrics(client.server, reachable, Path(args.config_dir))
             client.heartbeat(metrics, args.node_name, detect_public_ip())
 
             cfg = client.pull_config()

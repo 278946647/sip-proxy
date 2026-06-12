@@ -11,6 +11,10 @@ services:
       GFC_BOOTSTRAP_TOKENS: ${GFC_BOOTSTRAP_TOKENS:-demo-bootstrap}
       GFC_ADMIN_DEFAULT_PASSWORD: ${GFC_ADMIN_DEFAULT_PASSWORD:-admin123}
       GFC_AUTH_SECRET: ${GFC_AUTH_SECRET:-change-me-in-production}
+      GFC_PUBLIC_URL: ${GFC_PUBLIC_URL:-}
+      GFC_PUBLIC_URL_FALLBACK: ${GFC_PUBLIC_URL_FALLBACK:-}
+      GFC_PUBLIC_IP: ${GFC_PUBLIC_IP:-}
+      GFC_PUBLIC_PORT: ${GFC_PUBLIC_PORT:-8080}
     volumes:
       - gfc-data:/data
     logging:

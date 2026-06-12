@@ -101,8 +101,9 @@ elif [[ -f /etc/gfc-node/install.env && $NON_INTERACTIVE -eq 0 && -t 0 ]]; then
   else
     gfc_collect_install_config_interactive
   fi
-elif [[ -n "${SERVER_URL:-}" || -n "${CONTROL_PLANE_IP:-}" ]]; then
+elif [[ -n "${SERVER_URL:-}" || -n "${CONTROL_PLANE_IP:-}" || -n "${CONTROL_PLANE_HOST:-}" ]]; then
   gfc_build_server_url || true
+  gfc_build_server_url_fallback || true
   export BOOTSTRAP_TOKEN="${BOOTSTRAP_TOKEN:-demo-bootstrap}"
   export NODE_NAME="${NODE_NAME:-$(hostname -s)}"
   export REGION="${REGION:-ap-southeast-1}"
@@ -110,7 +111,7 @@ elif [[ -n "${SERVER_URL:-}" || -n "${CONTROL_PLANE_IP:-}" ]]; then
   export GFC_ROOT="${GFC_ROOT:-/opt/gfc-node}"
 else
   if [[ $NON_INTERACTIVE -eq 1 ]]; then
-    echo "ERROR: 非交互模式需要 --config 或环境变量 SERVER_URL / CONTROL_PLANE_IP"
+    echo "ERROR: 非交互模式需要 --config 或环境变量 SERVER_URL / CONTROL_PLANE_HOST / CONTROL_PLANE_IP"
     exit 1
   fi
   gfc_collect_install_config_interactive

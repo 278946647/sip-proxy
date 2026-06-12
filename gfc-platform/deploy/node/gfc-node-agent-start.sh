@@ -34,8 +34,13 @@ if [[ -n "${GFC_TPROXY_IFACE:-}" ]] && command -v ip >/dev/null 2>&1; then
   fi
 fi
 
+ARGS=(--server "$SERVER_URL")
+if [[ -n "${SERVER_URL_FALLBACK:-}" ]]; then
+  ARGS+=(--server-fallback "$SERVER_URL_FALLBACK")
+fi
+
 exec "$PY" "$AGENT" \
-  --server "$SERVER_URL" \
+  "${ARGS[@]}" \
   --bootstrap-token "$BOOTSTRAP_TOKEN" \
   --node-name "$NODE_NAME" \
   --region "$REGION" \

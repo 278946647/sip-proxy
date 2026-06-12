@@ -63,25 +63,34 @@ git push origin v0.2.4
 
 ## 3. 控制平台 — 干净开局（Ubuntu 22.04）
 
-### 3.1 一键安装（推荐）
+### 3.1 一键安装（推荐，交互填写 IP/域名）
 
 ```bash
 sudo apt update && sudo apt install -y git
 
-# 公开仓库
 sudo git clone https://github.com/278946647/sip-proxy.git /opt/sip-proxy
 cd /opt/sip-proxy/gfc-platform
 sudo git checkout -B main origin/main
 
-# 安装 Docker + 构建并启动
+# 交互式：填写控制平台对外地址（IP 或域名）、API 端口、可选备用地址
 sudo bash deploy/control/install-docker.sh
 ```
 
-或一条命令（自动 clone）：
+脚本会自动写入 `.env` 并启动 Docker，**无需手工编辑 docker-compose.yml**。
+
+或一条命令（自动 clone + 交互）：
 
 ```bash
 sudo bash deploy/control/install-docker.sh \
   --clone https://github.com/278946647/sip-proxy.git /opt/sip-proxy/gfc-platform
+```
+
+批量/自动化时使用配置文件：
+
+```bash
+cp deploy/control/install.env.example deploy/control/install.env
+sudo nano deploy/control/install.env
+sudo bash deploy/control/install-docker.sh --config deploy/control/install.env --yes
 ```
 
 ### 3.2 验证
@@ -128,7 +137,7 @@ sudo bash deploy/node/install.sh
 
 | 参数 | 说明 |
 |------|------|
-| 控制平台 IP / 端口 | 组成 `SERVER_URL` |
+| 控制平台地址 / 端口 | IP 或域名，组成 `SERVER_URL`；可选备用地址 |
 | Bootstrap Token | 与控制面「平台安全」中一致 |
 | NODE_NAME | 控制台显示名称 |
 | TPROXY 网卡 | 客户/VyOS 入向网卡（如 `ens224`） |

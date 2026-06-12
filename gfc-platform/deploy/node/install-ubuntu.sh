@@ -21,6 +21,7 @@ _SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 GFC_ROOT="${GFC_ROOT:-/opt/gfc-node}"
 REPO_SRC="${REPO_SRC:-$(cd "$_SCRIPT_DIR/../.." && pwd)}"
 SERVER_URL="${SERVER_URL:-http://127.0.0.1:8080}"
+SERVER_URL_FALLBACK="${SERVER_URL_FALLBACK:-}"
 BOOTSTRAP_TOKEN="${BOOTSTRAP_TOKEN:-demo-bootstrap}"
 NODE_NAME="${NODE_NAME:-$(hostname -s)}"
 REGION="${REGION:-ap-southeast-1}"
@@ -137,6 +138,7 @@ fi
 
 cat >/etc/gfc-node/gfc.env <<EOF
 SERVER_URL=${SERVER_URL}
+SERVER_URL_FALLBACK=${SERVER_URL_FALLBACK:-}
 BOOTSTRAP_TOKEN=${BOOTSTRAP_TOKEN}
 NODE_NAME=${NODE_NAME}
 REGION=${REGION}

@@ -19,7 +19,7 @@ Ubuntu 22.04 软路由 / ARM 盒子客户端。**独立目录**，离线安装�
 ```bash
 cd client-agent
 sudo bash deploy/flash-line-code.sh /path/to/linecode.b32
-sudo bash deploy/install.sh --config deploy/install.env.example --yes
+sudo bash deploy/install.sh
 ```
 
 ## 离线 tar（仅含本目录）

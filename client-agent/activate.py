@@ -11,7 +11,8 @@ import uuid
 
 from client_agent.client import ControlPlaneClient
 from client_agent.line_code import decode_line_code, read_activation_file
-from client_agent.runner import save_state, ClientState
+from client_agent.runner import save_state
+from client_agent.server_url import parse_server_url_list, resolve_server_urls_from_env, urls_from_activation_payload
 
 
 def _mac() -> str | None:
@@ -25,7 +26,8 @@ def main() -> int:
     p = argparse.ArgumentParser(description="Activate GFC client with Base32 line code")
     p.add_argument("--file", default="/etc/gfc-client/activation.b32")
     p.add_argument("--line-code", help="Base32 string instead of file")
-    p.add_argument("--server", help="Override control plane URL")
+    p.add_argument("--server", help="Override control plane URL (IP or domain)")
+    p.add_argument("--server-fallback", help="Fallback control plane URL")
     p.add_argument("--device-name", default=socket.gethostname())
     p.add_argument("--proxy-mode", default="gateway", choices=["gateway", "bypass", "transparent"])
     p.add_argument("--state-file", default="/opt/gfc-client/client-agent/state/client_state.json")
@@ -33,17 +35,37 @@ def main() -> int:
 
     code = args.line_code.strip() if args.line_code else open(args.file, encoding="utf-8").read().strip()
     payload = decode_line_code(code) if args.line_code else read_activation_file(args.file)
-    server = (args.server or payload.get("server") or os.environ.get("SERVER_URL", "")).rstrip("/")
-    if not server:
+    servers = parse_server_url_list(
+        args.server,
+        args.server_fallback,
+        os.environ.get("SERVER_URL"),
+        os.environ.get("SERVER_URL_FALLBACK"),
+        os.environ.get("SERVER_URLS"),
+    )
+    if not servers:
+        servers = urls_from_activation_payload(payload)
+    if not servers:
+        servers = resolve_server_urls_from_env()
+    if not servers:
         print("ERROR: control plane URL missing", file=sys.stderr)
         return 1
 
     mac = _mac()
     device_id = mac.replace(":", "").upper() if mac else None
-    client = ControlPlaneClient(server)
+    client = ControlPlaneClient(servers)
     state = client.activate(code, args.device_name, mac, device_id, args.proxy_mode)
     save_state(args.state_file, state)
-    print(json.dumps({"ok": True, "device_id": state.device_id, "tid": state.tid, "server": server}))
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "device_id": state.device_id,
+                "tid": state.tid,
+                "server": client.server,
+                "servers": servers,
+            }
+        )
+    )
     return 0
 
 

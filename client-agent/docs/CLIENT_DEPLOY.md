@@ -28,12 +28,22 @@ Monorepo 路径：`sip-proxy/client-agent/`
 
 ## 在线安装
 
-控制平台创建客户端线路 → 复制 Base32 线路码：
+1. 控制平台创建客户端线路 → 复制 Base32 线路码  
+2. 刷入线路码并**交互安装**（无需手工改配置文件）：
 
 ```bash
 cd client-agent
 sudo bash deploy/flash-line-code.sh /path/to/linecode.b32
-sudo bash deploy/install.sh --config deploy/install.env.example --yes
+sudo bash deploy/install.sh
+```
+
+安装时会提示：控制平台地址（可留空，优先用线路码内嵌 URL）、备用地址、代理模式、网卡等。
+
+非交互批量：
+
+```bash
+cp deploy/install.env.example deploy/install.env
+sudo bash deploy/install.sh --config deploy/install.env --yes
 ```
 
 ---

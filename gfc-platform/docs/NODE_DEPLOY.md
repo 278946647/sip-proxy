@@ -15,7 +15,7 @@ sudo bash deploy/node/install.sh
 
 | 参数 | 说明 |
 |------|------|
-| 控制平台 IP / 端口 | 组成 `SERVER_URL`，无需改后端代码 |
+| 控制平台地址 / 端口 | IP 或域名，组成 `SERVER_URL`；可选 `SERVER_URL_FALLBACK` 备用 |
 | Bootstrap Token | 须与控制平台 `GFC_BOOTSTRAP_TOKENS` 一致 |
 | NODE_NAME | 控制台显示的节点名 |
 | GFC_TPROXY_IFACE | **以太网模式**下 VyOS/骨干入向网卡（如 `ens224`） |

@@ -3,32 +3,34 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from typing import Any
 
 from .line_code import encode_line_code
 from .models import ClientDevice, Line, Node, SocksProfile
 from .reality_util import ensure_node_reality_config
-from .settings import settings
+from .server_url_util import public_server_urls
 
 
 def public_server_url() -> str:
-    from .settings import settings
-
-    env = (os.getenv("GFC_PUBLIC_URL") or "").strip()
-    return (env or settings.public_url).rstrip("/")
+    urls = public_server_urls()
+    return urls[0] if urls else "http://127.0.0.1:8080"
 
 
 def build_line_code_payload(line: Line, node: Node) -> dict[str, Any]:
-    return {
+    servers = public_server_urls()
+    payload: dict[str, Any] = {
         "v": 1,
-        "server": public_server_url(),
+        "server": servers[0],
         "lineId": line.id,
         "tid": line.tid,
         "uuid": line.client_uuid,
         "nodeId": node.id,
         "nodeName": node.name,
     }
+    if len(servers) > 1:
+        payload["serverFallback"] = servers[1]
+        payload["servers"] = servers
+    return payload
 
 
 def refresh_line_code(line: Line, node: Node) -> str:

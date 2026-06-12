@@ -1,34 +1,58 @@
 #!/usr/bin/env bash
 # Control plane one-shot install on Ubuntu 20.04+ (Docker + docker-compose).
 #
-# Usage (repo already at /opt/gfc):
-#   cd /opt/gfc && sudo bash deploy/control/install-docker.sh
+# 交互安装（推荐）:
+#   cd /opt/sip-proxy/gfc-platform && sudo bash deploy/control/install-docker.sh
 #
-# Or clone from GitHub:
-#   sudo bash deploy/control/install-docker.sh --clone https://github.com/USER/gfc-platform.git /opt/gfc
+# 非交互:
+#   sudo bash deploy/control/install-docker.sh --config deploy/control/install.env --yes
+#
+# 自动 clone:
+#   sudo bash deploy/control/install-docker.sh --clone https://github.com/278946647/sip-proxy.git /opt/sip-proxy/gfc-platform
 set -euo pipefail
 
-REPO=""
+_SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=deploy/control/install-config.sh
+source "$_SCRIPT_DIR/install-config.sh"
+
 CLONE_URL=""
-CLONE_DIR="/opt/gfc"
+CLONE_DIR=""
+CONFIG_FILE=""
+NON_INTERACTIVE=0
+
+usage() {
+  cat <<'EOF'
+用法:
+  sudo bash deploy/control/install-docker.sh
+  sudo bash deploy/control/install-docker.sh --config deploy/control/install.env
+  sudo bash deploy/control/install-docker.sh --clone URL [DIR] [--yes]
+
+选项:
+  --clone URL [DIR]   安装前 clone/pull 仓库（默认 DIR=当前 gfc-platform 目录）
+  --config FILE       从 install.env 读取参数
+  --yes               非交互（须 --config 或已 export 环境变量）
+  -h, --help          显示帮助
+EOF
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --clone)
       CLONE_URL=${2:-}
-      CLONE_DIR=${3:-/opt/gfc}
-      shift 3
+      CLONE_DIR=${3:-}
+      shift
+      [[ $# -gt 0 && "$1" != --* ]] && shift
+      [[ $# -gt 0 && "$1" != --* ]] && shift
       ;;
-    -h|--help)
-      echo "Usage: sudo bash deploy/control/install-docker.sh [--clone URL DIR]"
-      exit 0
-      ;;
-    *) echo "Unknown arg: $1"; exit 1 ;;
+    --config) CONFIG_FILE=${2:-}; shift 2 ;;
+    --yes) NON_INTERACTIVE=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "未知参数: $1"; usage; exit 1 ;;
   esac
 done
 
 if [[ $EUID -ne 0 ]]; then
-  echo "Run as root: sudo bash $0"
+  echo "请用 root 执行: sudo bash $0"
   exit 1
 fi
 
@@ -38,28 +62,69 @@ apt-get install -y -qq git curl ca-certificates docker.io docker-compose
 
 systemctl enable --now docker
 
+REPO_ROOT="$(cd "$_SCRIPT_DIR/../.." && pwd)"
+
 if [[ -n "$CLONE_URL" ]]; then
-  mkdir -p "$(dirname "$CLONE_DIR")"
-  if [[ -d "$CLONE_DIR/.git" ]]; then
-    echo "==> git pull $CLONE_DIR"
-    git -C "$CLONE_DIR" pull --ff-only
+  local_dir=${CLONE_DIR:-$REPO_ROOT}
+  parent=$(dirname "$local_dir")
+  mkdir -p "$parent"
+  if [[ -d "$local_dir/.git" ]]; then
+    echo "==> git pull $local_dir"
+    git -C "$local_dir" pull --ff-only
   else
-    echo "==> git clone $CLONE_URL -> $CLONE_DIR"
-    git clone "$CLONE_URL" "$CLONE_DIR"
+    echo "==> git clone $CLONE_URL -> $local_dir"
+    git clone "$CLONE_URL" "$local_dir"
+  fi
+  REPO_ROOT="$local_dir"
+fi
+
+if [[ ! -f "$REPO_ROOT/docker-compose.yml" ]]; then
+  echo "ERROR: 未找到 $REPO_ROOT/docker-compose.yml"
+  exit 1
+fi
+
+cd "$REPO_ROOT"
+
+echo "==> GFC 控制平台一键安装 (Ubuntu 20.04+)"
+echo "    仓库: $REPO_ROOT"
+
+if [[ -n "$CONFIG_FILE" ]]; then
+  gfc_cp_load_install_env_file "$CONFIG_FILE" || {
+    echo "ERROR: 无法加载 $CONFIG_FILE"
+    exit 1
+  }
+elif [[ -f deploy/control/install.env && $NON_INTERACTIVE -eq 0 && -t 0 ]]; then
+  read -r -p "检测到 deploy/control/install.env，是否复用？[y/N]: " reuse
+  if [[ "$reuse" =~ ^[Yy]$ ]]; then
+    gfc_cp_load_install_env_file deploy/control/install.env
+  else
+    gfc_cp_collect_install_config_interactive
+  fi
+elif [[ -n "${GFC_PUBLIC_URL:-}" || -n "${CONTROL_PLANE_HOST:-}" ]]; then
+  if [[ -z "${GFC_PUBLIC_URL:-}" && -n "${CONTROL_PLANE_HOST:-}" ]]; then
+    GFC_PUBLIC_URL=$(gfc_cp_normalize_url "$CONTROL_PLANE_HOST" "${API_PORT:-8080}")
+    export GFC_PUBLIC_URL
+  fi
+else
+  if [[ $NON_INTERACTIVE -eq 1 ]]; then
+    echo "ERROR: 非交互模式需要 --config 或环境变量 GFC_PUBLIC_URL / CONTROL_PLANE_HOST"
+    exit 1
+  fi
+  gfc_cp_collect_install_config_interactive
+fi
+
+gfc_cp_show_install_summary
+gfc_cp_validate_install_config || true
+
+if [[ $NON_INTERACTIVE -eq 0 && -t 0 ]]; then
+  read -r -p "确认开始安装？[Y/n]: " ok
+  if [[ -n "$ok" && ! "$ok" =~ ^[Yy]$ ]]; then
+    echo "已取消"
+    exit 0
   fi
 fi
 
-if [[ ! -f "${CLONE_DIR}/docker-compose.yml" ]]; then
-  SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-  CLONE_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
-fi
-
-cd "$CLONE_DIR"
-
-if [[ ! -f .env ]]; then
-  cp .env.example .env
-  echo "==> Created $CLONE_DIR/.env (optional — secrets auto-generate on first API start)"
-fi
+gfc_cp_write_env_file "$REPO_ROOT/.env" "$REPO_ROOT/deploy/control/install.env"
 
 if docker compose version >/dev/null 2>&1; then
   COMPOSE=(docker compose)
@@ -68,7 +133,6 @@ else
 fi
 
 echo "==> Building and starting control plane..."
-# docker-compose 1.29 + new Docker Engine: --force-recreate may hit KeyError ContainerConfig
 docker rm -f gfc_api_1 gfc_web_1 2>/dev/null || true
 "${COMPOSE[@]}" up -d --build
 
@@ -76,14 +140,15 @@ echo ""
 echo "==> Done"
 "${COMPOSE[@]}" ps
 echo ""
-echo "API:  http://$(hostname -I | awk '{print $1}'):8080/healthz"
-echo "Web:  http://$(hostname -I | awk '{print $1}'):5173"
+local_ip=$(gfc_cp_default_ip)
+echo "API:  ${GFC_PUBLIC_URL}/healthz"
+echo "      http://${local_ip}:${GFC_PUBLIC_PORT:-8080}/healthz （本机）"
+echo "Web:  http://${local_ip}:5173"
 echo ""
 echo "Verify:"
-echo "  curl -fsS http://127.0.0.1:8080/healthz"
-echo "  ${COMPOSE[*]} exec api curl -fsS https://api.ipify.org"
+echo "  curl -fsS http://127.0.0.1:${GFC_PUBLIC_PORT:-8080}/healthz"
 echo ""
 echo "==> 初始管理员密码（首次安装）"
 echo "  1) 登录页会显示初始密码（修改前）"
 echo "  2) 或: ${COMPOSE[*]} logs api 2>&1 | grep 'GFC] Security'"
-echo "  登录后须立即修改密码方可进入系统。"
+echo "  登录后须立即修改密码；Bootstrap Token 见 系统设置 → 平台安全"

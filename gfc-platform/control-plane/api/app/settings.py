@@ -29,8 +29,11 @@ class Settings(BaseSettings):
     socks_probe_url: str = "https://api.ipify.org"
     socks_probe_timeout_seconds: int = 12
 
-    # Public API URL embedded in client line codes
+    # Public API URL embedded in client line codes (domain or IP)
     public_url: str = "http://127.0.0.1:8080"
+    public_url_fallback: str = ""
+    public_ip: str = ""
+    public_port: int = 8080
 
     # Client device offline threshold
     client_offline_threshold_seconds: int = 120

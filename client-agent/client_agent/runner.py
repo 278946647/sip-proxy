@@ -10,6 +10,7 @@ from typing import Any
 from .apply import apply_payload
 from .client import ControlPlaneClient, ClientState
 from .line_code import read_activation_file
+from .server_url import parse_server_url_list, resolve_server_urls_from_env, urls_from_activation_payload
 from .metrics import collect_metrics, write_status_snapshot
 from .singbox import singbox_config_ok
 from .sysctl_util import ensure_network_tuning
@@ -64,14 +65,22 @@ def save_state(path: str, state: ClientState) -> None:
         )
 
 
-def resolve_server_url(args: argparse.Namespace, activation: dict[str, Any] | None) -> str:
-    if args.server:
-        return args.server.rstrip("/")
-    if activation and activation.get("server"):
-        return str(activation["server"]).rstrip("/")
-    env = os.environ.get("SERVER_URL", "").strip()
-    if env:
-        return env.rstrip("/")
+def resolve_server_urls(args: argparse.Namespace, activation: dict[str, Any] | None) -> list[str]:
+    urls = parse_server_url_list(
+        args.server,
+        args.server_fallback,
+        os.environ.get("SERVER_URL"),
+        os.environ.get("SERVER_URL_FALLBACK"),
+        os.environ.get("SERVER_URLS"),
+    )
+    if urls:
+        return urls
+    from_line = urls_from_activation_payload(activation)
+    if from_line:
+        return from_line
+    env_urls = resolve_server_urls_from_env()
+    if env_urls:
+        return env_urls
     raise ValueError("control plane SERVER_URL not set (env, --server, or line code)")
 
 
@@ -91,7 +100,14 @@ def resolve_line_code(args: argparse.Namespace) -> str:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=f"GFC client box agent v{AGENT_VERSION}")
-    p.add_argument("--server", help="Control plane API URL (optional if embedded in line code)")
+    p.add_argument(
+        "--server",
+        help="Control plane API URL (IP or domain; optional if embedded in line code)",
+    )
+    p.add_argument(
+        "--server-fallback",
+        help="Fallback control plane URL when primary is unreachable",
+    )
     p.add_argument("--line-code", help="Base32 line code string")
     p.add_argument(
         "--activation-file",
@@ -122,7 +138,7 @@ def run_loop(args: argparse.Namespace) -> None:
         except (OSError, ValueError):
             activation = None
 
-    server = resolve_server_url(args, activation)
+    servers = resolve_server_urls(args, activation)
     device_name = args.device_name or os.environ.get("HOSTNAME", "gfc-client")
     lan_mac = _mac_address()
     device_id = _device_id_from_mac(lan_mac)
@@ -131,7 +147,7 @@ def run_loop(args: argparse.Namespace) -> None:
     state = load_state(args.state_file)
     if not state:
         line_code = resolve_line_code(args)
-        client = ControlPlaneClient(server)
+        client = ControlPlaneClient(servers)
         state = client.activate(
             line_code,
             device_name,
@@ -139,14 +155,14 @@ def run_loop(args: argparse.Namespace) -> None:
             device_id,
             args.proxy_mode,
         )
-        client = ControlPlaneClient(server, state.client_token)
+        client = ControlPlaneClient(servers, state.client_token)
         save_state(args.state_file, state)
         print(
-            f"activated device_id={state.device_id} line={state.tid} name={device_name}",
+            f"activated device_id={state.device_id} line={state.tid} name={device_name} via {client.server}",
             flush=True,
         )
     else:
-        client = ControlPlaneClient(server, state.client_token)
+        client = ControlPlaneClient(servers, state.client_token)
 
     config_dir = Path(args.config_dir)
     status_file = Path(args.status_file)
@@ -159,7 +175,7 @@ def run_loop(args: argparse.Namespace) -> None:
     while True:
         try:
             reachable = client.check_reachable()
-            metrics = collect_metrics(server, reachable, lan_iface)
+            metrics = collect_metrics(client.server, reachable, lan_iface)
             write_status_snapshot(metrics, status_file)
             client.heartbeat(
                 metrics,

@@ -10,11 +10,19 @@ if [[ -f "$ENV_FILE" ]]; then
 fi
 GFC_ROOT="${GFC_ROOT:-/opt/gfc-client}"
 VENV="${GFC_ROOT}/client-agent/.venv/bin/python"
-exec "$VENV" -m client_agent \
-  --state-file "${STATE_FILE:-${GFC_ROOT}/client-agent/state/client_state.json}" \
-  --config-dir "${CONFIG_DIR:-${GFC_ROOT}/client-agent/state/dataplane}" \
-  --activation-file "${ACTIVATION_FILE:-/etc/gfc-client/activation.b32}" \
-  --device-name "${DEVICE_NAME:-$(hostname -s)}" \
-  --proxy-mode "${GFC_PROXY_MODE:-gateway}" \
-  --poll-seconds "${POLL_SECONDS:-10}" \
-  ${SERVER_URL:+--server "$SERVER_URL"}
+ARGS=(
+  --state-file "${STATE_FILE:-${GFC_ROOT}/client-agent/state/client_state.json}"
+  --config-dir "${CONFIG_DIR:-${GFC_ROOT}/client-agent/state/dataplane}"
+  --activation-file "${ACTIVATION_FILE:-/etc/gfc-client/activation.b32}"
+  --device-name "${DEVICE_NAME:-$(hostname -s)}"
+  --proxy-mode "${GFC_PROXY_MODE:-gateway}"
+  --poll-seconds "${POLL_SECONDS:-10}"
+)
+if [[ -n "${SERVER_URL:-}" ]]; then
+  ARGS+=(--server "$SERVER_URL")
+fi
+if [[ -n "${SERVER_URL_FALLBACK:-}" ]]; then
+  ARGS+=(--server-fallback "$SERVER_URL_FALLBACK")
+fi
+
+exec "$VENV" -m client_agent "${ARGS[@]}"
