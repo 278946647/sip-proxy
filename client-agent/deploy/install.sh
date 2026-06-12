@@ -87,10 +87,14 @@ elif [[ -n "${SERVER_URL:-}" || -n "${CONTROL_PLANE_HOST:-}" ]]; then
   export GFC_ROOT="${GFC_ROOT:-/opt/gfc-client}"
 else
   if [[ $NON_INTERACTIVE -eq 1 ]]; then
-    echo "ERROR: 非交互模式需要 --config，或已刷线路码（activation.b32）"
-    exit 1
+    gfc_client_detect_wan_lan
+    export DEVICE_NAME="${DEVICE_NAME:-$(hostname -s)}"
+    export GFC_PROXY_MODE="${GFC_PROXY_MODE:-gateway}"
+    export GFC_ROOT="${GFC_ROOT:-/opt/gfc-client}"
+    export ACTIVATION_FILE="${ACTIVATION_FILE:-/etc/gfc-client/activation.b32}"
+  else
+    gfc_client_collect_install_config_interactive
   fi
-  gfc_client_collect_install_config_interactive
 fi
 
 gfc_client_show_install_summary
@@ -122,4 +126,5 @@ echo ""
 echo "==> 安装完成"
 echo "    配置: /etc/gfc-client/gfc.env"
 echo "    日志: /var/log/gfc-client/"
-echo "    本地 Web: http://127.0.0.1:8787"
+echo "    管理后台: http://192.168.68.1/"
+echo "    刷入线路码: http://192.168.68.1:81/"

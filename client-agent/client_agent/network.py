@@ -135,13 +135,23 @@ table ip gfc_client_nat {{
   }}
 }}"""
     forward = ""
+    input_rules = "    ct state established,related accept\n    iif lo accept"
     if wan and lan:
         forward = f"""
     iifname "{lan}" oifname "{wan}" accept
     iifname "{wan}" oifname "{lan}" ct state established,related accept"""
+        input_rules += f"""
+    iifname "{lan}" tcp dport {{ 80, 81, 443, 22 }} accept
+    iifname "{lan}" udp dport {{ 53, 67, 68 }} accept
+    iifname "{lan}" icmp type echo-request accept"""
     return f"""#!/usr/sbin/nft -f
 flush table ip gfc_client_nat
+flush table inet gfc_client_filter
 table inet gfc_client_filter {{
+  chain input {{
+    type filter hook input priority filter; policy drop;
+{input_rules}
+  }}
   chain forward {{
     type filter hook forward priority filter; policy drop;{forward}
   }}

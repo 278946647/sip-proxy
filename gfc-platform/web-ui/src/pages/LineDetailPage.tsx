@@ -11,7 +11,8 @@ import {
   Typography,
   message,
 } from "antd";
-import { ArrowLeftOutlined, CopyOutlined } from "@ant-design/icons";
+import { ArrowLeftOutlined } from "@ant-design/icons";
+import { LineCodeField } from "../components/LineCodeField";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import dayjs from "dayjs";
@@ -24,6 +25,8 @@ export function LineDetailPage() {
   const [line, setLine] = useState<LineDetail | null>(null);
   const [form] = Form.useForm();
   const [saving, setSaving] = useState(false);
+  const [lineCode, setLineCode] = useState("");
+  const [codeLoading, setCodeLoading] = useState(false);
 
   const load = async () => {
     const raw = await apiGet<Record<string, unknown>>(`/admin/lines/${id}`);
@@ -56,16 +59,31 @@ export function LineDetailPage() {
     }
   };
 
-  const copyLineCode = async () => {
+  const refreshLineCode = async () => {
+    if (!id) return "";
+    setCodeLoading(true);
     try {
       const res = await apiGet<{ line_code_b32: string }>(`/admin/lines/${id}/line-code`);
-      await navigator.clipboard.writeText(res.line_code_b32);
-      message.success("线路码已复制");
+      setLineCode(res.line_code_b32 || "");
       await load();
+      return res.line_code_b32 || "";
     } catch (e) {
       message.error(String(e));
+      return "";
+    } finally {
+      setCodeLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (line?.lineType === "client") {
+      if (line.lineCodeB32) {
+        setLineCode(line.lineCodeB32);
+      } else {
+        void refreshLineCode();
+      }
+    }
+  }, [line?.id, line?.lineType, line?.lineCodeB32]);
 
   if (!line) return null;
 
@@ -147,15 +165,11 @@ export function LineDetailPage() {
           <Typography.Paragraph type="secondary">
             创建线路时自动生成。将下方编码写入客户端盒子，盒子解码后激活并拉取配置。
           </Typography.Paragraph>
-          <Input.TextArea
-            rows={4}
-            readOnly
-            value={line.lineCodeB32 || "（点击刷新获取）"}
-            style={{ fontFamily: "monospace", marginBottom: 8 }}
+          <LineCodeField
+            value={lineCode}
+            loading={codeLoading}
+            onRefresh={() => void refreshLineCode()}
           />
-          <Button type="primary" icon={<CopyOutlined />} onClick={() => void copyLineCode()}>
-            复制线路码
-          </Button>
         </div>
       )}
 

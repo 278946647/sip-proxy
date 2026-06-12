@@ -103,7 +103,27 @@ sudo bash deploy/build-image.sh --arch x86_64 --size 4G
 - **服务状态** — 重启 sing-box / mosdns / agent
 - **系统日志** — `/var/log/gfc-client/` 日志
 
-也可命令行刷码：`sudo bash deploy/flash-line-code.sh /path/to/linecode.b32`
+也可命令行刷码（VM 无法浏览器粘贴时推荐）：
+
+```bash
+# 方式 1：控制平台 API 取码（在能访问控制平台的机器上）
+TOKEN="你的JWT"
+LINE_ID=1
+curl -fsS -H "Authorization: Bearer $TOKEN" \
+  "http://控制平台:8080/admin/lines/${LINE_ID}/line-code" | jq -r .line_code_b32 > /tmp/line.b32
+
+# 方式 2：在盒子上刷入文件
+sudo bash /opt/gfc-client/client-agent/deploy/flash-line-code.sh --file /tmp/line.b32
+# 或源码路径：
+sudo bash /opt/sip-proxy-src/client-agent/deploy/flash-line-code.sh --file /tmp/line.b32
+
+# 方式 3：直接写字符串（注意整段一行，无空格换行）
+sudo bash deploy/flash-line-code.sh 'BASE32线路码粘贴在这里'
+
+# 方式 4：手工写入后重启 Agent
+sudo nano /etc/gfc-client/activation.b32   # 粘贴线路码，保存
+sudo systemctl restart gfc-client-agent
+```
 
 ## 控制面 API（Agent 使用）
 

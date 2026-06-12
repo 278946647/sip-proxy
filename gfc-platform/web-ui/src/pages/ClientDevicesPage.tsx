@@ -3,6 +3,7 @@ import {
   Button,
   Input,
   InputNumber,
+  Modal,
   Select,
   Space,
   Table,
@@ -10,6 +11,7 @@ import {
   Typography,
   message,
 } from "antd";
+import { LineCodeField } from "../components/LineCodeField";
 import { EyeOutlined, ReloadOutlined } from "@ant-design/icons";
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
@@ -31,6 +33,12 @@ export function ClientDevicesPage() {
   const [loading, setLoading] = useState(false);
   const [drafts, setDrafts] = useState<Record<number, RowDraft>>({});
   const [lastRefresh, setLastRefresh] = useState(dayjs());
+  const [lineCodeModal, setLineCodeModal] = useState<{ open: boolean; code: string; tid: string }>({
+    open: false,
+    code: "",
+    tid: "",
+  });
+  const [codeLoading, setCodeLoading] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -95,12 +103,19 @@ export function ClientDevicesPage() {
       message.warning("请先关联线路");
       return;
     }
+    setCodeLoading(true);
     try {
       const res = await apiGet<{ line_code_b32: string }>(`/admin/lines/${lineId}/line-code`);
-      await navigator.clipboard.writeText(res.line_code_b32);
-      message.success("线路码已复制到剪贴板");
+      const ln = lines.find((l) => l.id === lineId);
+      setLineCodeModal({
+        open: true,
+        code: res.line_code_b32 || "",
+        tid: ln?.tid || `#${lineId}`,
+      });
     } catch (e) {
       message.error(String(e));
+    } finally {
+      setCodeLoading(false);
     }
   };
 
@@ -230,6 +245,17 @@ export function ClientDevicesPage() {
       <div style={{ marginTop: 8 }}>
         尚无设备？请在线路详情页复制 <Link to="/lines">线路码</Link> 刷入客户端盒子。
       </div>
+
+      <Modal
+        title={`线路码 — ${lineCodeModal.tid}`}
+        open={lineCodeModal.open}
+        onCancel={() => setLineCodeModal((m) => ({ ...m, open: false }))}
+        footer={null}
+        width={720}
+        destroyOnClose
+      >
+        <LineCodeField value={lineCodeModal.code} loading={codeLoading} rows={5} />
+      </Modal>
     </div>
   );
 }

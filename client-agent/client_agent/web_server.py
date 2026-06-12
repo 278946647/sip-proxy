@@ -4,6 +4,7 @@ import argparse
 import json
 import mimetypes
 import os
+import ssl
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -25,6 +26,7 @@ STATUS_FILE = Path(os.environ.get("GFC_STATUS_FILE", "/var/lib/gfc-client/status
 DEFAULT_WEB_ROOT = Path(os.environ.get("GFC_CLIENT_WEB_ROOT", "/opt/gfc-client/client-web"))
 DEFAULT_WEB_PORT = int(os.environ.get("GFC_CLIENT_WEB_PORT", "80"))
 FLASH_PORT = int(os.environ.get("GFC_CLIENT_FLASH_PORT", "81"))
+HTTPS_PORT = int(os.environ.get("GFC_CLIENT_HTTPS_PORT", "443"))
 
 
 def _json_response(handler: BaseHTTPRequestHandler, status: int, data: Any) -> None:
@@ -227,28 +229,89 @@ class ClientWebHandler(BaseHTTPRequestHandler):
             _json_response(self, HTTPStatus.INTERNAL_SERVER_ERROR, {"error": str(exc)})
 
 
+def _run_server(
+    port: int,
+    mode: str,
+    web_root: Path,
+    *,
+    use_tls: bool = False,
+) -> None:
+    server = ThreadingHTTPServer(("0.0.0.0", port), ClientWebHandler)
+    server.web_root = web_root  # type: ignore[attr-defined]
+    server.web_mode = mode  # type: ignore[attr-defined]
+    scheme = "http"
+    if use_tls:
+        from .web_tls import ensure_self_signed_cert
+
+        lan_ip = os.environ.get("GFC_LAN_ADDRESS", "192.168.68.1")
+        cert, key = ensure_self_signed_cert(lan_ip)
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        ctx.load_cert_chain(certfile=str(cert), keyfile=str(key))
+        server.socket = ctx.wrap_socket(server.socket, server_side=True)
+        scheme = "https"
+    print(
+        f"gfc-client-web mode={mode} {scheme}://0.0.0.0:{port} root={web_root}",
+        flush=True,
+    )
+    server.serve_forever()
+
+
 def main(argv: list[str] | None = None) -> int:
+    import threading
+
     parser = argparse.ArgumentParser(description="GFC client box local web UI")
     parser.add_argument("--port", type=int, default=DEFAULT_WEB_PORT)
     parser.add_argument("--root", default=str(DEFAULT_WEB_ROOT))
     parser.add_argument(
         "--mode",
-        choices=("admin", "flash"),
-        default=os.environ.get("GFC_WEB_MODE", "admin"),
-        help="admin=管理后台(:80) flash=刷码页(:81)",
+        choices=("admin", "flash", "both"),
+        default=os.environ.get("GFC_WEB_MODE", "both"),
+        help="admin=:80 flash=:81 both=同时监听两个端口",
     )
     args = parser.parse_args(argv)
 
     web_root = Path(args.root)
     web_root.mkdir(parents=True, exist_ok=True)
-    server = ThreadingHTTPServer(("0.0.0.0", args.port), ClientWebHandler)
-    server.web_root = web_root  # type: ignore[attr-defined]
-    server.web_mode = args.mode  # type: ignore[attr-defined]
-    print(
-        f"gfc-client-web mode={args.mode} on 0.0.0.0:{args.port} root={web_root}",
-        flush=True,
-    )
-    server.serve_forever()
+
+    if args.mode == "both":
+        admin_port = int(os.environ.get("GFC_CLIENT_WEB_PORT", DEFAULT_WEB_PORT))
+        flash_port = int(os.environ.get("GFC_CLIENT_FLASH_PORT", FLASH_PORT))
+        https_port = int(os.environ.get("GFC_CLIENT_HTTPS_PORT", HTTPS_PORT))
+        enable_https = os.environ.get("GFC_CLIENT_HTTPS", "1").strip() not in (
+            "0",
+            "false",
+            "no",
+        )
+        threads: list[threading.Thread] = []
+        listeners: list[tuple[int, str, bool]] = [
+            (admin_port, "admin", False),
+            (flash_port, "flash", False),
+        ]
+        if enable_https:
+            listeners.append((https_port, "admin", True))
+        for port, mode, tls in listeners:
+            t = threading.Thread(
+                target=_run_server,
+                args=(port, mode, web_root),
+                kwargs={"use_tls": tls},
+                name=f"gfc-web-{port}{'-tls' if tls else ''}",
+                daemon=True,
+            )
+            t.start()
+            threads.append(t)
+        print(
+            f"gfc-client-web listeners: http admin=:{admin_port}"
+            f" flash=:{flash_port}"
+            + (f" https admin=:{https_port}" if enable_https else ""),
+            flush=True,
+        )
+        for t in threads:
+            t.join()
+        return 0
+
+    use_tls = os.environ.get("GFC_CLIENT_HTTPS", "").strip() in ("1", "true", "yes")
+    _run_server(args.port, args.mode, web_root, use_tls=use_tls)
     return 0
 
 

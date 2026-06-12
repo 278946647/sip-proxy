@@ -18,6 +18,7 @@ import {
 import { MinusCircleOutlined, PlusOutlined as PlusIcon } from "@ant-design/icons";
 import { useEffect, useMemo, useState } from "react";
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from "../api/client";
+import { copyToClipboard } from "../utils/clipboard";
 import type { StaticRoute } from "../types";
 
 type VpnSummary = {
@@ -639,8 +640,9 @@ export function NodesPage() {
             key="copy"
             type="primary"
             onClick={() => {
-              void navigator.clipboard.writeText(vyosText);
-              message.success("已复制");
+              void copyToClipboard(vyosText)
+                .then(() => message.success("已复制"))
+                .catch((e) => message.error(String(e)));
             }}
           >
             复制

@@ -56,7 +56,7 @@ fi
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq python3 python3-venv python3-pip curl rsync nftables iproute2 \
-  systemd ca-certificates iputils-ping unzip dnsmasq netplan.io
+  systemd ca-certificates iputils-ping unzip dnsmasq netplan.io openssl
 
 mkdir -p "$GFC_ROOT" /etc/gfc-client /var/log/gfc-client /var/lib/gfc-client \
   "$GFC_ROOT/client-agent/state/dataplane" /etc/gfc-client/mosdns
@@ -125,8 +125,9 @@ else
   mkdir -p "$GFC_ROOT/client-web"
 fi
 python3 -m venv "$GFC_ROOT/client-agent/.venv"
-"$GFC_ROOT/client-agent/.venv/bin/pip" install -q -U pip
+"$GFC_ROOT/client-agent/.venv/bin/pip" install -q -U pip setuptools wheel
 "$GFC_ROOT/client-agent/.venv/bin/pip" install -q -r "$GFC_ROOT/client-agent/requirements.txt"
+"$GFC_ROOT/client-agent/.venv/bin/pip" install -q -e "$GFC_ROOT/client-agent"
 
 if [[ -f "$_SCRIPT_DIR/gfc-client-agent-start.sh" ]]; then
   AGENT_START="$_SCRIPT_DIR/gfc-client-agent-start.sh"
@@ -141,9 +142,12 @@ else
   exit 1
 fi
 
+PYENV_SRC="$_SCRIPT_DIR/gfc-client-python-env.sh"
+[[ -f "$PYENV_SRC" ]] || PYENV_SRC="$CLIENT_ROOT/deploy/gfc-client-python-env.sh"
 install -m 755 "$AGENT_START" /usr/local/bin/gfc-client-agent-start
 install -m 755 "$WEB_START" /usr/local/bin/gfc-client-web-start
 install -m 755 "$FLASH_START" /usr/local/bin/gfc-client-flash-start
+install -m 755 "$PYENV_SRC" /usr/local/bin/gfc-client-python-env.sh
 
 cat >/etc/gfc-client/gfc.env <<EOF
 GFC_ROOT=${GFC_ROOT}
@@ -161,6 +165,8 @@ POLL_SECONDS=${POLL_SECONDS}
 REVERSE_SSH_PORT=${REVERSE_SSH_PORT}
 GFC_CLIENT_WEB_PORT=80
 GFC_CLIENT_FLASH_PORT=81
+GFC_CLIENT_HTTPS_PORT=443
+GFC_CLIENT_HTTPS=1
 GFC_CLIENT_WEB_ROOT=${GFC_ROOT}/client-web
 GFC_WEB_MODE=admin
 GFC_STATUS_FILE=/var/lib/gfc-client/status.json
@@ -239,12 +245,15 @@ cat >/etc/systemd/system/gfc-client-web.service <<EOF
 [Unit]
 Description=GFC Client Web Admin (:80)
 After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 EnvironmentFile=/etc/gfc-client/gfc.env
+WorkingDirectory=${GFC_ROOT}/client-agent
+Environment=PYTHONPATH=${GFC_ROOT}/client-agent
 ExecStart=/usr/local/bin/gfc-client-web-start
-Restart=on-failure
+Restart=always
 RestartSec=3
 StandardOutput=append:/var/log/gfc-client/gfc-client-web.log
 StandardError=append:/var/log/gfc-client/gfc-client-web.log
@@ -257,12 +266,15 @@ cat >/etc/systemd/system/gfc-client-flash.service <<EOF
 [Unit]
 Description=GFC Client Line Code Flash UI (:81)
 After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 EnvironmentFile=/etc/gfc-client/gfc.env
+WorkingDirectory=${GFC_ROOT}/client-agent
+Environment=PYTHONPATH=${GFC_ROOT}/client-agent
 ExecStart=/usr/local/bin/gfc-client-flash-start
-Restart=on-failure
+Restart=always
 RestartSec=3
 StandardOutput=append:/var/log/gfc-client/gfc-client-flash.log
 StandardError=append:/var/log/gfc-client/gfc-client-flash.log
@@ -290,10 +302,35 @@ systemctl restart gfc-client-agent
 systemctl restart gfc-client-web || true
 systemctl restart gfc-client-flash || true
 
+if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qi "active"; then
+  ufw allow 80/tcp comment 'gfc-client-web' 2>/dev/null || true
+  ufw allow 81/tcp comment 'gfc-client-flash' 2>/dev/null || true
+fi
+
+_gfc_wait_port() {
+  local port=$1 name=$2 i
+  for i in $(seq 1 15); do
+    if ss -lnt 2>/dev/null | grep -q ":${port} "; then
+      echo "    OK ${name} listening on :${port}"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "    FAIL ${name} not listening on :${port}"
+  journalctl -u "gfc-client-${name}" -n 15 --no-pager 2>/dev/null || \
+    journalctl -u "gfc-client-web" -n 15 --no-pager 2>/dev/null || true
+  return 1
+}
+
+echo "==> Verify Web services"
+_gfc_wait_port 80 web || true
+_gfc_wait_port 81 flash || true
+
 echo ""
 echo "==> Client install complete"
 echo "    Config: /etc/gfc-client/gfc.env"
-echo "    管理后台: http://192.168.68.1/"
+echo "    管理后台: http://192.168.68.1/  或  https://192.168.68.1/ (自签名证书)"
 echo "    刷入线路码: http://192.168.68.1:81/"
+echo "    注意: 浏览器若自动跳 HTTPS 导致 80 报错，请用 https://192.168.68.1/ 或显式输入 http://"
 echo "    LAN: 192.168.68.0/24 网关 192.168.68.1 DHCP ${GFC_DHCP_START:-192.168.68.100}-${GFC_DHCP_END:-192.168.68.250}"
 echo "    Logs: tail -f /var/log/gfc-client/gfc-client-agent.log"

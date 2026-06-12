@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start gfc-client-agent with env from /etc/gfc-client/gfc.env
+# Start gfc-client-agent
 set -euo pipefail
 ENV_FILE="${ENV_FILE:-/etc/gfc-client/gfc.env}"
 if [[ -f "$ENV_FILE" ]]; then
@@ -9,7 +9,17 @@ if [[ -f "$ENV_FILE" ]]; then
   set +a
 fi
 GFC_ROOT="${GFC_ROOT:-/opt/gfc-client}"
-VENV="${GFC_ROOT}/client-agent/.venv/bin/python"
+AGENT_DIR="${GFC_ROOT}/client-agent"
+VENV="${AGENT_DIR}/.venv/bin/python"
+
+if [[ ! -x "$VENV" ]]; then
+  echo "ERROR: missing venv $VENV" >&2
+  exit 1
+fi
+
+cd "$AGENT_DIR"
+export PYTHONPATH="${AGENT_DIR}${PYTHONPATH:+:$PYTHONPATH}"
+
 ARGS=(
   --state-file "${STATE_FILE:-${GFC_ROOT}/client-agent/state/client_state.json}"
   --config-dir "${CONFIG_DIR:-${GFC_ROOT}/client-agent/state/dataplane}"
