@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Write Base32 line code and restart agent (full validation via Python)
+# Write Base32 line code, activate with control plane, apply dataplane config
 set -euo pipefail
 
 if [[ $# -lt 1 ]]; then
@@ -31,33 +31,47 @@ fi
 
 echo "==> Flash line code"
 "$PY" -c "
-import json, sys
+import json, sys, traceback
 from client_agent.web_actions import flash_line_code
-from client_agent.bootstrap import ensure_bootstrap_dataplane, ensure_services_running
+from client_agent.activate_now import activate_and_apply
 
-result = flash_line_code(sys.argv[1], reset_state=True)
+result = flash_line_code(sys.argv[1], reset_state=True, restart_agent=False)
 print(json.dumps(result, ensure_ascii=False, indent=2))
-ok, msg = ensure_bootstrap_dataplane(try_download=False)
-print('bootstrap:', msg)
-ensure_services_running()
+try:
+    act = activate_and_apply()
+    print('activate:', json.dumps(act, ensure_ascii=False, indent=2))
+    if not act.get('ok'):
+        raise SystemExit(1)
+except Exception as exc:
+    print('activate FAILED:', exc)
+    traceback.print_exc()
+    raise SystemExit(1)
 " "$CODE"
 
-echo "==> Restart agent (activate + pull config)"
+echo "==> Restart agent (heartbeat loop)"
 systemctl restart gfc-client-agent
 
 echo ""
-echo "等待 15s 后检查激活状态..."
-sleep 15
 STATE="${STATE_FILE:-/opt/gfc-client/client-agent/state/client_state.json}"
 if [[ -f "$STATE" ]]; then
   echo "state: $STATE"
   cat "$STATE"
 else
-  echo "WARN: state 文件尚未生成，请检查 agent 日志:"
-  echo "  journalctl -u gfc-client-agent -n 30 --no-pager"
+  echo "WARN: state missing"
+fi
+
+if [[ -f /etc/gfc-client/dataplane-mode.json ]]; then
+  echo "dataplane:"
+  cat /etc/gfc-client/dataplane-mode.json
 fi
 
 if [[ -f /etc/gfc-client/sing-box.json ]]; then
   sing-box check -c /etc/gfc-client/sing-box.json && echo "sing-box: ok"
+  if grep -q gfc0 /etc/gfc-client/sing-box.json 2>/dev/null; then
+    echo "sing-box: active (gfc0 tun present)"
+  else
+    echo "WARN: sing-box still idle (no gfc0)"
+  fi
 fi
+
 systemctl is-active gfc-mosdns gfc-client-sing-box gfc-client-agent gfc-client-web 2>/dev/null || true

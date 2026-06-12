@@ -7,7 +7,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from .activation import is_line_activated
+from .activation import has_activation_file, is_line_activated
 from .apply import apply_payload
 from .bootstrap import ensure_bootstrap_dataplane
 from .routing_mode import read_routing_mode
@@ -167,7 +167,7 @@ def run_loop(args: argparse.Namespace) -> None:
 
     print(f"sysctl: {ensure_network_tuning()}", flush=True)
 
-    if not is_line_activated():
+    if not is_line_activated() and not has_activation_file():
         ok, boot_msg = ensure_bootstrap_dataplane(try_download=False)
         print(f"bootstrap: {boot_msg}" if ok else f"bootstrap warn: {boot_msg}", flush=True)
 

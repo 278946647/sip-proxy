@@ -116,7 +116,12 @@ def _apply_server_urls(payload: dict[str, Any]) -> list[str]:
     return urls
 
 
-def flash_line_code(code: str, *, reset_state: bool = True) -> dict[str, Any]:
+def flash_line_code(
+    code: str,
+    *,
+    reset_state: bool = True,
+    restart_agent: bool = True,
+) -> dict[str, Any]:
     normalized = code.strip()
     if not normalized:
         raise ValueError("线路码不能为空")
@@ -148,7 +153,9 @@ def flash_line_code(code: str, *, reset_state: bool = True) -> dict[str, Any]:
     if reset_state and STATE_FILE.is_file():
         STATE_FILE.unlink()
 
-    restart_ok = _restart_service("agent")
+    restart_ok = False
+    if restart_agent:
+        restart_ok = _restart_service("agent")
     return {
         "ok": True,
         "kind": "line",
@@ -157,7 +164,7 @@ def flash_line_code(code: str, *, reset_state: bool = True) -> dict[str, Any]:
         "node_name": payload.get("nodeName"),
         "server_urls": server_urls,
         "agent_restarted": restart_ok,
-        "message": "线路码已刷入，联网后 Agent 将自动激活并建立代理通道",
+        "message": "线路码已刷入，正在激活…",
     }
 
 
