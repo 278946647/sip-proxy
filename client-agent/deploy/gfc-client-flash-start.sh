@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# GFC client local web management UI (Panabit-style)
+# GFC client line-code flash UI (port 81)
 set -euo pipefail
 ENV_FILE="${ENV_FILE:-/etc/gfc-client/gfc.env}"
 if [[ -f "$ENV_FILE" ]]; then
@@ -11,7 +11,6 @@ fi
 GFC_ROOT="${GFC_ROOT:-/opt/gfc-client}"
 VENV="${GFC_ROOT}/client-agent/.venv/bin/python"
 WEB_ROOT="${GFC_CLIENT_WEB_ROOT:-${GFC_ROOT}/client-web}"
-WEB_PORT="${GFC_CLIENT_WEB_PORT:-80}"
+WEB_PORT="${GFC_CLIENT_FLASH_PORT:-81}"
 
-mkdir -p "$WEB_ROOT"
-exec "$VENV" -m client_agent.web_server --mode admin --port "$WEB_PORT" --root "$WEB_ROOT"
+exec "$VENV" -m client_agent.web_server --mode flash --port "$WEB_PORT" --root "$WEB_ROOT"

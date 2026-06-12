@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GFC · 服务状态</title>
+  <link rel="stylesheet" href="/css/app.css" />
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <h1>GFC Client</h1>
+        <p>智能加速网关</p>
+      </div>
+      <nav class="nav">
+        <a href="/" data-page="dashboard"><span class="nav-icon">◉</span> 运行概览</a>
+        <a href="/activate.html" data-page="activate"><span class="nav-icon">◎</span> 线路激活</a>
+        <a href="/settings.html" data-page="settings"><span class="nav-icon">⚙</span> 网络设置</a>
+        <a href="/services.html" data-page="services" class="active"><span class="nav-icon">▣</span> 服务状态</a>
+        <a href="/logs.html" data-page="logs"><span class="nav-icon">≡</span> 系统日志</a>
+      </nav>
+      <div class="sidebar-footer">sing-box · mosdns · agent</div>
+    </aside>
+
+    <div class="main">
+      <header class="topbar">
+        <h2>服务状态</h2>
+        <button class="btn btn-secondary" id="refresh-btn">刷新</button>
+      </header>
+
+      <div class="content">
+        <div id="alert" hidden></div>
+        <div class="panel">
+          <div class="panel-header">系统服务</div>
+          <div class="panel-body">
+            <div class="service-list" id="svc-list">加载中…</div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header">组件安装</div>
+          <div class="panel-body">
+            <table class="kv-table">
+              <tr><th>sing-box</th><td id="inst-sb">—</td></tr>
+              <tr><th>mosdns</th><td id="inst-md">—</td></tr>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script>
+    setActiveNav("services");
+
+    const alertEl = document.getElementById("alert");
+    const labels = {
+      agent: "GFC Agent",
+      "sing-box": "sing-box (VLESS+REALITY)",
+      mosdns: "mosdns (DNS 分流)",
+      web: "本地 Web 管理",
+    };
+
+    async function refresh() {
+      const [svcData, status] = await Promise.all([API.services(), API.status()]);
+      const svcs = svcData.services || {};
+      const m = status.metrics || {};
+
+      document.getElementById("inst-sb").textContent = m.sing_box_installed ? "已安装" : "未安装";
+      document.getElementById("inst-md").textContent = m.mosdns_installed ? "已安装" : "未安装";
+
+      document.getElementById("svc-list").innerHTML = Object.entries(svcs)
+        .map(([key, s]) => {
+          const canRestart = key !== "web";
+          return `<div class="service-row">
+            <div>
+              <div class="service-name">${labels[key] || key}</div>
+              <div class="service-status">${s.unit} · ${s.status || "unknown"}${s.message ? " — " + s.message : ""}</div>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center">
+              ${serviceBadge(!!s.active)}
+              ${canRestart ? `<button class="btn btn-secondary btn-restart" data-svc="${key}">重启</button>` : ""}
+            </div>
+          </div>`;
+        })
+        .join("");
+
+      document.querySelectorAll(".btn-restart").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          hideAlert(alertEl);
+          btn.disabled = true;
+          try {
+            await API.restartService(btn.dataset.svc);
+            showAlert(alertEl, "success", `已重启 ${btn.dataset.svc}`);
+            await refresh();
+          } catch (e) {
+            showAlert(alertEl, "error", e.message);
+          } finally {
+            btn.disabled = false;
+          }
+        });
+      });
+    }
+
+    document.getElementById("refresh-btn").addEventListener("click", () => refresh().catch(console.error));
+    refresh().catch((e) => {
+      document.getElementById("svc-list").textContent = e.message;
+    });
+    setInterval(() => refresh().catch(() => {}), 10000);
+  </script>
+</body>
+</html>

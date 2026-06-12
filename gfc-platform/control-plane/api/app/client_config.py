@@ -17,9 +17,11 @@ def public_server_url() -> str:
 
 
 def build_line_code_payload(line: Line, node: Node) -> dict[str, Any]:
+    """Client line code: control-plane URLs + line binding (one paste after box install)."""
     servers = public_server_urls()
     payload: dict[str, Any] = {
-        "v": 1,
+        "v": 2,
+        "kind": "line",
         "server": servers[0],
         "lineId": line.id,
         "tid": line.tid,
@@ -33,8 +35,26 @@ def build_line_code_payload(line: Line, node: Node) -> dict[str, Any]:
     return payload
 
 
+def build_platform_bootstrap_payload() -> dict[str, Any]:
+    """Platform-only code: update control-plane URL without changing line binding."""
+    servers = public_server_urls()
+    payload: dict[str, Any] = {
+        "v": 2,
+        "kind": "platform",
+        "server": servers[0],
+    }
+    if len(servers) > 1:
+        payload["serverFallback"] = servers[1]
+        payload["servers"] = servers
+    return payload
+
+
 def refresh_line_code(line: Line, node: Node) -> str:
     return encode_line_code(build_line_code_payload(line, node))
+
+
+def encode_platform_bootstrap_code() -> str:
+    return encode_line_code(build_platform_bootstrap_payload())
 
 
 def build_client_payload(

@@ -101,23 +101,38 @@ gfc_client_load_install_env_file() {
   return 0
 }
 
+gfc_client_detect_wan_lan() {
+  local ifaces wan lan rest
+  mapfile -t ifaces < <(ls /sys/class/net 2>/dev/null | while read -r n; do
+    [[ "$n" == "lo" ]] && continue
+    [[ -e "/sys/class/net/$n/device" ]] || continue
+    echo "$n"
+  done | sort -V)
+  wan="${ifaces[0]:-}"
+  lan=""
+  for n in "${ifaces[@]:1}"; do lan="$n"; break; done
+  GFC_WAN_IFACE="${GFC_WAN_IFACE:-$wan}"
+  GFC_LAN_IFACE="${GFC_LAN_IFACE:-$lan}"
+  export GFC_WAN_IFACE GFC_LAN_IFACE
+}
+
 gfc_client_collect_install_config_interactive() {
-  local default_host port host_fb mode lan
+  local default_host port host_fb mode
   echo ""
-  echo "==> 客户端盒子安装参数（直接回车采用默认值）"
-  echo "    控制平台 API 支持 IP 或域名；若已刷线路码可留空（优先用线路码内嵌地址）"
-  gfc_client_activation_hint "${ACTIVATION_FILE:-/etc/gfc-client/activation.b32}"
+  echo "==> 客户端盒子安装（OpenWrt 模式：首网卡 WAN DHCP，其余 LAN 192.168.68.1/24）"
+  echo "    安装完成后通过 http://192.168.68.1:81 刷入线路码，无需提前配置控制平台"
   echo ""
 
-  gfc_client_prompt_default port "控制平台 API 端口" "8080"
-  read -r -p "控制平台地址（IP 或域名，留空=仅用线路码）: " default_host
-  read -r -p "备用控制平台地址（IP 或域名，可留空）: " host_fb
-  gfc_client_prompt_default mode "代理模式 gateway|bypass|transparent" "gateway"
-  echo ""
+  gfc_client_detect_wan_lan
   gfc_client_list_ifaces
+  echo "    自动分配: WAN=${GFC_WAN_IFACE:-?} LAN=${GFC_LAN_IFACE:-?}"
   echo ""
-  gfc_client_prompt_default lan "LAN 网卡 GFC_LAN_IFACE（transparent 必填，gateway 可留空）" "eth1"
-  gfc_client_prompt_default DEVICE_NAME "设备名称 DEVICE_NAME" "$(hostname -s)"
+
+  gfc_client_prompt_default mode "代理模式（默认 gateway）" "gateway"
+  gfc_client_prompt_default DEVICE_NAME "设备名称" "$(hostname -s)"
+  port="8080"
+  default_host=""
+  host_fb=""
 
   API_PORT=$port
   if [[ -n "$default_host" ]]; then
@@ -135,7 +150,6 @@ gfc_client_collect_install_config_interactive() {
     SERVER_URL_FALLBACK=
   fi
   GFC_PROXY_MODE=$mode
-  GFC_LAN_IFACE=$lan
   ACTIVATION_FILE="${ACTIVATION_FILE:-/etc/gfc-client/activation.b32}"
   GFC_ROOT="${GFC_ROOT:-/opt/gfc-client}"
   POLL_SECONDS="${POLL_SECONDS:-10}"
@@ -146,22 +160,13 @@ gfc_client_collect_install_config_interactive() {
 }
 
 gfc_client_validate_install_config() {
-  if [[ ! -f "${ACTIVATION_FILE:-/etc/gfc-client/activation.b32}" || ! -s "${ACTIVATION_FILE:-/etc/gfc-client/activation.b32}" ]]; then
-    if [[ -z "${SERVER_URL:-}" ]]; then
-      echo "WARN: 未刷线路码且未填控制平台地址 — 请先 flash-line-code.sh 或填写 SERVER_URL"
-    fi
-  fi
+  gfc_client_detect_wan_lan
   if [[ "${GFC_PROXY_MODE:-gateway}" == "transparent" && -z "${GFC_LAN_IFACE:-}" ]]; then
     echo "ERROR: transparent 模式须设置 GFC_LAN_IFACE"
     return 1
   fi
-  if command -v curl &>/dev/null && [[ -n "${SERVER_URL:-}" ]]; then
-    echo "==> 检查控制平台 ${SERVER_URL}/healthz"
-    if curl -fsS --connect-timeout 5 "${SERVER_URL%/}/healthz" >/dev/null 2>&1; then
-      echo "    OK 控制平台可达"
-    else
-      echo "    WARN 暂不可达（继续安装，请检查网络/DNS）"
-    fi
+  if [[ -z "${GFC_WAN_IFACE:-}" ]]; then
+    echo "WARN: 未检测到物理网卡，安装后请检查网络"
   fi
   return 0
 }
@@ -191,13 +196,11 @@ EOF
 gfc_client_show_install_summary() {
   echo ""
   echo "==> 安装参数摘要"
-  echo "    控制平台(主): ${SERVER_URL:-（使用线路码内嵌地址）}"
-  if [[ -n "${SERVER_URL_FALLBACK:-}" ]]; then
-    echo "    控制平台(备): ${SERVER_URL_FALLBACK}"
-  fi
   echo "    设备名称:     ${DEVICE_NAME:-$(hostname -s)}"
   echo "    代理模式:     ${GFC_PROXY_MODE:-gateway}"
-  echo "    LAN 网卡:     ${GFC_LAN_IFACE:-（未设置）}"
-  echo "    线路码文件:   ${ACTIVATION_FILE:-/etc/gfc-client/activation.b32}"
+  echo "    WAN 网卡:     ${GFC_WAN_IFACE:-（自动）}"
+  echo "    LAN 网卡:     ${GFC_LAN_IFACE:-（自动）}"
+  echo "    刷码地址:     http://192.168.68.1:81/"
+  echo "    管理后台:     http://192.168.68.1/"
   echo ""
 }

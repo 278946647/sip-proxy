@@ -165,6 +165,20 @@ def collect_metrics(
     }
 
 
-def write_status_snapshot(metrics: dict[str, Any], path: Path) -> None:
+def write_status_snapshot(
+    metrics: dict[str, Any],
+    path: Path,
+    *,
+    control_plane_url: str | None = None,
+    device: dict[str, Any] | None = None,
+) -> None:
+    from datetime import datetime, timezone
+
+    payload = dict(metrics)
+    payload["updated_at"] = datetime.now(timezone.utc).isoformat()
+    if control_plane_url:
+        payload["control_plane_url"] = control_plane_url
+    if device:
+        payload["device_summary"] = device
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8")
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")

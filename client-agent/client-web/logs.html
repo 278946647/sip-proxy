@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GFC · 系统日志</title>
+  <link rel="stylesheet" href="/css/app.css" />
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <h1>GFC Client</h1>
+        <p>智能加速网关</p>
+      </div>
+      <nav class="nav">
+        <a href="/" data-page="dashboard"><span class="nav-icon">◉</span> 运行概览</a>
+        <a href="/activate.html" data-page="activate"><span class="nav-icon">◎</span> 线路激活</a>
+        <a href="/settings.html" data-page="settings"><span class="nav-icon">⚙</span> 网络设置</a>
+        <a href="/services.html" data-page="services"><span class="nav-icon">▣</span> 服务状态</a>
+        <a href="/logs.html" data-page="logs" class="active"><span class="nav-icon">≡</span> 系统日志</a>
+      </nav>
+      <div class="sidebar-footer">/var/log/gfc-client/</div>
+    </aside>
+
+    <div class="main">
+      <header class="topbar">
+        <h2>系统日志</h2>
+        <div style="display:flex;gap:8px;align-items:center">
+          <select id="service-sel">
+            <option value="agent">Agent</option>
+            <option value="sing-box">sing-box</option>
+            <option value="mosdns">mosdns</option>
+            <option value="web">Web</option>
+          </select>
+          <button class="btn btn-secondary" id="refresh-btn">刷新</button>
+          <label style="font-size:13px;color:#64748b">
+            <input type="checkbox" id="auto-scroll" checked /> 自动滚动
+          </label>
+        </div>
+      </header>
+
+      <div class="content">
+        <div class="panel">
+          <div class="panel-header"><span id="log-path">—</span></div>
+          <div class="panel-body" style="padding:0">
+            <pre class="log-view" id="log-view">加载中…</pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script>
+    setActiveNav("logs");
+
+    const view = document.getElementById("log-view");
+    const pathEl = document.getElementById("log-path");
+    const sel = document.getElementById("service-sel");
+
+    async function loadLogs() {
+      const svc = sel.value;
+      const data = await API.logs(svc, 300);
+      pathEl.textContent = data.path || "—";
+      const lines = data.lines || [];
+      view.textContent = lines.length ? lines.join("\n") : (data.message || "(空)");
+      if (document.getElementById("auto-scroll").checked) {
+        view.scrollTop = view.scrollHeight;
+      }
+    }
+
+    document.getElementById("refresh-btn").addEventListener("click", () => loadLogs().catch(console.error));
+    sel.addEventListener("change", () => loadLogs().catch(console.error));
+
+    loadLogs().catch((e) => { view.textContent = e.message; });
+    setInterval(() => loadLogs().catch(() => {}), 5000);
+  </script>
+</body>
+</html>

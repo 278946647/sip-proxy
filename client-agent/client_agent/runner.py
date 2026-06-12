@@ -9,9 +9,11 @@ from typing import Any
 
 from .apply import apply_payload
 from .client import ControlPlaneClient, ClientState
-from .line_code import read_activation_file
-from .server_url import parse_server_url_list, resolve_server_urls_from_env, urls_from_activation_payload
+from .device_info import collect_device_info
+from .line_code import decode_line_code, is_line_activation_payload
 from .metrics import collect_metrics, write_status_snapshot
+from .network import apply_network
+from .server_url import parse_server_url_list, resolve_server_urls_from_env, urls_from_activation_payload
 from .singbox import singbox_config_ok
 from .sysctl_util import ensure_network_tuning
 from .version import AGENT_VERSION
@@ -65,6 +67,22 @@ def save_state(path: str, state: ClientState) -> None:
         )
 
 
+def _read_activation_raw(path: str) -> tuple[str | None, dict[str, Any] | None]:
+    if not os.path.isfile(path):
+        return None, None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            raw = f.read().strip()
+        if not raw:
+            return None, None
+        payload = decode_line_code(raw)
+        if not is_line_activation_payload(payload):
+            return None, payload
+        return raw, payload
+    except (OSError, ValueError):
+        return None, None
+
+
 def resolve_server_urls(args: argparse.Namespace, activation: dict[str, Any] | None) -> list[str]:
     urls = parse_server_url_list(
         args.server,
@@ -81,38 +99,18 @@ def resolve_server_urls(args: argparse.Namespace, activation: dict[str, Any] | N
     env_urls = resolve_server_urls_from_env()
     if env_urls:
         return env_urls
-    raise ValueError("control plane SERVER_URL not set (env, --server, or line code)")
-
-
-def resolve_line_code(args: argparse.Namespace) -> str:
-    if args.line_code:
-        return args.line_code.strip()
-    path = args.activation_file or os.environ.get(
-        "ACTIVATION_FILE", "/etc/gfc-client/activation.b32"
-    )
-    if os.path.isfile(path):
-        activation = read_activation_file(path)
-        # File contains full payload; re-encode not needed if we store raw b32
-        with open(path, "r", encoding="utf-8") as f:
-            return f.read().strip()
-    raise ValueError(f"line code not found: set --line-code or {path}")
+    return []
 
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=f"GFC client box agent v{AGENT_VERSION}")
-    p.add_argument(
-        "--server",
-        help="Control plane API URL (IP or domain; optional if embedded in line code)",
-    )
-    p.add_argument(
-        "--server-fallback",
-        help="Fallback control plane URL when primary is unreachable",
-    )
+    p.add_argument("--server", help="Control plane API URL (optional if in line code)")
+    p.add_argument("--server-fallback", help="Fallback control plane URL")
     p.add_argument("--line-code", help="Base32 line code string")
     p.add_argument(
         "--activation-file",
         default="/etc/gfc-client/activation.b32",
-        help="Path to Base32 activation file",
+        help="Path to Base32 line activation file",
     )
     p.add_argument("--device-name", default=os.environ.get("DEVICE_NAME") or None)
     p.add_argument(
@@ -124,65 +122,120 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--config-dir", default="./state/dataplane")
     p.add_argument("--poll-seconds", type=int, default=10)
     p.add_argument("--status-file", default="/var/lib/gfc-client/status.json")
+    p.add_argument(
+        "--skip-network-setup",
+        action="store_true",
+        help="Skip OpenWrt-style WAN/LAN apply on startup",
+    )
     return p
 
 
-def run_loop(args: argparse.Namespace) -> None:
-    activation: dict[str, Any] | None = None
-    act_path = args.activation_file
-    if os.path.isfile(act_path):
+def _write_idle_status(
+    status_file: Path,
+    *,
+    message: str,
+    server_url: str | None = None,
+    lan_iface: str | None = None,
+) -> None:
+    reachable = False
+    if server_url:
         try:
-            with open(act_path, "r", encoding="utf-8") as f:
-                raw_code = f.read().strip()
-            activation = read_activation_file(raw_code) if raw_code else None
-        except (OSError, ValueError):
-            activation = None
+            reachable = ControlPlaneClient([server_url]).check_reachable()
+        except ValueError:
+            reachable = False
+    metrics = collect_metrics(server_url or "", reachable, lan_iface)
+    metrics["agent_state"] = "waiting_line_code"
+    metrics["agent_message"] = message
+    device_info = collect_device_info(server_url)
+    write_status_snapshot(
+        metrics,
+        status_file,
+        control_plane_url=server_url,
+        device=device_info,
+    )
 
-    servers = resolve_server_urls(args, activation)
+
+def run_loop(args: argparse.Namespace) -> None:
+    import time
+
+    if not args.skip_network_setup:
+        ok, net_msg = apply_network()
+        print(f"network: {net_msg}" if ok else f"network skip/fail: {net_msg}", flush=True)
+
+    print(f"sysctl: {ensure_network_tuning()}", flush=True)
+
     device_name = args.device_name or os.environ.get("HOSTNAME", "gfc-client")
     lan_mac = _mac_address()
     device_id = _device_id_from_mac(lan_mac)
     reverse_ssh_port = int(os.environ.get("REVERSE_SSH_PORT", "0") or 0) or None
-
-    state = load_state(args.state_file)
-    if not state:
-        line_code = resolve_line_code(args)
-        client = ControlPlaneClient(servers)
-        state = client.activate(
-            line_code,
-            device_name,
-            lan_mac,
-            device_id,
-            args.proxy_mode,
-        )
-        client = ControlPlaneClient(servers, state.client_token)
-        save_state(args.state_file, state)
-        print(
-            f"activated device_id={state.device_id} line={state.tid} name={device_name} via {client.server}",
-            flush=True,
-        )
-    else:
-        client = ControlPlaneClient(servers, state.client_token)
-
     config_dir = Path(args.config_dir)
     status_file = Path(args.status_file)
     lan_iface = os.environ.get("GFC_LAN_IFACE", "").strip() or None
 
-    print(f"sysctl: {ensure_network_tuning()}", flush=True)
-
-    import time
+    state = load_state(args.state_file)
+    client: ControlPlaneClient | None = None
 
     while True:
         try:
+            raw_code, activation = _read_activation_raw(args.activation_file)
+            if args.line_code:
+                raw_code = args.line_code.strip()
+                activation = decode_line_code(raw_code)
+
+            if not state:
+                servers = resolve_server_urls(args, activation)
+                if not raw_code or not activation:
+                    _write_idle_status(
+                        status_file,
+                        message="请通过 http://192.168.68.1:81 刷入线路码",
+                        server_url=servers[0] if servers else None,
+                        lan_iface=lan_iface,
+                    )
+                    print("waiting for line code (flash at :81)", flush=True)
+                    time.sleep(args.poll_seconds)
+                    continue
+                if not servers:
+                    _write_idle_status(
+                        status_file,
+                        message="线路码缺少控制平台地址，请刷入完整线路码或平台码",
+                        lan_iface=lan_iface,
+                    )
+                    print("waiting for control plane URL in line code or env", flush=True)
+                    time.sleep(args.poll_seconds)
+                    continue
+
+                client = ControlPlaneClient(servers)
+                state = client.activate(
+                    raw_code,
+                    device_name,
+                    lan_mac,
+                    device_id,
+                    args.proxy_mode,
+                )
+                client = ControlPlaneClient(servers, state.client_token)
+                save_state(args.state_file, state)
+                print(
+                    f"activated device_id={state.device_id} line={state.tid} via {client.server}",
+                    flush=True,
+                )
+            elif client is None:
+                servers = resolve_server_urls(args, activation)
+                if not servers:
+                    raise ValueError("control plane SERVER_URL not configured")
+                client = ControlPlaneClient(servers, state.client_token)
+
+            assert client is not None
             reachable = client.check_reachable()
             metrics = collect_metrics(client.server, reachable, lan_iface)
-            write_status_snapshot(metrics, status_file)
-            client.heartbeat(
+            metrics["agent_state"] = "active"
+            device_info = collect_device_info(client.server)
+            write_status_snapshot(
                 metrics,
-                device_name,
-                reverse_ssh_port,
-                args.proxy_mode,
+                status_file,
+                control_plane_url=client.server,
+                device=device_info,
             )
+            client.heartbeat(metrics, device_name, reverse_ssh_port, args.proxy_mode)
 
             cfg = client.pull_config()
             version = cfg["version"]

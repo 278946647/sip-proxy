@@ -28,7 +28,7 @@ from .platform_secrets import (
     save_security_settings,
     security_to_public,
 )
-from .client_config import refresh_line_code
+from .client_config import encode_platform_bootstrap_code, refresh_line_code
 from .models import AlertEvent, ClientDevice, FlowStat, Line, Node, OperationLog, PlatformUser, SocksProfile
 from .reality_util import default_reality_config
 from .security import hash_password
@@ -1266,3 +1266,9 @@ async def get_line_code(
         session.add(line)
         await session.commit()
     return {"line_code_b32": line.line_code_b32 or ""}
+
+
+@router.get("/platform/bootstrap-code")
+async def get_platform_bootstrap_code() -> dict[str, str]:
+    """Platform-only flash code (control-plane URL); client line codes already embed the same URLs."""
+    return {"bootstrap_code_b32": encode_platform_bootstrap_code()}

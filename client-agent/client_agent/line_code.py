@@ -21,3 +21,23 @@ def read_activation_file(path: str) -> dict[str, Any]:
     if not raw:
         raise ValueError("activation file is empty")
     return decode_line_code(raw)
+
+
+def code_kind(payload: dict[str, Any]) -> str:
+    """platform = only control-plane URLs; line = bind client line (default for v1)."""
+    kind = (payload.get("kind") or "").strip().lower()
+    if kind in ("platform", "line"):
+        return kind
+    if payload.get("lineId"):
+        return "line"
+    if payload.get("server") and not payload.get("lineId"):
+        return "platform"
+    return "line"
+
+
+def is_line_activation_payload(payload: dict[str, Any]) -> bool:
+    return code_kind(payload) == "line"
+
+
+def is_platform_payload(payload: dict[str, Any]) -> bool:
+    return code_kind(payload) == "platform"

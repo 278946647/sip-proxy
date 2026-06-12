@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GFC · 刷入线路码</title>
+  <link rel="stylesheet" href="/css/app.css" />
+</head>
+<body>
+  <div class="standalone">
+    <div class="standalone-card">
+      <div class="standalone-header">
+        <h1>GFC 客户端盒子</h1>
+        <p>端口 81 · 离线刷码 · 联网后自动激活</p>
+      </div>
+      <div class="standalone-body">
+        <div class="alert alert-info">
+          粘贴控制平台生成的 <strong>客户端线路码</strong>（含平台地址与线路信息，一次刷入即可）。
+          仅更换平台地址时可刷 <strong>平台码</strong>。
+        </div>
+        <div id="alert" hidden></div>
+        <div id="device-hint" class="alert alert-info" style="margin-top:0"></div>
+        <form id="flash-form">
+          <div class="form-group">
+            <label for="line-code">Base32 码</label>
+            <textarea id="line-code" placeholder="粘贴线路码或平台码" required autofocus></textarea>
+          </div>
+          <div class="form-group">
+            <label>
+              <input type="checkbox" id="reset-state" checked />
+              换线时清除旧激活状态
+            </label>
+          </div>
+          <button type="submit" class="btn btn-primary" style="width:100%" id="submit-btn">
+            刷入
+          </button>
+        </form>
+        <p style="margin:20px 0 0;font-size:12px;color:#64748b;text-align:center">
+          管理后台：<a href="http://192.168.68.1/" style="color:#1890ff">http://192.168.68.1/</a>
+        </p>
+      </div>
+    </div>
+  </div>
+  <script src="/js/api.js"></script>
+  <script>
+    const alertEl = document.getElementById("alert");
+    const hintEl = document.getElementById("device-hint");
+
+    async function loadDevice() {
+      try {
+        const dev = await API.device();
+        const act = dev.activation || {};
+        let text = act.has_line_code
+          ? `已刷线路码 · TID ${dev.line_tid || act.line_tid || "—"}`
+          : "尚未刷入线路码";
+        if (dev.activated) text += " · 已激活";
+        hintEl.textContent = text;
+      } catch {
+        hintEl.textContent = "LAN 默认网关 192.168.68.1";
+      }
+    }
+
+    document.getElementById("flash-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      hideAlert(alertEl);
+      const btn = document.getElementById("submit-btn");
+      btn.disabled = true;
+      try {
+        const code = document.getElementById("line-code").value.replace(/\s+/g, "");
+        const reset = document.getElementById("reset-state").checked;
+        const res = await API.flashLineCode(code, reset);
+        showAlert(alertEl, "success", res.message || "刷入成功");
+        document.getElementById("line-code").value = "";
+        await loadDevice();
+      } catch (err) {
+        showAlert(alertEl, "error", err.message);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    loadDevice();
+  </script>
+</body>
+</html>

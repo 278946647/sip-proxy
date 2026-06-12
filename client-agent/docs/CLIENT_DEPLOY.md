@@ -87,13 +87,25 @@ sudo bash deploy/build-image.sh --arch x86_64 --size 4G
 | `gfc-client-agent` | 激活 / 心跳 / apply |
 | `gfc-mosdns` | DNS 分流 |
 | `gfc-client-sing-box` | VLESS+REALITY 出站 |
-| `gfc-client-web` | 本地 Web `:8787` |
+| `gfc-client-web` | 本地 Web 管理 `:8787`（概览 / 刷码 / 设置 / 日志） |
 
 日志：`/var/log/gfc-client/`
 
 ---
 
-## API（仅需控制面 URL）
+## 本地 Web 管理
+
+安装后访问 `http://<盒子LAN IP>:8787`：
+
+- **运行概览** — 设备状态、流量、服务健康
+- **线路激活** — 浏览器粘贴 Base32 线路码（**无需互联网**，刷入后联网自动激活）
+- **网络设置** — 网关/旁路/透明模式、LAN/WAN 网卡
+- **服务状态** — 重启 sing-box / mosdns / agent
+- **系统日志** — `/var/log/gfc-client/` 日志
+
+也可命令行刷码：`sudo bash deploy/flash-line-code.sh /path/to/linecode.b32`
+
+## 控制面 API（Agent 使用）
 
 - `POST /clients/activate`
 - `POST /clients/heartbeat`

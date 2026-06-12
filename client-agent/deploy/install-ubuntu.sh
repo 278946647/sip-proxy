@@ -56,7 +56,7 @@ fi
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq python3 python3-venv python3-pip curl rsync nftables iproute2 \
-  systemd ca-certificates iputils-ping unzip
+  systemd ca-certificates iputils-ping unzip dnsmasq netplan.io
 
 mkdir -p "$GFC_ROOT" /etc/gfc-client /var/log/gfc-client /var/lib/gfc-client \
   "$GFC_ROOT/client-agent/state/dataplane" /etc/gfc-client/mosdns
@@ -114,9 +114,16 @@ echo "==> Install sing-box + mosdns"
 install_sing_box
 install_mosdns
 
-echo "==> Copy client-agent"
+echo "==> Copy client-agent + web UI"
 rsync -a --delete "$CLIENT_ROOT/" "$GFC_ROOT/client-agent/" \
-  --exclude deploy --exclude dist --exclude .venv --exclude state --exclude docs
+  --exclude deploy --exclude dist --exclude .venv --exclude state --exclude docs \
+  --exclude client-web
+if [[ -d "$CLIENT_ROOT/client-web" ]]; then
+  rsync -a --delete "$CLIENT_ROOT/client-web/" "$GFC_ROOT/client-web/"
+else
+  echo "    WARN: client-web/ missing — web UI will be empty until upgraded"
+  mkdir -p "$GFC_ROOT/client-web"
+fi
 python3 -m venv "$GFC_ROOT/client-agent/.venv"
 "$GFC_ROOT/client-agent/.venv/bin/pip" install -q -U pip
 "$GFC_ROOT/client-agent/.venv/bin/pip" install -q -r "$GFC_ROOT/client-agent/requirements.txt"
@@ -124,9 +131,11 @@ python3 -m venv "$GFC_ROOT/client-agent/.venv"
 if [[ -f "$_SCRIPT_DIR/gfc-client-agent-start.sh" ]]; then
   AGENT_START="$_SCRIPT_DIR/gfc-client-agent-start.sh"
   WEB_START="$_SCRIPT_DIR/gfc-client-web-start.sh"
+  FLASH_START="$_SCRIPT_DIR/gfc-client-flash-start.sh"
 elif [[ -f "$CLIENT_ROOT/deploy/gfc-client-agent-start.sh" ]]; then
   AGENT_START="$CLIENT_ROOT/deploy/gfc-client-agent-start.sh"
   WEB_START="$CLIENT_ROOT/deploy/gfc-client-web-start.sh"
+  FLASH_START="$CLIENT_ROOT/deploy/gfc-client-flash-start.sh"
 else
   echo "ERROR: start scripts missing"
   exit 1
@@ -134,6 +143,7 @@ fi
 
 install -m 755 "$AGENT_START" /usr/local/bin/gfc-client-agent-start
 install -m 755 "$WEB_START" /usr/local/bin/gfc-client-web-start
+install -m 755 "$FLASH_START" /usr/local/bin/gfc-client-flash-start
 
 cat >/etc/gfc-client/gfc.env <<EOF
 GFC_ROOT=${GFC_ROOT}
@@ -149,16 +159,25 @@ STATE_FILE=${GFC_ROOT}/client-agent/state/client_state.json
 CONFIG_DIR=${GFC_ROOT}/client-agent/state/dataplane
 POLL_SECONDS=${POLL_SECONDS}
 REVERSE_SSH_PORT=${REVERSE_SSH_PORT}
-GFC_CLIENT_WEB_PORT=8787
+GFC_CLIENT_WEB_PORT=80
+GFC_CLIENT_FLASH_PORT=81
+GFC_CLIENT_WEB_ROOT=${GFC_ROOT}/client-web
+GFC_WEB_MODE=admin
 GFC_STATUS_FILE=/var/lib/gfc-client/status.json
+GFC_ENV_FILE=/etc/gfc-client/gfc.env
+GFC_LOG_DIR=/var/log/gfc-client
+GFC_LAN_ADDRESS=192.168.68.1
+GFC_LAN_NETWORK=192.168.68.0
+GFC_LAN_PREFIX=24
+GFC_LAN_NETMASK=255.255.255.0
+GFC_DHCP_START=192.168.68.100
+GFC_DHCP_END=192.168.68.250
 EOF
 chmod 600 /etc/gfc-client/gfc.env
 
-if [[ ! -f "$ACTIVATION_FILE" ]]; then
-  echo "    WARN: $ACTIVATION_FILE not found — flash line code before agent can activate"
-  touch "$ACTIVATION_FILE"
-  chmod 600 "$ACTIVATION_FILE"
-fi
+touch "$ACTIVATION_FILE"
+chmod 600 "$ACTIVATION_FILE"
+echo "    线路码: 安装后访问 http://192.168.68.1:81 刷入（无需提前刷码）"
 
 cat >/etc/systemd/system/gfc-client-agent.service <<EOF
 [Unit]
@@ -218,8 +237,8 @@ EOF
 
 cat >/etc/systemd/system/gfc-client-web.service <<EOF
 [Unit]
-Description=GFC Client local Web UI
-After=gfc-client-agent.service
+Description=GFC Client Web Admin (:80)
+After=network-online.target
 
 [Service]
 Type=simple
@@ -234,8 +253,32 @@ StandardError=append:/var/log/gfc-client/gfc-client-web.log
 WantedBy=multi-user.target
 EOF
 
+cat >/etc/systemd/system/gfc-client-flash.service <<EOF
+[Unit]
+Description=GFC Client Line Code Flash UI (:81)
+After=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/gfc-client/gfc.env
+ExecStart=/usr/local/bin/gfc-client-flash-start
+Restart=on-failure
+RestartSec=3
+StandardOutput=append:/var/log/gfc-client/gfc-client-flash.log
+StandardError=append:/var/log/gfc-client/gfc-client-flash.log
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+echo "==> OpenWrt-style WAN/LAN (first NIC=WAN DHCP, others=LAN 192.168.68.1/24 + DHCP)"
+(
+  cd "$GFC_ROOT/client-agent"
+  "$GFC_ROOT/client-agent/.venv/bin/python" -c "from client_agent.network import apply_network; ok, msg = apply_network(); print(msg)"
+) || echo "    WARN: network apply deferred to agent start"
+
 systemctl daemon-reload
-systemctl enable gfc-client-agent gfc-mosdns gfc-client-web
+systemctl enable gfc-client-agent gfc-mosdns gfc-client-web gfc-client-flash
 if command -v sing-box >/dev/null 2>&1; then
   systemctl enable gfc-client-sing-box
 else
@@ -245,10 +288,12 @@ fi
 systemctl restart gfc-mosdns || true
 systemctl restart gfc-client-agent
 systemctl restart gfc-client-web || true
+systemctl restart gfc-client-flash || true
 
 echo ""
 echo "==> Client install complete"
 echo "    Config: /etc/gfc-client/gfc.env"
-echo "    Line code: $ACTIVATION_FILE"
-echo "    Local Web: http://$(hostname -I | awk '{print $1}'):8787"
+echo "    管理后台: http://192.168.68.1/"
+echo "    刷入线路码: http://192.168.68.1:81/"
+echo "    LAN: 192.168.68.0/24 网关 192.168.68.1 DHCP ${GFC_DHCP_START:-192.168.68.100}-${GFC_DHCP_END:-192.168.68.250}"
 echo "    Logs: tail -f /var/log/gfc-client/gfc-client-agent.log"

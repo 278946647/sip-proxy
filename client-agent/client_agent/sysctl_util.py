@@ -16,13 +16,13 @@ def _run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(cmd, capture_output=True, text=True, check=False)
 
 
-def _sysctl_get(key: str) -> str:
+def sysctl_get(key: str) -> str:
     r = _run(["sysctl", "-n", key])
     return (r.stdout or "").strip()
 
 
-def _bbr_available() -> bool:
-    avail = _sysctl_get("net.ipv4.tcp_available_congestion_control")
+def bbr_available() -> bool:
+    avail = sysctl_get("net.ipv4.tcp_available_congestion_control")
     return "bbr" in avail.split()
 
 
@@ -50,13 +50,13 @@ def ensure_network_tuning() -> str:
     parts: list[str] = []
     _run(["sysctl", "-w", "net.ipv4.ip_forward=1"])
     _run(["sysctl", "-p", str(SYSCTL_DROPIN)])
-    parts.append(f"ip_forward={_sysctl_get('net.ipv4.ip_forward') or '?'}")
+    parts.append(f"ip_forward={sysctl_get('net.ipv4.ip_forward') or '?'}")
 
-    if _bbr_available():
+    if bbr_available():
         _ensure_bbr_module()
         _run(["sysctl", "-w", "net.core.default_qdisc=fq"])
         _run(["sysctl", "-w", "net.ipv4.tcp_congestion_control=bbr"])
-        parts.append(f"tcp_cc={_sysctl_get('net.ipv4.tcp_congestion_control') or '?'}")
+        parts.append(f"tcp_cc={sysctl_get('net.ipv4.tcp_congestion_control') or '?'}")
     else:
         parts.append("tcp_cc=bbr_unavailable")
     return "; ".join(parts)
