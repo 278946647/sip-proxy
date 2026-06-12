@@ -11,7 +11,7 @@ from .apply import apply_payload
 from .client import ControlPlaneClient
 from .line_code import decode_line_code, is_line_activation_payload
 from .routing_mode import read_routing_mode
-from .runner import load_state, resolve_server_urls, save_state
+from .runner import save_state
 from .server_url import resolve_server_urls_from_env, urls_from_activation_payload
 
 
