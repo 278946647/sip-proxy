@@ -83,6 +83,7 @@ bash "$GFC_ROOT/deploy/build.sh"
 
 install -m 755 "$GFC_ROOT/bin/gfc-api" /usr/local/bin/gfc-api
 install -m 755 "$GFC_ROOT/bin/gfc-agent" /usr/local/bin/gfc-agent
+install -m 755 "$GFC_ROOT/bin/gfc-bootstrap" /usr/local/bin/gfc-bootstrap
 
 if [[ -d "$GFC_ROOT/web-static" ]]; then
   rm -rf "$GFC_ROOT/web"
@@ -194,9 +195,9 @@ chmod +x "$GFC_ROOT/deploy"/*.sh
 bash "$GFC_ROOT/deploy/apply-network.sh" || echo "WARN: apply-network skipped (no NIC?)"
 
 echo "==> Bootstrap dataplane (idle)"
-systemctl restart gfc-client-agent
-sleep 3
-systemctl restart gfc-mosdns gfc-client-sing-box gfc-client-api || true
+chmod +x "$GFC_ROOT/deploy/bootstrap-idle.sh"
+bash "$GFC_ROOT/deploy/bootstrap-idle.sh"
+systemctl restart gfc-client-agent gfc-client-api || true
 
 echo ""
 echo "Install complete."

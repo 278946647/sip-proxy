@@ -109,7 +109,7 @@ func (s *Server) authMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if s.mode == "flash" {
 			p := c.Request.URL.Path
-			if strings.HasPrefix(p, "/api/v1/activation") || p == "/api/line-code" {
+			if p == "/api/v1/health" || strings.HasPrefix(p, "/api/v1/activation") || p == "/api/line-code" {
 				c.Next()
 				return
 			}

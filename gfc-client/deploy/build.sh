@@ -14,7 +14,8 @@ go mod tidy
 mkdir -p "$ROOT/bin"
 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$ROOT/bin/gfc-api" ./cmd/gfc-api
 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$ROOT/bin/gfc-agent" ./cmd/gfc-agent
-echo "    bin/gfc-api bin/gfc-agent"
+CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$ROOT/bin/gfc-bootstrap" ./cmd/gfc-bootstrap
+echo "    bin/gfc-api bin/gfc-agent bin/gfc-bootstrap"
 
 bash "$ROOT/deploy/build-web.sh"
 

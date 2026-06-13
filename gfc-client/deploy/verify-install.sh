@@ -2,6 +2,7 @@
 # End-to-end smoke test on installed box
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 fail=0
 check() {
   local name="$1" cmd="$2"
@@ -13,14 +14,24 @@ check() {
   fi
 }
 
+if [[ ! -f /etc/gfc-client/sing-box.json || ! -f /etc/gfc-client/mosdns/config.yaml ]]; then
+  echo "==> idle configs missing, running bootstrap"
+  sudo bash "$SCRIPT_DIR/bootstrap-idle.sh" || true
+fi
+
 check "gfc-api binary" "test -x /usr/local/bin/gfc-api"
 check "gfc-agent binary" "test -x /usr/local/bin/gfc-agent"
+check "gfc-bootstrap binary" "test -x /usr/local/bin/gfc-bootstrap"
 check "sing-box binary" "command -v sing-box"
 check "mosdns binary" "command -v mosdns"
 check "api :80" "curl -fsS --connect-timeout 2 http://127.0.0.1:80/api/v1/health"
 check "flash :81" "curl -fsS --connect-timeout 2 http://127.0.0.1:81/api/v1/health"
 check "agent active" "systemctl is-active --quiet gfc-client-agent"
+check "api active" "systemctl is-active --quiet gfc-client-api"
+check "mosdns active" "systemctl is-active --quiet gfc-mosdns"
+check "sing-box active" "systemctl is-active --quiet gfc-client-sing-box"
 check "rules dir" "test -d /var/lib/gfc-client/rules"
+check "mosdns config" "test -f /etc/gfc-client/mosdns/config.yaml"
 check "sing-box config" "test -f /etc/gfc-client/sing-box.json"
 
 if [[ -f /etc/gfc-client/activation.b32 ]]; then

@@ -35,7 +35,11 @@ func NewRunner(cfg *config.Config, st *store.Store) *Runner {
 }
 
 func (r *Runner) Run() {
-	_, _ = r.engine.BootstrapIdle()
+	if ok, msg := r.engine.BootstrapIdle(); !ok {
+		fmt.Printf("bootstrap idle failed: %s\n", msg)
+	} else {
+		fmt.Printf("bootstrap idle: %s\n", msg)
+	}
 	ticker := time.NewTicker(time.Duration(r.cfg.PollSeconds) * time.Second)
 	defer ticker.Stop()
 	for {

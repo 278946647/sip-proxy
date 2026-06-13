@@ -32,6 +32,14 @@ func (r *Renderer) EnsureTree(tryDownload bool) error {
 	if err := os.MkdirAll(rules, 0o755); err != nil {
 		return err
 	}
+	bundle := filepath.Join(r.cfg.Paths.Root, "share", "easymosdns")
+	if info, err := os.Stat(bundle); err == nil && info.IsDir() {
+		if err := copyBundledTree(bundle, base); err == nil {
+			if _, err := os.Stat(filepath.Join(base, "config.yaml")); err == nil {
+				return nil
+			}
+		}
+	}
 	tmpl := filepath.Join(base, "config.yaml")
 	if _, err := os.Stat(tmpl); err != nil {
 		if !tryDownload {
@@ -195,6 +203,10 @@ func findBinary(name string) string {
 		return ""
 	}
 	return p
+}
+
+func copyBundledTree(src, dst string) error {
+	return exec.Command("cp", "-a", src+"/.", dst).Run()
 }
 
 func downloadURL(url, dst string) error {
