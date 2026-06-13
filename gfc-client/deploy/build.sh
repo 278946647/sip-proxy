@@ -5,11 +5,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+# shellcheck source=install-go.sh
+source "$ROOT/deploy/install-go.sh"
+ensure_go
+
 echo "==> Go build"
-if ! command -v go >/dev/null 2>&1; then
-  echo "Go not found. Install: apt install golang-go  or  snap install go --classic"
-  exit 1
-fi
 go mod tidy
 mkdir -p "$ROOT/bin"
 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$ROOT/bin/gfc-api" ./cmd/gfc-api

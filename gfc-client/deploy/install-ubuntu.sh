@@ -18,7 +18,7 @@ echo "==> Packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq curl rsync nftables iproute2 dnsmasq netplan.io \
-  golang-go nodejs npm git ca-certificates unzip
+  nodejs npm git ca-certificates unzip
 
 mkdir -p "$GFC_ROOT" /etc/gfc-client /var/log/gfc-client /var/lib/gfc-client/state \
   /var/lib/gfc-client/rules /var/lib/gfc-client/dns-lists \
@@ -67,6 +67,11 @@ install_mosdns() {
 echo "==> sing-box + mosdns"
 install_sing_box
 install_mosdns
+
+echo "==> Go toolchain"
+# shellcheck source=install-go.sh
+source "$SCRIPT_DIR/install-go.sh"
+ensure_go
 
 echo "==> Sync source -> $GFC_ROOT"
 rsync -a --delete \

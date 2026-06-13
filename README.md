@@ -55,6 +55,8 @@ sudo bash deploy/node/install.sh
 
 ### 3. 客户端盒子（gfc-client）
 
+需要 **Go 1.22+**（安装脚本会自动从 go.dev 安装；Ubuntu 22.04 自带 golang-go 1.18 不可用）。
+
 ```bash
 git clone https://github.com/278946647/sip-proxy.git
 cd sip-proxy/gfc-client
