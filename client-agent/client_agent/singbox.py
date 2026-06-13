@@ -14,7 +14,7 @@ from .rules_fetch import ensure_local_rules, local_rules_available, rule_set_ent
 
 SINGBOX_CONFIG = Path(os.environ.get("GFC_ETC", "/etc/gfc-client")) / "sing-box.json"
 MOSDNS_ADDR = "127.0.0.1:5335"
-DOMAIN_RESOLVER: dict[str, str] = {"server": "mosdns"}
+MOSDNS_PORT = int(MOSDNS_ADDR.split(":")[1])
 
 # Domestic resolvers used by mosdns forward_local — always direct when proxy is active.
 DOMESTIC_DNS_CIDRS = [
@@ -22,6 +22,14 @@ DOMESTIC_DNS_CIDRS = [
     "223.6.6.6/32",
     "119.29.29.29/32",
     "114.114.114.114/32",
+]
+
+# International resolvers used by mosdns forward_remote — via proxy when active.
+INTL_DNS_CIDRS = [
+    "8.8.8.8/32",
+    "8.8.4.4/32",
+    "1.1.1.1/32",
+    "1.0.0.1/32",
 ]
 
 
@@ -103,6 +111,42 @@ def _direct_ip_rule(*hosts: str) -> dict[str, Any] | None:
     return {"ip_cidr": cidrs, "outbound": "direct"}
 
 
+def _wan_iface() -> str | None:
+    iface = (os.environ.get("GFC_WAN_IFACE") or "").strip()
+    return iface or None
+
+
+def _direct_outbound() -> dict[str, Any]:
+    """Direct outbound bound to WAN — prevents TUN routing loops (sing-box #4086)."""
+    ob: dict[str, Any] = {"type": "direct", "tag": "direct"}
+    wan = _wan_iface()
+    if wan:
+        ob["bind_interface"] = wan
+    return ob
+
+
+def _build_dns_route_rules(*, direct_hosts_rule: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Route rules for DNS without hijack loops to mosdns / upstream resolvers."""
+    rules: list[dict[str, Any]] = [
+        # sing-box → mosdns and `dig @127.0.0.1 -p 5335` must bypass hijack-dns.
+        {"ip_cidr": ["127.0.0.1/32"], "port": [MOSDNS_PORT], "outbound": "direct"},
+        # mosdns upstream: domestic resolvers leave via WAN directly.
+        {"ip_cidr": DOMESTIC_DNS_CIDRS, "port": [53], "outbound": "direct"},
+        # mosdns upstream: international resolvers via proxy (not hijack loop).
+        {"ip_cidr": INTL_DNS_CIDRS, "port": [53], "outbound": "proxy"},
+    ]
+    if direct_hosts_rule:
+        rules.append(direct_hosts_rule)
+    rules.extend(
+        [
+            # L4 port hijack before protocol sniff races (sing-box #3878).
+            {"port": [53], "action": "hijack-dns"},
+            {"ip_is_private": True, "outbound": "direct"},
+        ]
+    )
+    return rules
+
+
 def _append_split_rules(route_rules: list[dict[str, Any]], *, use_meta_rules: bool) -> None:
     if use_meta_rules:
         route_rules.append({"rule_set": "geoip-cn", "outbound": "direct"})
@@ -129,7 +173,7 @@ def render_singbox_config(payload: dict[str, Any]) -> dict[str, Any]:
     ensure_local_rules(try_download=False)
 
     outbounds: list[dict[str, Any]] = [
-        {"type": "direct", "tag": "direct", "domain_resolver": DOMAIN_RESOLVER},
+        _direct_outbound(),
         {
             "type": "vless",
             "tag": "proxy",
@@ -137,7 +181,6 @@ def render_singbox_config(payload: dict[str, Any]) -> dict[str, Any]:
             "server_port": port,
             "uuid": uuid,
             "flow": vless.get("flow") or "xtls-rprx-vision",
-            "domain_resolver": DOMAIN_RESOLVER,
             "tls": {
                 "enabled": True,
                 "server_name": vless.get("serverName") or "www.microsoft.com",
@@ -151,21 +194,15 @@ def render_singbox_config(payload: dict[str, Any]) -> dict[str, Any]:
         },
     ]
 
-    route_rules: list[dict[str, Any]] = [
-        {"protocol": "dns", "action": "hijack-dns"},
-        {"ip_is_private": True, "outbound": "direct"},
-        # Domestic DNS resolvers → direct; intl resolvers (8.8.8.8 etc.) fall through to proxy.
-        {"ip_cidr": DOMESTIC_DNS_CIDRS, "outbound": "direct"},
-    ]
     direct_hosts = [address]
     for url in payload.get("controlPlaneServers") or []:
         direct_hosts.append(str(url))
     for env_key in ("SERVER_URL", "SERVER_URL_FALLBACK"):
         if os.environ.get(env_key):
             direct_hosts.append(os.environ[env_key])
-    direct_rule = _direct_ip_rule(*direct_hosts)
-    if direct_rule:
-        route_rules.insert(2, direct_rule)
+    route_rules: list[dict[str, Any]] = _build_dns_route_rules(
+        direct_hosts_rule=_direct_ip_rule(*direct_hosts),
+    )
 
     inbounds: list[dict[str, Any]]
     if proxy_mode == "transparent":
@@ -216,7 +253,7 @@ def render_singbox_config(payload: dict[str, Any]) -> dict[str, Any]:
     route_block: dict[str, Any] = {
         "auto_detect_interface": True,
         "final": "proxy",
-        "default_domain_resolver": DOMAIN_RESOLVER,
+        "default_domain_resolver": {"server": "local"},
         "rules": route_rules,
     }
     rule_sets = rule_set_entries(allow_remote=False)

@@ -32,22 +32,34 @@ class SingboxConfigTests(unittest.TestCase):
         self.assertEqual(cfg["log"]["level"], "error")
 
     def test_active_hijacks_dns_to_mosdns(self) -> None:
-        with patch.dict(os.environ, {"GFC_VERBOSE_LOG": "0"}, clear=False):
+        with patch.dict(os.environ, {"GFC_VERBOSE_LOG": "0", "GFC_WAN_IFACE": "ens160"}, clear=False):
             cfg = render_singbox_config(_sample_payload())
         dns_rules = [r for r in cfg["route"]["rules"] if r.get("action") == "hijack-dns"]
         self.assertEqual(len(dns_rules), 1)
+        self.assertEqual(dns_rules[0].get("port"), [53])
         self.assertEqual(cfg["dns"]["final"], "mosdns")
 
-    def test_domestic_dns_direct_intl_not_listed(self) -> None:
-        with patch.dict(os.environ, {"GFC_VERBOSE_LOG": "0"}, clear=False):
+    def test_mosdns_bypass_before_hijack(self) -> None:
+        with patch.dict(os.environ, {"GFC_VERBOSE_LOG": "0", "GFC_WAN_IFACE": "ens160"}, clear=False):
             cfg = render_singbox_config(_sample_payload())
-        direct_dns = next(r for r in cfg["route"]["rules"] if "ip_cidr" in r and "223.5.5.5" in r["ip_cidr"])
-        self.assertEqual(direct_dns["outbound"], "direct")
-        all_direct_ips = {ip for r in cfg["route"]["rules"] if "ip_cidr" in r for ip in r["ip_cidr"]}
-        self.assertIn("223.5.5.5/32", all_direct_ips)
-        self.assertNotIn("8.8.8.8/32", all_direct_ips)
-        self.assertNotIn("1.1.1.1/32", all_direct_ips)
-        self.assertEqual(DOMESTIC_DNS_CIDRS, direct_dns["ip_cidr"])
+        rules = cfg["route"]["rules"]
+        mosdns_idx = next(
+            i for i, r in enumerate(rules) if r.get("ip_cidr") == ["127.0.0.1/32"] and r.get("port") == [5335]
+        )
+        hijack_idx = next(i for i, r in enumerate(rules) if r.get("action") == "hijack-dns")
+        self.assertLess(mosdns_idx, hijack_idx)
+
+    def test_domestic_dns_direct_intl_via_proxy(self) -> None:
+        with patch.dict(os.environ, {"GFC_VERBOSE_LOG": "0", "GFC_WAN_IFACE": "ens160"}, clear=False):
+            cfg = render_singbox_config(_sample_payload())
+        rules = cfg["route"]["rules"]
+        domestic = next(r for r in rules if "223.5.5.5" in (r.get("ip_cidr") or []))
+        self.assertEqual(domestic["outbound"], "direct")
+        self.assertEqual(domestic["port"], [53])
+        intl = next(r for r in rules if "8.8.8.8" in (r.get("ip_cidr") or []))
+        self.assertEqual(intl["outbound"], "proxy")
+        direct_ob = next(o for o in cfg["outbounds"] if o.get("tag") == "direct")
+        self.assertEqual(direct_ob.get("bind_interface"), "ens160")
 
     def test_split_uses_meta_rules_when_present(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
