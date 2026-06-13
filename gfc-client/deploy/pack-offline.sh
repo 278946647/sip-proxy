@@ -36,11 +36,9 @@ pack_arch() {
   tar -xzf "$tmp/sb.tgz" -C "$tmp"
   install -m 755 "$(find "$tmp" -name sing-box -type f | head -1)" "$root/bin/sing-box"
 
-  url="https://github.com/IrineSistiana/mosdns-x/releases/latest/download/mosdns-linux-${sb_arch}.zip"
-  echo "    mosdns-x $url"
-  curl -fsSL "$url" -o "$tmp/mosdns.zip"
-  unzip -q "$tmp/mosdns.zip" -d "$tmp"
-  install -m 755 "$(find "$tmp" -name mosdns -type f | head -1)" "$root/bin/mosdns"
+  # shellcheck source=install-mosdns-bin.sh
+  source "$_DIR/install-mosdns-bin.sh"
+  MOS_ARCH=$sb_arch install_mosdns_bin "$root/bin/mosdns"
   rm -rf "$tmp"
 
   chmod +x "$root/deploy"/*.sh 2>/dev/null || true

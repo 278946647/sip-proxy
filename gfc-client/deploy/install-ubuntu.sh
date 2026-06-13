@@ -6,7 +6,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PKG_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 GFC_ROOT="${GFC_ROOT:-/opt/gfc-client}"
 SINGBOX_VERSION="${SINGBOX_VERSION:-1.13.4}"
-MOSDNS_REPO="${MOSDNS_REPO:-IrineSistiana/mosdns-x}"
+# easymosdns needs mosdns-x pipeline; default pmkol/mosdns-x, fallback IrineSistiana/mosdns
+MOSDNS_VERSION="${MOSDNS_VERSION:-}"
 
 if [[ "${EUID:-0}" -ne 0 ]]; then
   echo "Run as root: sudo bash deploy/install-ubuntu.sh"
@@ -17,7 +18,7 @@ echo "==> Packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq curl rsync nftables iproute2 dnsmasq netplan.io \
-  golang-go nodejs npm git ca-certificates
+  golang-go nodejs npm git ca-certificates unzip
 
 mkdir -p "$GFC_ROOT" /etc/gfc-client /var/log/gfc-client /var/lib/gfc-client/state \
   /var/lib/gfc-client/rules /var/lib/gfc-client/dns-lists \
@@ -55,16 +56,12 @@ install_sing_box() {
 install_mosdns() {
   if [[ -x "$PKG_ROOT/bin/mosdns" ]]; then
     install -m 755 "$PKG_ROOT/bin/mosdns" /usr/local/bin/mosdns
+    echo "    mosdns from offline bin/"
     return
   fi
-  tmp=$(mktemp -d)
-  url="https://github.com/${MOSDNS_REPO}/releases/latest/download/mosdns-linux-${MOS_ARCH}.zip"
-  echo "    Download mosdns-x $url"
-  curl -fsSL "$url" -o "$tmp/m.zip"
-  apt-get install -y -qq unzip
-  unzip -q "$tmp/m.zip" -d "$tmp"
-  install -m 755 "$(find "$tmp" -name mosdns -type f | head -1)" /usr/local/bin/mosdns
-  rm -rf "$tmp"
+  # shellcheck source=install-mosdns-bin.sh
+  source "$SCRIPT_DIR/install-mosdns-bin.sh"
+  install_mosdns_bin /usr/local/bin/mosdns
 }
 
 echo "==> sing-box + mosdns"
