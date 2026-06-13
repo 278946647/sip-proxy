@@ -14,7 +14,6 @@ import (
 	"github.com/278946647/sip-proxy/gfc-client/internal/dataplane"
 	"github.com/278946647/sip-proxy/gfc-client/internal/dnslists"
 	"github.com/278946647/sip-proxy/gfc-client/internal/logtail"
-	"github.com/278946647/sip-proxy/gfc-client/internal/metrics"
 	"github.com/278946647/sip-proxy/gfc-client/internal/network"
 	"github.com/278946647/sip-proxy/gfc-client/internal/render/mosdns"
 	"github.com/278946647/sip-proxy/gfc-client/internal/render/singbox"
