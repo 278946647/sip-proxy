@@ -241,6 +241,7 @@ def render_singbox_config(payload: dict[str, Any]) -> dict[str, Any]:
     route_rules.append({"outbound": "proxy"})
 
     dns_servers: list[dict[str, Any]] = [
+        {"type": "local", "tag": "local"},
         {
             "type": "udp",
             "tag": "mosdns",

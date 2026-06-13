@@ -38,6 +38,9 @@ class SingboxConfigTests(unittest.TestCase):
         self.assertEqual(len(dns_rules), 1)
         self.assertEqual(dns_rules[0].get("port"), [53])
         self.assertEqual(cfg["dns"]["final"], "mosdns")
+        tags = {s["tag"] for s in cfg["dns"]["servers"]}
+        self.assertIn("local", tags)
+        self.assertIn("mosdns", tags)
 
     def test_mosdns_bypass_before_hijack(self) -> None:
         with patch.dict(os.environ, {"GFC_VERBOSE_LOG": "0", "GFC_WAN_IFACE": "ens160"}, clear=False):
