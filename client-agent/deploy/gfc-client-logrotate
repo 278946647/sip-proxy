@@ -1,0 +1,10 @@
+/var/log/gfc-client/*.log {
+    daily
+    rotate 1
+    size 50M
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+}

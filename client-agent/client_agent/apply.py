@@ -12,6 +12,7 @@ from .dns_lists import ensure_default_lists
 from .easymosdns_config import MOSDNS_CONFIG, mosdns_config_ok, render_mosdns_config_file
 from .proxy_mode import apply_proxy_mode
 from .routing_mode import read_routing_mode
+from .rules_fetch import ensure_local_rules, try_update_rules
 from .singbox import singbox_config_ok, write_singbox_config
 from .sysctl_util import ensure_network_tuning
 
@@ -94,6 +95,8 @@ def apply_payload(
     wan_iface = (os.environ.get("GFC_WAN_IFACE") or "").strip() or _detect_default_iface()
 
     ensure_default_lists()
+    ensure_local_rules(try_download=True)
+    try_update_rules(try_download=True)
     render_mosdns_config_file(try_download=False)
     ok_md, md_err = mosdns_config_ok(MOSDNS_CONFIG)
     if not ok_md:
@@ -142,7 +145,17 @@ def restart_dataplane_services() -> str:
 
 
 def apply_dns_config(config_dir: Path | None = None) -> tuple[bool, str]:
-    del config_dir
+    """Reload mosdns lists without dropping active sing-box proxy."""
+    cfg_dir = config_dir or CONFIG_BUNDLE.parent
+    payload = _load_payload(cfg_dir)
+    if _payload_has_node(payload) and is_line_activated():
+        ensure_default_lists()
+        render_mosdns_config_file(try_download=False)
+        ok_md, md_err = mosdns_config_ok(MOSDNS_CONFIG)
+        if not ok_md:
+            return False, f"mosdns check fail: {md_err}"
+        msg = _restart_unit("gfc-mosdns.service")
+        return True, f"mosdns reloaded ({msg})"
     return ensure_bootstrap_dataplane(try_download=False)
 
 

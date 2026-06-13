@@ -8,6 +8,7 @@ from typing import Any
 from .activation import is_line_activated
 from .easymosdns_config import MOSDNS_CONFIG, mosdns_config_ok, render_mosdns_config_file
 from .proxy_mode import apply_proxy_mode
+from .rules_fetch import ensure_local_rules
 from .singbox import singbox_config_ok, write_singbox_idle_config
 
 
@@ -33,6 +34,10 @@ def ensure_bootstrap_dataplane(*, try_download: bool = True) -> tuple[bool, str]
     import os
 
     messages: list[str] = []
+
+    _rules_ok, rules_msg = ensure_local_rules(try_download=try_download)
+    if rules_msg:
+        messages.append(f"meta-rules: {'; '.join(rules_msg)}")
 
     try:
         render_mosdns_config_file(try_download=try_download)

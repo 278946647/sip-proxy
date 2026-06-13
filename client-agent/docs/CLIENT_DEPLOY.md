@@ -89,7 +89,60 @@ sudo bash deploy/build-image.sh --arch x86_64 --size 4G
 | `gfc-client-sing-box` | VLESS+REALITY 出站 |
 | `gfc-client-web` | 本地 Web 管理 `:8787`（概览 / 刷码 / 设置 / 日志） |
 
-日志：`/var/log/gfc-client/`
+日志：`/var/log/gfc-client/`（默认 sing-box 仅 `error`；Web「服务管理 → sing-box」可开详细日志。logrotate 保留 1 天 / 50MB）
+
+---
+
+## sing-box 分流与 DNS（验证）
+
+### 未刷码（idle）
+
+- sing-box 无 TUN、无 DNS hijack；mosdns 监听 `127.0.0.1:5335`，上游全部本地 WAN 直连。
+- 检查：`jq '.inbounds | length' /etc/gfc-client/sing-box.json` → `0`
+
+### 已刷码（active）
+
+- DNS：TUN/TPROXY 捕获的 DNS → sing-box hijack → mosdns；国内 resolver（223.5.5.5 等）路由 `direct`，国际 resolver（8.8.8.8 等）走 `proxy`。
+- 流量：meta-rules-dat 规则集（`geosite-cn` / `geoip-cn` 直连，`geolocation-!cn` 走代理）。
+- 规则文件：`/etc/gfc-client/rules/*.srs`；更新：`sudo bash deploy/fetch-meta-rules.sh` 或 Web「更新分流规则集」。
+
+### 测试机验证步骤
+
+```bash
+# 1. 同步代码后重装或 repair
+cd /opt/gfc-client/client-agent   # 或源码目录
+sudo bash deploy/repair-dataplane.sh
+
+# 2. idle：未激活时应无 hijack
+jq '.route.rules[] | select(.action=="hijack-dns")' /etc/gfc-client/sing-box.json
+# 无输出；inbounds 为空
+
+# 3. 刷码激活后
+sudo bash deploy/flash-line-code.sh --file /path/to/line.b32
+sleep 15
+jq '.route.rules[] | select(.action=="hijack-dns")' /etc/gfc-client/sing-box.json
+# 应有 hijack-dns
+
+# 4. 国内 DNS 直连、国际 DNS 不在 direct 列表
+jq '.route.rules[] | select(.ip_cidr!=null)' /etc/gfc-client/sing-box.json
+# 应含 223.5.5.5/32，不含 8.8.8.8/32
+
+# 5. meta-rules 已加载
+jq '.route.rule_set[].tag' /etc/gfc-client/sing-box.json
+# geosite-cn geoip-cn geosite-geolocation-!cn
+
+# 6. 日志级别默认 error
+jq '.log.level' /etc/gfc-client/sing-box.json
+# "error"
+
+# 7. 改 DNS 列表后代理不应掉线
+curl -s http://127.0.0.1/api/dns/lists | jq '.lists.china.count'
+# 编辑后 apply；gfc0 仍存在： ip link show gfc0
+
+# 8. 分流探测（LAN 客户端）
+curl -4 --connect-timeout 5 https://www.baidu.com -I    # 应成功（直连）
+curl -4 --connect-timeout 15 https://www.google.com -I  # 代理可用时应成功
+```
 
 ---
 

@@ -60,11 +60,11 @@
           <div class="panel">
             <div class="panel-header">路由模式</div>
             <div class="panel-body">
-              <p class="hint">分流：国内/私网直连，其余走国际节点；全国际：除私网外全部走代理。</p>
+              <p class="hint">分流：国内/私网直连，其余走国际节点；全国际：除私网外全部走代理。规则集来自 MetaCubeX meta-rules-dat（geosite-cn / geoip-cn / geolocation-!cn）。</p>
               <div class="routing-toggle">
                 <label class="radio-card">
                   <input type="radio" name="routing" value="split" />
-                  <span><strong>智能分流</strong><small>.cn 与国内 IP 直连</small></span>
+                  <span><strong>智能分流</strong><small>meta-rules 国内直连</small></span>
                 </label>
                 <label class="radio-card">
                   <input type="radio" name="routing" value="global" />
@@ -74,6 +74,21 @@
               <div style="margin-top:16px">
                 <button class="btn btn-primary" id="save-routing-btn">保存并应用</button>
               </div>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-header">日志与规则</div>
+            <div class="panel-body">
+              <p class="hint">正式环境默认仅记录 error 级别，避免占满磁盘。排障时可开启详细日志。</p>
+              <label class="checkbox-row" style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+                <input type="checkbox" id="verbose-log" />
+                <span>开启详细日志（info 级别）</span>
+              </label>
+              <div class="btn-row">
+                <button class="btn btn-secondary" id="save-logging-btn" type="button">保存日志设置</button>
+                <button class="btn btn-secondary" id="update-rules-btn" type="button">更新分流规则集</button>
+              </div>
+              <pre class="update-log" id="rules-update-log" hidden></pre>
             </div>
           </div>
           <div class="panel">
@@ -207,7 +222,44 @@
       document.querySelectorAll('input[name="routing"]').forEach((el) => {
         el.checked = el.value === data.mode;
       });
+      const logging = data.logging || {};
+      const verboseEl = document.getElementById("verbose-log");
+      if (verboseEl) verboseEl.checked = !!logging.verbose;
     }
+
+    document.getElementById("save-logging-btn")?.addEventListener("click", async () => {
+      hideAlert(alertEl);
+      try {
+        const verbose = document.getElementById("verbose-log")?.checked;
+        const r = await API.setSingboxLogging({ verbose: !!verbose });
+        showAlert(alertEl, r.ok ? "success" : "error", r.apply_message || "日志设置已保存");
+        await refreshServices();
+      } catch (e) {
+        showAlert(alertEl, "error", e.message);
+      }
+    });
+
+    document.getElementById("update-rules-btn")?.addEventListener("click", async () => {
+      const logEl = document.getElementById("rules-update-log");
+      hideAlert(alertEl);
+      logEl.hidden = false;
+      logEl.textContent = "正在更新 meta-rules…";
+      try {
+        const r = await API.updateMetaRules();
+        const lines = [
+          r.ok ? "规则集更新成功" : "规则集更新部分失败",
+          r.updated?.length ? `已更新: ${r.updated.join(", ")}` : "无变更",
+          r.apply_message || "",
+          ...(r.errors || []),
+        ].filter(Boolean);
+        logEl.textContent = lines.join("\n");
+        showAlert(alertEl, r.ok ? "success" : "error", "规则集更新完成");
+        await refreshServices();
+      } catch (e) {
+        logEl.textContent = e.message;
+        showAlert(alertEl, "error", e.message);
+      }
+    });
 
     document.getElementById("save-routing-btn").addEventListener("click", async () => {
       const mode = document.querySelector('input[name="routing"]:checked')?.value;

@@ -77,6 +77,14 @@ const API = {
     return this.post("/api/singbox/routing", { mode });
   },
 
+  setSingboxLogging(data) {
+    return this.post("/api/singbox/logging", data);
+  },
+
+  updateMetaRules() {
+    return this.post("/api/singbox/rules-update", {});
+  },
+
   easymosdnsUpdate(source = "github") {
     return this.post("/api/dns/easymosdns-update", { source });
   },

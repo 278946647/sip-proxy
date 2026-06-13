@@ -12,7 +12,9 @@ from .easymosdns_update import update_easymosdns_rules
 from .dns_lists import LIST_FILES, append_domains, export_list_text, import_list_text, read_list
 from .line_code import code_kind, decode_line_code, is_platform_payload
 from .network import apply_network, load_bridge_config, network_status, save_bridge_config
+from .log_config import logging_status, write_singbox_log_level, write_verbose_log
 from .routing_mode import read_routing_mode, write_routing_mode
+from .rules_fetch import try_update_rules
 
 GFC_ENV = Path(os.environ.get("GFC_ENV_FILE", "/etc/gfc-client/gfc.env"))
 ACTIVATION_FILE = Path(
@@ -296,7 +298,7 @@ def easymosdns_update(source: str) -> dict[str, Any]:
 
 
 def get_singbox_routing() -> dict[str, Any]:
-    return {"mode": read_routing_mode()}
+    return {"mode": read_routing_mode(), "logging": logging_status()}
 
 
 def set_singbox_routing(mode: str) -> dict[str, Any]:
@@ -309,6 +311,38 @@ def set_singbox_routing(mode: str) -> dict[str, Any]:
     return {
         "ok": ok,
         "mode": mode,
+        "apply_message": msg,
+        "sing_box_restarted": restart_ok,
+    }
+
+
+def set_singbox_logging(*, verbose: bool | None = None, level: str | None = None) -> dict[str, Any]:
+    if verbose is not None:
+        write_verbose_log(bool(verbose))
+    if level is not None:
+        level = level.strip().lower()
+        if level not in ("error", "warn", "info", "debug"):
+            raise ValueError("level 必须是 error / warn / info / debug")
+        write_singbox_log_level(level)  # type: ignore[arg-type]
+    ok, msg = reapply_local_config()
+    restart_ok = _restart_service("sing-box")
+    return {
+        "ok": ok,
+        "logging": logging_status(),
+        "apply_message": msg,
+        "sing_box_restarted": restart_ok,
+    }
+
+
+def update_meta_rules() -> dict[str, Any]:
+    result = try_update_rules(try_download=True)
+    ok, msg = reapply_local_config()
+    restart_ok = _restart_service("sing-box")
+    return {
+        "ok": bool(result.get("ok")) and ok,
+        "updated": result.get("updated") or [],
+        "errors": result.get("errors") or [],
+        "messages": result.get("messages") or [],
         "apply_message": msg,
         "sing_box_restarted": restart_ok,
     }

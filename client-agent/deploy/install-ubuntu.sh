@@ -194,8 +194,28 @@ GFC_LAN_NETMASK=255.255.255.0
 GFC_DHCP_START=192.168.68.100
 GFC_DHCP_END=192.168.68.250
 GFC_ROUTING_MODE=split
+GFC_SINGBOX_LOG_LEVEL=error
+GFC_VERBOSE_LOG=0
 EOF
 chmod 600 /etc/gfc-client/gfc.env
+
+echo "==> Install meta-rules (bundled + optional download)"
+RULES_SRC="$_SCRIPT_DIR/rules"
+if [[ -d "$RULES_SRC" ]]; then
+  install -d -m 755 /etc/gfc-client/rules
+  for f in geosite-cn.srs geoip-cn.srs geosite-geolocation-not-cn.srs; do
+    [[ -f "$RULES_SRC/$f" ]] && install -m 644 "$RULES_SRC/$f" "/etc/gfc-client/rules/$f"
+  done
+fi
+FETCH_RULES="$_SCRIPT_DIR/fetch-meta-rules.sh"
+if [[ -x "$FETCH_RULES" ]] && [[ ! -f /etc/gfc-client/rules/geosite-cn.srs ]]; then
+  bash "$FETCH_RULES" || echo "    WARN: meta-rules download deferred"
+fi
+
+LOGROTATE_SRC="$_SCRIPT_DIR/gfc-client-logrotate"
+if [[ -f "$LOGROTATE_SRC" ]]; then
+  install -m 644 "$LOGROTATE_SRC" /etc/logrotate.d/gfc-client
+fi
 
 echo "==> Bootstrap dataplane (easymosdns + sing-box idle)"
 export PYTHONPATH="${GFC_ROOT}/client-agent"

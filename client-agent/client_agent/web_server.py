@@ -25,9 +25,11 @@ from .web_actions import (
     get_singbox_routing,
     import_dns_list,
     restart_service,
+    set_singbox_logging,
     set_singbox_routing,
     tail_log,
     update_dns_list,
+    update_meta_rules,
     update_settings,
 )
 
@@ -200,6 +202,10 @@ class ClientWebHandler(BaseHTTPRequestHandler):
                 _json_response(self, HTTPStatus.OK, get_singbox_routing())
                 return
 
+            if path == "/api/singbox/logging":
+                _json_response(self, HTTPStatus.OK, get_singbox_routing().get("logging", {}))
+                return
+
             if path in ("/activate.html", "/flash.html"):
                 self.send_response(HTTPStatus.MOVED_PERMANENTLY)
                 flash_port = os.environ.get("GFC_CLIENT_FLASH_PORT", str(FLASH_PORT))
@@ -279,6 +285,22 @@ class ClientWebHandler(BaseHTTPRequestHandler):
                 body = _read_json_body(self)
                 mode = str(body.get("mode", "")).strip()
                 result = set_singbox_routing(mode)
+                _json_response(self, HTTPStatus.OK, result)
+                return
+
+            if path == "/api/singbox/logging":
+                body = _read_json_body(self)
+                verbose = body.get("verbose")
+                level = body.get("level")
+                result = set_singbox_logging(
+                    verbose=verbose if verbose is not None else None,
+                    level=str(level).strip() if level is not None else None,
+                )
+                _json_response(self, HTTPStatus.OK, result)
+                return
+
+            if path == "/api/singbox/rules-update":
+                result = update_meta_rules()
                 _json_response(self, HTTPStatus.OK, result)
                 return
 
