@@ -115,7 +115,7 @@ func (r *Renderer) Render() error {
 	text = patchIntlDoH(text)
 	text = injectGFCOverlay(text, r.cfg.Paths.DNSListsDir)
 	if !strings.Contains(text, "main_sequence") {
-		return fmt.Errorf("not easymosdns schema (template at %s)", filepath.Join(base, "config.yaml"))
+		return fmt.Errorf("render dropped main_sequence (source %s)", filepath.Join(base, "config.yaml"))
 	}
 	if err := os.MkdirAll(filepath.Dir(r.cfg.Paths.MosdnsConfig), 0o755); err != nil {
 		return err
@@ -125,6 +125,10 @@ func (r *Renderer) Render() error {
 
 func patchIntlDoH(raw string) string {
 	if strings.Contains(raw, "https://1.1.1.1/dns-query") {
+		return raw
+	}
+	// EasyMosdns ships tcp/udpme upstreams; replacing them with a broken regex drops main_sequence.
+	if strings.Contains(raw, "udpme://") || strings.Contains(raw, "tcp://208.67") {
 		return raw
 	}
 	block := `
@@ -139,11 +143,15 @@ func patchIntlDoH(raw string) string {
           dial_addr: "8.8.8.8:443"
           enable_http3: false
 `
-	re := regexp.MustCompile(`(?s)  - tag: forward_remote\n    type: fast_forward\n    args:\n      upstream:\n(?:        .*\n)+`)
-	if re.MatchString(raw) {
-		return re.ReplaceAllString(raw, strings.TrimSpace(block)+"\n\n")
+	re := regexp.MustCompile(`(?m)^  - tag: forward_remote\n    type: fast_forward\n    args:\n      upstream:\n(?:        - .*\n|          .*\n)+`)
+	if !re.MatchString(raw) {
+		return raw
 	}
-	return raw
+	out := re.ReplaceAllString(raw, strings.TrimSpace(block)+"\n\n")
+	if !strings.Contains(out, "main_sequence") {
+		return raw
+	}
+	return out
 }
 
 func injectGFCOverlay(raw, listsDir string) string {
