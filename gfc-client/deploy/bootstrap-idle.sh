@@ -16,6 +16,14 @@ if [[ ! -x "$BIN" ]]; then
   exit 1
 fi
 
+SRC_ROOT="${GFC_SRC_ROOT:-/opt/sip-proxy/gfc-client}"
+if [[ -d "$SRC_ROOT/share/easymosdns" ]]; then
+  mkdir -p "$GFC_ROOT/share"
+  rsync -a "$SRC_ROOT/share/easymosdns/" "$GFC_ROOT/share/easymosdns/"
+fi
+
+systemctl stop gfc-mosdns gfc-client-sing-box 2>/dev/null || true
+
 echo "==> Bootstrap idle dataplane"
 "$BIN"
 systemctl restart gfc-mosdns gfc-client-sing-box

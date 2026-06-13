@@ -28,34 +28,73 @@ func NewRenderer(cfg *config.Config) *Renderer {
 
 func (r *Renderer) EnsureTree(tryDownload bool) error {
 	base := r.cfg.Paths.EasyMosdnsDir
-	rules := filepath.Join(base, "rules")
-	if err := os.MkdirAll(rules, 0o755); err != nil {
+	bundle := filepath.Join(r.cfg.Paths.Root, "share", "easymosdns")
+	tmpl := filepath.Join(base, "config.yaml")
+
+	if validEasyConfig(tmpl) {
+		return nil
+	}
+
+	if err := r.syncFromBundle(base, bundle); err == nil {
+		return nil
+	}
+
+	if !tryDownload {
+		return fmt.Errorf("easymosdns template missing or invalid (expected main_sequence)")
+	}
+
+	if err := os.RemoveAll(base); err != nil {
 		return err
 	}
-	bundle := filepath.Join(r.cfg.Paths.Root, "share", "easymosdns")
-	if info, err := os.Stat(bundle); err == nil && info.IsDir() {
-		if err := copyBundledTree(bundle, base); err == nil {
-			if _, err := os.Stat(filepath.Join(base, "config.yaml")); err == nil {
-				return nil
-			}
-		}
+	if err := os.MkdirAll(filepath.Join(base, "rules"), 0o755); err != nil {
+		return err
 	}
-	tmpl := filepath.Join(base, "config.yaml")
-	if _, err := os.Stat(tmpl); err != nil {
-		if !tryDownload {
-			return fmt.Errorf("easymosdns template missing")
-		}
-		if err := downloadURL(easyConfigURL, tmpl); err != nil {
-			return err
-		}
+	if err := downloadURL(easyConfigURL, tmpl); err != nil {
+		return err
 	}
 	for _, name := range []string{"ecs_cn_domain.txt", "ecs_noncn_domain.txt", "hosts.txt"} {
 		dst := filepath.Join(base, name)
-		if _, err := os.Stat(dst); err != nil {
-			_ = downloadURL("https://raw.githubusercontent.com/pmkol/easymosdns/main/"+name, dst)
-		}
+		_ = downloadURL("https://raw.githubusercontent.com/pmkol/easymosdns/main/"+name, dst)
+	}
+	for _, name := range []string{
+		"china_domain_list.txt", "gfw_domain_list.txt", "cdn_domain_list.txt",
+		"china_ip_list.txt", "gfw_ip_list.txt", "ad_domain_list.txt",
+	} {
+		dst := filepath.Join(base, "rules", name)
+		_ = downloadURL("https://raw.githubusercontent.com/pmkol/easymosdns/main/rules/"+name, dst)
+	}
+	if !validEasyConfig(tmpl) {
+		return fmt.Errorf("downloaded easymosdns config invalid (expected main_sequence)")
 	}
 	return nil
+}
+
+func (r *Renderer) syncFromBundle(base, bundle string) error {
+	if info, err := os.Stat(bundle); err != nil || !info.IsDir() {
+		return fmt.Errorf("bundled easymosdns missing at %s", bundle)
+	}
+	if err := os.RemoveAll(base); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(base, 0o755); err != nil {
+		return err
+	}
+	if err := copyBundledTree(bundle, base); err != nil {
+		return err
+	}
+	if !validEasyConfig(filepath.Join(base, "config.yaml")) {
+		return fmt.Errorf("bundled easymosdns config invalid")
+	}
+	return nil
+}
+
+func validEasyConfig(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	s := string(data)
+	return strings.Contains(s, "main_sequence") && strings.Contains(s, "data_providers:")
 }
 
 func (r *Renderer) Render() error {
@@ -76,7 +115,7 @@ func (r *Renderer) Render() error {
 	text = patchIntlDoH(text)
 	text = injectGFCOverlay(text, r.cfg.Paths.DNSListsDir)
 	if !strings.Contains(text, "main_sequence") {
-		return fmt.Errorf("not easymosdns schema")
+		return fmt.Errorf("not easymosdns schema (template at %s)", filepath.Join(base, "config.yaml"))
 	}
 	if err := os.MkdirAll(filepath.Dir(r.cfg.Paths.MosdnsConfig), 0o755); err != nil {
 		return err
@@ -167,7 +206,8 @@ func injectGFCOverlay(raw, listsDir string) string {
 		raw = strings.Replace(raw, "plugins:", "plugins:"+plugins, 1)
 	}
 	if strings.Contains(raw, "  - tag: main_sequence") && !strings.Contains(raw, "query_is_gfc_block") {
-		raw = strings.Replace(raw, "      exec:", "      exec:"+seq, 1)
+		anchor := "  - tag: main_sequence\n    type: sequence\n    args:\n      exec:"
+		raw = strings.Replace(raw, anchor, anchor+seq, 1)
 	}
 	return raw
 }
