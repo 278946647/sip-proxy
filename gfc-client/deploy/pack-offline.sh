@@ -16,6 +16,10 @@ mkdir -p "$OUT"
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
+echo "==> Pre-build web UI for offline bundle"
+# shellcheck source=build-web.sh
+bash "$_DIR/build-web.sh"
+
 pack_arch() {
   local sb_arch=$1 label=$2
   local root="$WORK/gfc-client-offline-${label}-${VERSION}"
@@ -23,7 +27,7 @@ pack_arch() {
 
   echo "==> Pack $label (gfc-client standalone)"
   rsync -a "$CLIENT_ROOT/" "$root/" \
-    --exclude dist --exclude web/node_modules --exclude web/dist --exclude web-static \
+    --exclude dist --exclude web/node_modules --exclude web/dist \
     --exclude .git --exclude bin
 
   cp -a "$CLIENT_ROOT/share/rules/." "$root/share/rules/" 2>/dev/null || true

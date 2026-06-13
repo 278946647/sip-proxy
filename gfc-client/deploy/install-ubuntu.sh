@@ -18,7 +18,7 @@ echo "==> Packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq curl rsync nftables iproute2 dnsmasq netplan.io \
-  nodejs npm git ca-certificates unzip
+  git ca-certificates unzip xz-utils
 
 mkdir -p "$GFC_ROOT" /etc/gfc-client /var/log/gfc-client /var/lib/gfc-client/state \
   /var/lib/gfc-client/rules /var/lib/gfc-client/dns-lists \

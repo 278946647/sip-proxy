@@ -16,14 +16,6 @@ CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$ROOT/bin/gfc-api" ./cmd/g
 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$ROOT/bin/gfc-agent" ./cmd/gfc-agent
 echo "    bin/gfc-api bin/gfc-agent"
 
-echo "==> Vue3 build"
-if command -v npm >/dev/null 2>&1; then
-  (cd "$ROOT/web" && npm ci && npm run build)
-  rm -rf "$ROOT/web-static"
-  cp -a "$ROOT/web/dist" "$ROOT/web-static"
-  echo "    web-static/"
-else
-  echo "WARN: npm not found, skip web build (install nodejs on target)"
-fi
+bash "$ROOT/deploy/build-web.sh"
 
 echo "==> Done"
