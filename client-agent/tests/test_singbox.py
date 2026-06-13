@@ -41,13 +41,21 @@ class SingboxConfigTests(unittest.TestCase):
         tags = {s["tag"] for s in cfg["dns"]["servers"]}
         self.assertIn("local", tags)
         self.assertIn("mosdns", tags)
+        mosdns_srv = next(s for s in cfg["dns"]["servers"] if s["tag"] == "mosdns")
+        self.assertNotIn("detour", mosdns_srv)
+        ob_tags = {o["tag"] for o in cfg["outbounds"]}
+        self.assertIn("direct-local", ob_tags)
 
     def test_mosdns_bypass_before_hijack(self) -> None:
         with patch.dict(os.environ, {"GFC_VERBOSE_LOG": "0", "GFC_WAN_IFACE": "ens160"}, clear=False):
             cfg = render_singbox_config(_sample_payload())
         rules = cfg["route"]["rules"]
         mosdns_idx = next(
-            i for i, r in enumerate(rules) if r.get("ip_cidr") == ["127.0.0.1/32"] and r.get("port") == [5335]
+            i
+            for i, r in enumerate(rules)
+            if r.get("ip_cidr") == ["127.0.0.1/32"]
+            and r.get("port") == [5335]
+            and r.get("outbound") == "direct-local"
         )
         hijack_idx = next(i for i, r in enumerate(rules) if r.get("action") == "hijack-dns")
         self.assertLess(mosdns_idx, hijack_idx)

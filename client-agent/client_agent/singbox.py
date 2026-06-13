@@ -125,11 +125,16 @@ def _direct_outbound() -> dict[str, Any]:
     return ob
 
 
+def _local_direct_outbound() -> dict[str, Any]:
+    """Loopback direct — must not bind WAN (mosdns / 127.0.0.1)."""
+    return {"type": "direct", "tag": "direct-local"}
+
+
 def _build_dns_route_rules(*, direct_hosts_rule: dict[str, Any] | None) -> list[dict[str, Any]]:
     """Route rules for DNS without hijack loops to mosdns / upstream resolvers."""
     rules: list[dict[str, Any]] = [
         # sing-box → mosdns and `dig @127.0.0.1 -p 5335` must bypass hijack-dns.
-        {"ip_cidr": ["127.0.0.1/32"], "port": [MOSDNS_PORT], "outbound": "direct"},
+        {"ip_cidr": ["127.0.0.1/32"], "port": [MOSDNS_PORT], "outbound": "direct-local"},
         # mosdns upstream: domestic resolvers leave via WAN directly.
         {"ip_cidr": DOMESTIC_DNS_CIDRS, "port": [53], "outbound": "direct"},
         # mosdns upstream: international resolvers via proxy (not hijack loop).
@@ -173,6 +178,7 @@ def render_singbox_config(payload: dict[str, Any]) -> dict[str, Any]:
     ensure_local_rules(try_download=False)
 
     outbounds: list[dict[str, Any]] = [
+        _local_direct_outbound(),
         _direct_outbound(),
         {
             "type": "vless",
@@ -247,7 +253,6 @@ def render_singbox_config(payload: dict[str, Any]) -> dict[str, Any]:
             "tag": "mosdns",
             "server": MOSDNS_ADDR.split(":")[0],
             "server_port": int(MOSDNS_ADDR.split(":")[1]),
-            "detour": "direct",
         },
     ]
 
