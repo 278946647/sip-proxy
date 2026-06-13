@@ -165,10 +165,10 @@ else
   echo "    dnsmasq disabled"
 fi
 
-python3 - "$NFT_BOOT" "$WAN" "$LAN" <<'PY'
+python3 - "$NFT_BOOT" "$WAN" "$LAN" "$MOSDNS_PORT" <<'PY'
 import sys
 from pathlib import Path
-nft_boot, wan, lan = sys.argv[1:4]
+nft_boot, wan, lan, mosdns_port = sys.argv[1:5]
 masq = ""
 if wan:
     masq = f"""
@@ -185,8 +185,9 @@ if wan and lan:
     iifname "{lan}" oifname "{wan}" accept
     iifname "{wan}" oifname "{lan}" ct state established,related accept"""
     input_rules += f"""
-    iifname "{lan}" tcp dport {{ 80, 81, 443, 22 }} accept
-    iifname "{lan}" udp dport {{ 53, 67, 68 }} accept
+    iifname "{lan}" tcp dport {{ 22, 80, 81, 443 }} accept
+    iifname "{lan}" udp dport {{ 53, 67, 68, {mosdns_port} }} accept
+    iifname "{lan}" tcp dport {{ 53, {mosdns_port} }} accept
     iifname "{lan}" icmp type echo-request accept"""
 text = f"""#!/usr/sbin/nft -f
 table inet gfc_client_filter {{
