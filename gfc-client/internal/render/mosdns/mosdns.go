@@ -1,6 +1,8 @@
 package mosdns
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -225,19 +227,28 @@ func CheckConfig(path string) error {
 	if bin == "" {
 		return fmt.Errorf("mosdns binary not found")
 	}
-	cmd := exec.Command("timeout", "5", bin, "start", "-c", path)
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, "start", "-c", path)
 	out, err := cmd.CombinedOutput()
+	s := strings.TrimSpace(string(out))
 	if err == nil {
 		return nil
 	}
-	s := strings.TrimSpace(string(out))
+	// Foreground start still running when the probe window ends => config loads.
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return nil
+	}
+	if ee, ok := err.(*exec.ExitError); ok && ee.ExitCode() == 124 {
+		return nil
+	}
 	if strings.Contains(s, "124") {
 		return nil
 	}
-	if strings.Contains(s, "not defined") || strings.Contains(s, "failed to init") {
+	if s != "" {
 		return fmt.Errorf("%s", s)
 	}
-	return fmt.Errorf("%s", s)
+	return fmt.Errorf("mosdns start failed (%v)", err)
 }
 
 func findBinary(name string) string {
