@@ -13,7 +13,7 @@ import (
 	"github.com/278946647/sip-proxy/gfc-client/internal/config"
 	"github.com/278946647/sip-proxy/gfc-client/internal/dataplane"
 	"github.com/278946647/sip-proxy/gfc-client/internal/dnslists"
-	"github.com/278946647/sip-proxy/gfc-client/internal/logs"
+	"github.com/278946647/sip-proxy/gfc-client/internal/logtail"
 	"github.com/278946647/sip-proxy/gfc-client/internal/metrics"
 	"github.com/278946647/sip-proxy/gfc-client/internal/network"
 	"github.com/278946647/sip-proxy/gfc-client/internal/render/mosdns"
@@ -389,7 +389,7 @@ func (s *Server) getLogs(c *gin.Context) {
 	if n, err := parseInt(c.Query("lines")); err == nil {
 		lines = n
 	}
-	s.ok(c, logs.Tail(s.cfg, service, lines))
+	s.ok(c, logtail.Tail(s.cfg, service, lines))
 }
 
 func (s *Server) getSettings(c *gin.Context) {
