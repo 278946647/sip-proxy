@@ -60,26 +60,27 @@ class SingboxConfigTests(unittest.TestCase):
         hijack_idx = next(i for i, r in enumerate(rules) if r.get("action") == "hijack-dns")
         self.assertLess(mosdns_idx, hijack_idx)
 
-    def test_domestic_dns_direct_intl_via_proxy(self) -> None:
+    def test_domestic_dns_direct_intl_doh_via_proxy(self) -> None:
         with patch.dict(
             os.environ,
-            {"GFC_VERBOSE_LOG": "0", "GFC_WAN_IFACE": "ens160", "GFC_INTL_DNS_VIA_PROXY": "0"},
+            {"GFC_VERBOSE_LOG": "0", "GFC_WAN_IFACE": "ens160", "GFC_INTL_DNS_UDP_PROXY": "0"},
             clear=False,
         ):
             cfg = render_singbox_config(_sample_payload())
         rules = cfg["route"]["rules"]
         domestic = next(r for r in rules if "223.5.5.5" in (r.get("ip_cidr") or []))
         self.assertEqual(domestic["outbound"], "direct")
-        intl = next(r for r in rules if "8.8.8.8" in (r.get("ip_cidr") or []))
-        self.assertEqual(intl["outbound"], "direct")
-        mosdns_proc = next(r for r in rules if r.get("process_name") == ["mosdns"])
-        self.assertEqual(mosdns_proc["outbound"], "direct")
-        direct_ob = next(o for o in cfg["outbounds"] if o.get("tag") == "direct")
-        self.assertEqual(direct_ob.get("bind_interface"), "ens160")
-        self.assertFalse(cfg["experimental"]["cache_file"]["enabled"])
-        tun = next(i for i in cfg["inbounds"] if i.get("type") == "tun")
-        self.assertEqual(tun.get("mtu"), 1500)
-        self.assertNotIn("sniff", tun)
+        self.assertEqual(domestic["port"], [53])
+        doh = next(r for r in rules if "1.1.1.1" in (r.get("ip_cidr") or []))
+        self.assertEqual(doh["outbound"], "proxy")
+        self.assertEqual(doh["port"], [443])
+        self.assertFalse(any(r.get("process_name") == ["mosdns"] for r in rules))
+        udp_intl = [
+            r
+            for r in rules
+            if r.get("port") == [53] and any("8.8.8.8" in (r.get("ip_cidr") or []) for _ in [1])
+        ]
+        self.assertEqual(udp_intl, [])
 
     def test_split_uses_meta_rules_when_present(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

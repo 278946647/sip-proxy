@@ -46,6 +46,50 @@ GFC_PLUGINS = """
         - "provider:gfc_global"
 """
 
+# International DNS: DoH over HTTPS (routed via VLESS), not UDP :53 through proxy.
+INTL_DOH_UPSTREAMS_YAML = """
+  - tag: forward_remote
+    type: fast_forward
+    args:
+      upstream:
+        - addr: "https://1.1.1.1/dns-query"
+          dial_addr: "1.1.1.1:443"
+          enable_http3: false
+        - addr: "https://8.8.8.8/dns-query"
+          dial_addr: "8.8.8.8:443"
+          enable_http3: false
+"""
+
+INTL_DOH_EASYMODNS_YAML = """
+  - tag: forward_easymosdns
+    type: fast_forward
+    args:
+      upstream:
+        - addr: "https://1.1.1.1/dns-query"
+          dial_addr: "1.1.1.1:443"
+          enable_http3: false
+        - addr: "https://8.8.8.8/dns-query"
+          dial_addr: "8.8.8.8:443"
+          enable_http3: false
+"""
+
+_LEGACY_FORWARD_REMOTE = """  - tag: forward_remote
+    type: fast_forward
+    args:
+      upstream:
+        - addr: "tcp://208.67.220.220:5353"
+          enable_pipeline: true
+          #socks5: "127.0.0.1:1080"
+        - addr: "udpme://8.8.8.8\""""
+
+_LEGACY_FORWARD_EASYMODNS = """  - tag: forward_easymosdns
+    type: fast_forward
+    args:
+      upstream:
+        - addr: "https://mosdns.apad.pro/api-query"
+          bootstrap: "223.6.6.6"
+          #dial_addr: "ip:port\""""
+
 GFC_SEQUENCE_PREFIX = """
         - if: query_is_gfc_block
           exec:
@@ -157,6 +201,31 @@ def _patch_paths(raw: str, base: Path) -> str:
     return text
 
 
+def _patch_intl_doh_upstream(raw: str) -> str:
+    """International DNS via DoH; HTTPS egress is proxied by sing-box (not UDP DNS-in-VLESS)."""
+    if "https://1.1.1.1/dns-query" in raw and "forward_remote" in raw:
+        return raw
+    if _LEGACY_FORWARD_REMOTE in raw:
+        raw = raw.replace(_LEGACY_FORWARD_REMOTE, INTL_DOH_UPSTREAMS_YAML.strip())
+    elif "  - tag: forward_remote" in raw:
+        raw = re.sub(
+            r"  - tag: forward_remote\n    type: fast_forward\n    args:\n      upstream:\n(?:        .*\n)+",
+            INTL_DOH_UPSTREAMS_YAML.strip() + "\n\n",
+            raw,
+            count=1,
+        )
+    if _LEGACY_FORWARD_EASYMODNS in raw:
+        raw = raw.replace(_LEGACY_FORWARD_EASYMODNS, INTL_DOH_EASYMODNS_YAML.strip())
+    elif "  - tag: forward_easymosdns" in raw and "https://1.1.1.1/dns-query" not in raw:
+        raw = re.sub(
+            r"  - tag: forward_easymosdns\n    type: fast_forward\n    args:\n      upstream:\n(?:        .*\n)+",
+            INTL_DOH_EASYMODNS_YAML.strip() + "\n\n",
+            raw,
+            count=1,
+        )
+    return raw
+
+
 def _inject_gfc_overlay(raw: str) -> str:
     if "gfc_block" in raw:
         return raw
@@ -192,6 +261,7 @@ def render_mosdns_config_file(*, try_download: bool = True) -> str:
         raise RuntimeError("easymosdns config.yaml missing — run fetch-easymosdns-lists.sh")
 
     raw = _patch_paths(src.read_text(encoding="utf-8"), base)
+    raw = _patch_intl_doh_upstream(raw)
     raw = _inject_gfc_overlay(raw)
     _validate_easymosdns_schema(raw)
 

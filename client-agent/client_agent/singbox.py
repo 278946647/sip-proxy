@@ -24,12 +24,12 @@ DOMESTIC_DNS_CIDRS = [
     "114.114.114.114/32",
 ]
 
-# International resolvers used by mosdns forward_remote — via proxy when active.
-INTL_DNS_CIDRS = [
-    "8.8.8.8/32",
-    "8.8.4.4/32",
+# International DoH endpoints — HTTPS :443 via VLESS (anti-pollution, low CPU).
+INTL_DOH_CIDRS = [
     "1.1.1.1/32",
     "1.0.0.1/32",
+    "8.8.8.8/32",
+    "8.8.4.4/32",
 ]
 
 
@@ -57,7 +57,8 @@ def _env_flag(key: str, *, default: bool = False) -> bool:
 
 
 def _intl_dns_via_proxy() -> bool:
-    return _env_flag("GFC_INTL_DNS_VIA_PROXY", default=False)
+    """Legacy UDP :53 intl DNS via proxy — disabled; use DoH instead."""
+    return _env_flag("GFC_INTL_DNS_UDP_PROXY", default=False)
 
 
 def _singbox_sniff_enabled() -> bool:
@@ -158,17 +159,22 @@ def _local_direct_outbound() -> dict[str, Any]:
 
 
 def _build_dns_route_rules(*, direct_hosts_rule: dict[str, Any] | None) -> list[dict[str, Any]]:
-    """Route rules for DNS without hijack loops to mosdns / upstream resolvers."""
-    intl_dns_outbound = "proxy" if _intl_dns_via_proxy() else "direct"
+    """Route rules: domestic UDP DNS direct; intl DoH HTTPS via proxy; no UDP DNS-in-VLESS."""
     rules: list[dict[str, Any]] = [
-        # mosdns upstream must never enter TUN/proxy (avoids DNS-over-VLESS CPU storm).
-        {"process_name": ["mosdns"], "outbound": "direct"},
-        # sing-box → mosdns and `dig @127.0.0.1 -p 5335` must bypass hijack-dns.
         {"ip_cidr": ["127.0.0.1/32"], "port": [MOSDNS_PORT], "outbound": "direct-local"},
-        # Non-mosdns fallback paths for resolver IPs.
         {"ip_cidr": DOMESTIC_DNS_CIDRS, "port": [53], "outbound": "direct"},
-        {"ip_cidr": INTL_DNS_CIDRS, "port": [53], "outbound": intl_dns_outbound},
+        # mosdns DoH → Cloudflare/Google; TLS over VLESS, not UDP 53 encapsulated.
+        {"ip_cidr": INTL_DOH_CIDRS, "port": [443], "outbound": "proxy"},
     ]
+    if _intl_dns_via_proxy():
+        rules.insert(
+            2,
+            {
+                "ip_cidr": ["8.8.8.8/32", "8.8.4.4/32", "1.1.1.1/32", "1.0.0.1/32"],
+                "port": [53],
+                "outbound": "proxy",
+            },
+        )
     if direct_hosts_rule:
         rules.append(direct_hosts_rule)
     rules.extend(

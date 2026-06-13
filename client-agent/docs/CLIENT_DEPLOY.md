@@ -102,7 +102,7 @@ sudo bash deploy/build-image.sh --arch x86_64 --size 4G
 
 ### 已刷码（active）
 
-- DNS：TUN/TPROXY 捕获的 DNS → sing-box hijack → mosdns；国内 resolver（223.5.5.5 等）路由 `direct`，国际 resolver（8.8.8.8 等）走 `proxy`。
+- DNS：国内 UDP 直连（223.5.5.5）；国际 **DoH**（`https://1.1.1.1/dns-query`）走 HTTPS→VLESS，避免 UDP DNS 塞进隧道导致 CPU 爆满。
 - 流量：meta-rules-dat 规则集（`geosite-cn` / `geoip-cn` 直连，`geolocation-!cn` 走代理）。
 - 规则文件：`/etc/gfc-client/rules/*.srs`；更新：`sudo bash deploy/fetch-meta-rules.sh` 或 Web「更新分流规则集」。
 
