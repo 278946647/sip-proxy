@@ -19,13 +19,13 @@ MOSDNS_CONFIG = GFC_ETC / "mosdns" / "config.yaml"
 GFC_DATA_PROVIDERS = """
   - tag: gfc_block
     file: {block}
-    auto_reload: true
+    auto_reload: false
   - tag: gfc_china
     file: {china}
-    auto_reload: true
+    auto_reload: false
   - tag: gfc_global
     file: {global_list}
-    auto_reload: true
+    auto_reload: false
 """
 
 GFC_PLUGINS = """

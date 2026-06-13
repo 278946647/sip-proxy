@@ -34,7 +34,34 @@ INTL_DNS_CIDRS = [
 
 
 def _log_block() -> dict[str, Any]:
-    return {"level": read_singbox_log_level(), "timestamp": True}
+    level = read_singbox_log_level()
+    block: dict[str, Any] = {"level": level}
+    if level in ("info", "debug", "warn"):
+        block["timestamp"] = True
+    return block
+
+
+def _env_flag(key: str, *, default: bool = False) -> bool:
+    raw = os.environ.get(key, "").strip().lower()
+    if not raw:
+        env_file = Path(os.environ.get("GFC_ENV_FILE", "/etc/gfc-client/gfc.env"))
+        if env_file.is_file():
+            prefix = f"{key}="
+            for line in env_file.read_text(encoding="utf-8").splitlines():
+                if line.strip().startswith(prefix):
+                    raw = line.split("=", 1)[1].strip().lower()
+                    break
+    if not raw:
+        return default
+    return raw in ("1", "true", "yes", "on")
+
+
+def _intl_dns_via_proxy() -> bool:
+    return _env_flag("GFC_INTL_DNS_VIA_PROXY", default=False)
+
+
+def _singbox_sniff_enabled() -> bool:
+    return _env_flag("GFC_SINGBOX_SNIFF", default=False)
 
 
 def render_singbox_idle_config() -> dict[str, Any]:
@@ -132,13 +159,15 @@ def _local_direct_outbound() -> dict[str, Any]:
 
 def _build_dns_route_rules(*, direct_hosts_rule: dict[str, Any] | None) -> list[dict[str, Any]]:
     """Route rules for DNS without hijack loops to mosdns / upstream resolvers."""
+    intl_dns_outbound = "proxy" if _intl_dns_via_proxy() else "direct"
     rules: list[dict[str, Any]] = [
+        # mosdns upstream must never enter TUN/proxy (avoids DNS-over-VLESS CPU storm).
+        {"process_name": ["mosdns"], "outbound": "direct"},
         # sing-box → mosdns and `dig @127.0.0.1 -p 5335` must bypass hijack-dns.
         {"ip_cidr": ["127.0.0.1/32"], "port": [MOSDNS_PORT], "outbound": "direct-local"},
-        # mosdns upstream: domestic resolvers leave via WAN directly.
+        # Non-mosdns fallback paths for resolver IPs.
         {"ip_cidr": DOMESTIC_DNS_CIDRS, "port": [53], "outbound": "direct"},
-        # mosdns upstream: international resolvers via proxy (not hijack loop).
-        {"ip_cidr": INTL_DNS_CIDRS, "port": [53], "outbound": "proxy"},
+        {"ip_cidr": INTL_DNS_CIDRS, "port": [53], "outbound": intl_dns_outbound},
     ]
     if direct_hosts_rule:
         rules.append(direct_hosts_rule)
@@ -228,17 +257,21 @@ def render_singbox_config(payload: dict[str, Any]) -> dict[str, Any]:
             "tag": "tun-in",
             "interface_name": "gfc0",
             "address": ["172.19.0.1/30"],
-            "mtu": 9000,
+            "mtu": 1500,
             "auto_route": auto_route,
             "strict_route": auto_route,
             "stack": "mixed",
         }
+        if _singbox_sniff_enabled():
+            tun_inbound["sniff"] = True
+            tun_inbound["sniff_override_destination"] = False
         if auto_route:
             tun_inbound["auto_redirect"] = True
             tun_inbound["route_address"] = ["0.0.0.0/1", "128.0.0.0/1"]
             tun_inbound["route_exclude_address"] = _route_exclude_addresses()
         inbounds = [tun_inbound]
-        route_rules.insert(0, {"inbound": "tun-in", "action": "sniff"})
+        if _singbox_sniff_enabled():
+            route_rules.insert(0, {"inbound": "tun-in", "action": "sniff"})
 
     routing_mode = (payload.get("routingMode") or read_routing_mode()).strip().lower()
     use_meta_rules = local_rules_available()
@@ -272,12 +305,14 @@ def render_singbox_config(payload: dict[str, Any]) -> dict[str, Any]:
             "servers": dns_servers,
             "final": "mosdns",
             "strategy": "ipv4_only",
+            "independent_cache": True,
+            "cache_capacity": 4096,
         },
         "inbounds": inbounds,
         "outbounds": outbounds,
         "route": route_block,
         "experimental": {
-            "cache_file": {"enabled": True, "path": "/var/lib/gfc-client/cache.db"},
+            "cache_file": {"enabled": False},
         },
     }
 

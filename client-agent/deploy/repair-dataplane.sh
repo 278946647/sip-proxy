@@ -17,6 +17,14 @@ fi
 bash "$_DIR/sync-code.sh"
 bash "$_DIR/repair-mosdns.sh"
 
+# Production defaults: low CPU / disk (verbose logging causes heavy I/O under DNS storms).
+GFC_ENV=/etc/gfc-client/gfc.env
+if [[ -f "$GFC_ENV" ]]; then
+  grep -q '^GFC_VERBOSE_LOG=' "$GFC_ENV" && sed -i 's/^GFC_VERBOSE_LOG=.*/GFC_VERBOSE_LOG=0/' "$GFC_ENV" || echo 'GFC_VERBOSE_LOG=0' >>"$GFC_ENV"
+  grep -q '^GFC_SINGBOX_SNIFF=' "$GFC_ENV" || echo 'GFC_SINGBOX_SNIFF=0' >>"$GFC_ENV"
+  grep -q '^GFC_INTL_DNS_VIA_PROXY=' "$GFC_ENV" || echo 'GFC_INTL_DNS_VIA_PROXY=0' >>"$GFC_ENV"
+fi
+
 systemctl stop gfc-client-agent 2>/dev/null || true
 
 echo "==> Reapply active dataplane"
