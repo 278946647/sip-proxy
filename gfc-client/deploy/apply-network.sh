@@ -115,6 +115,7 @@ network:
       optional: true
 """
 Path(netplan).write_text(text)
+Path(netplan).chmod(0o600)
 PY
 else
   python3 - "$NETPLAN_FILE" "$WAN" "$LAN" "$LAN_ADDRESS" "$LAN_PREFIX" <<'PY'
@@ -139,6 +140,7 @@ network:
       optional: true{lan_block}
 """
 Path(netplan).write_text(text)
+Path(netplan).chmod(0o600)
 PY
 fi
 echo "    netplan -> $NETPLAN_FILE"
@@ -187,8 +189,6 @@ if wan and lan:
     iifname "{lan}" udp dport {{ 53, 67, 68 }} accept
     iifname "{lan}" icmp type echo-request accept"""
 text = f"""#!/usr/sbin/nft -f
-flush table ip gfc_client_nat
-flush table inet gfc_client_filter
 table inet gfc_client_filter {{
   chain input {{
     type filter hook input priority filter; policy drop;
@@ -246,6 +246,7 @@ Path(path).write_text(json.dumps({
 PY
 
 if command -v netplan >/dev/null; then
+  chmod 600 /etc/netplan/*.yaml 2>/dev/null || true
   netplan apply && echo "    netplan apply: ok"
 fi
 if [[ -n "${LAN:-}" ]] && command -v systemctl >/dev/null; then
@@ -253,8 +254,13 @@ if [[ -n "${LAN:-}" ]] && command -v systemctl >/dev/null; then
   systemctl restart dnsmasq && echo "    dnsmasq: ok"
 fi
 if command -v nft >/dev/null; then
+  nft list table ip gfc_client_nat &>/dev/null && nft delete table ip gfc_client_nat || true
+  nft list table inet gfc_client_filter &>/dev/null && nft delete table inet gfc_client_filter || true
   nft -f "$NFT_BOOT" && echo "    nft boot: ok"
-  [[ -f "$NFT_DNS" ]] && nft -f "$NFT_DNS" && echo "    nft dns: ok"
+  if [[ -f "$NFT_DNS" ]]; then
+    nft list table inet gfc_dns &>/dev/null && nft delete table inet gfc_dns || true
+    nft -f "$NFT_DNS" && echo "    nft dns: ok"
+  fi
 fi
 
 echo "==> network apply done"
