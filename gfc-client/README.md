@@ -50,4 +50,13 @@ bash deploy/build.sh
 ./bin/gfc-api   # 需设置 GFC_ROOT 指向源码目录
 ```
 
-Web 开发：`cd web && npm install && npm run dev`
+## 运维脚本
+
+| 脚本 | 用途 |
+|------|------|
+| `deploy/pack-offline.sh` | 打离线 tar（含 sing-box / mosdns 二进制） |
+| `deploy/apply-network.sh` | WAN/LAN / dnsmasq / nft |
+| `deploy/fetch-meta-rules.sh` | 更新分流规则集 |
+| `deploy/repair-dataplane.sh` | 重载数据面 |
+
+详见 [docs/CLIENT_DEPLOY.md](docs/CLIENT_DEPLOY.md)

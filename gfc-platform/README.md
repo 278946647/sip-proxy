@@ -1,6 +1,6 @@
 # Global Forwarding Control Plane (GFC)
 
-控制平台 + 转发节点（**不含客户端运行时**）。客户端见仓库根目录 [`../client-agent/`](../client-agent/)。
+控制平台 + 转发节点（**不含客户端运行时**）。客户端见 [`../gfc-client/`](../gfc-client/)。
 
 **仓库:** https://github.com/278946647/sip-proxy
 
@@ -48,7 +48,7 @@ sudo bash deploy/node/install.sh
 | [NODE_DEPLOY.md](docs/NODE_DEPLOY.md) | 转发节点 |
 | [DEPLOY_FROM_GITHUB.md](docs/DEPLOY_FROM_GITHUB.md) | 验证 checklist |
 
-客户端部署：[../client-agent/docs/CLIENT_DEPLOY.md](../client-agent/docs/CLIENT_DEPLOY.md)
+客户端部署：[../gfc-client/docs/CLIENT_DEPLOY.md](../gfc-client/docs/CLIENT_DEPLOY.md)
 
 ---
 

@@ -184,6 +184,13 @@ EOF
 systemctl daemon-reload
 systemctl enable gfc-client-agent gfc-client-api gfc-mosdns gfc-client-sing-box
 
+echo "==> logrotate"
+install -m 644 "$GFC_ROOT/deploy/gfc-client-logrotate" /etc/logrotate.d/gfc-client
+
+echo "==> Network (WAN/LAN bridge)"
+chmod +x "$GFC_ROOT/deploy"/*.sh
+bash "$GFC_ROOT/deploy/apply-network.sh" || echo "WARN: apply-network skipped (no NIC?)"
+
 echo "==> Bootstrap dataplane (idle)"
 systemctl restart gfc-client-agent
 sleep 3

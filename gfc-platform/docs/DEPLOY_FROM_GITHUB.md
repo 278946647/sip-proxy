@@ -20,4 +20,4 @@ sudo bash deploy/node/install.sh
 
 ## 客户端
 
-见仓库 `client-agent/docs/CLIENT_DEPLOY.md`（无需克隆整个 monorepo 到盒子，可用离线 tar）。
+见仓库 [`gfc-client/docs/CLIENT_DEPLOY.md`](../gfc-client/docs/CLIENT_DEPLOY.md)（无需克隆整个 monorepo 到盒子，可用离线 tar）。

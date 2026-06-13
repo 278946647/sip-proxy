@@ -18,13 +18,11 @@ sip-proxy/
 │   ├── deploy/node/       # 转发节点安装
 │   └── docker-compose.yml
 │
-├── gfc-client/            # 客户端盒子（Go + Vue3，新架构）
-│   ├── cmd/               # gfc-api / gfc-agent
-│   ├── internal/          # 核心逻辑
-│   ├── web/               # Vue3 管理界面
-│   └── deploy/            # 安装脚本
-│
-└── client-agent/          # [legacy] Python 客户端，逐步废弃
+└── gfc-client/            # 客户端盒子（Go + Vue3）
+    ├── cmd/               # gfc-api / gfc-agent
+    ├── internal/          # 核心逻辑
+    ├── web/               # Vue3 管理界面
+    └── deploy/            # 安装 / 离线包 / 运维脚本
 ```
 
 | 组件 | 目录 | 部署目标 |
@@ -71,14 +69,13 @@ sudo bash deploy/flash-line-code.sh --file /path/to/linecode.b32
 | 文档 | 说明 |
 |------|------|
 | [gfc-platform 平台手册](gfc-platform/docs/SETUP_AND_UPGRADE.md) | 控制面 / 转发节点开局与升级 |
-| [gfc-client 部署](gfc-client/README.md) | Go 客户端安装、刷码、API |
-| [client-agent 部署 (legacy)](client-agent/docs/CLIENT_DEPLOY.md) | 旧 Python 客户端 |
+| [gfc-client 部署](gfc-client/docs/CLIENT_DEPLOY.md) | 安装、刷码、离线包、运维 |
 | [首次推送 GitHub](docs/GITHUB_FIRST_PUSH.md) | Git 初始化与 push |
 
 ---
 
 ## 设计原则
 
-- **Monorepo 开发、分目录交付**：Git 一个仓库；客户端 `pack-offline.sh` 只打包 `client-agent/`。
+- **Monorepo 开发、分目录交付**：Git 一个仓库；客户端 `gfc-client/deploy/pack-offline.sh` 打离线包。
 - **控制面与数据面分离**：平台故障时，已下发配置仍在节点/客户端本地生效。
 - **客户端直连转发节点**：VLESS + REALITY + Vision；每客户端独立 UUID，节点共用 REALITY 配置。

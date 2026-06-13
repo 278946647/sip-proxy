@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Download MetaCubeX meta-rules-dat .srs files into /etc/gfc-client/rules
+# Download MetaCubeX meta-rules-dat .srs into /var/lib/gfc-client/rules
 set -euo pipefail
 
-GFC_ETC="${GFC_ETC:-/etc/gfc-client}"
-RULES_DIR="${GFC_ETC}/rules"
+GFC_LIB="${GFC_LIB:-/var/lib/gfc-client}"
+RULES_DIR="${RULES_DIR:-${GFC_LIB}/rules}"
 BASE="https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo"
 
 mkdir -p "$RULES_DIR"
@@ -23,3 +23,7 @@ fetch_one geoip-cn.srs "${BASE}/geoip/cn.srs"
 fetch_one geosite-geolocation-not-cn.srs "${BASE}/geosite/geolocation-!cn.srs"
 
 echo "==> meta-rules ready under ${RULES_DIR}"
+if command -v curl >/dev/null && curl -fsS --connect-timeout 2 http://127.0.0.1/api/v1/dataplane/reload >/dev/null 2>&1; then
+  echo "==> reload dataplane via API"
+  curl -fsS -X POST http://127.0.0.1/api/v1/dataplane/reload || true
+fi

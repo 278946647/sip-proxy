@@ -1,7 +1,7 @@
 # 首次推送到 GitHub
 
 仓库：https://github.com/278946647/sip-proxy.git  
-**Git 根目录：** `sip-proxy/`（含 `gfc-platform/` 与 `client-agent/`）
+**Git 根目录：** `sip-proxy/`（含 `gfc-platform/` 与 `gfc-client/`）
 
 ---
 
@@ -34,7 +34,7 @@ cd C:\Users\Administrator\Desktop\sip-proxy
 
 git status
 git add .
-git commit -m "Initial commit: gfc-platform and client-agent monorepo"
+git commit -m "Initial commit: gfc-platform and gfc-client monorepo"
 git push -u origin main
 ```
 
@@ -52,8 +52,8 @@ git push -u origin main
 | 路径 | 推送 | 服务器克隆后 |
 |------|------|--------------|
 | `gfc-platform/` | ✅ | `cd gfc-platform` 再装控制面/节点 |
-| `client-agent/` | ✅ | 仅客户端机器需要；可只 scp 此目录 |
-| `client-agent/dist/` | ❌ (.gitignore) | 本地 `pack-offline.sh` 产物 |
+| `gfc-client/` | ✅ | 仅客户端机器需要；可只 scp 此目录 |
+| `gfc-client/dist/` | ❌ (.gitignore) | 本地 `pack-offline.sh` 产物 |
 
 ---
 
@@ -67,7 +67,7 @@ cd /opt/sip-proxy/gfc-platform && sudo bash deploy/control/install-docker.sh
 客户端离线包在构建机：
 
 ```bash
-cd /opt/sip-proxy/client-agent && bash deploy/pack-offline.sh
+cd /opt/sip-proxy/gfc-client && bash deploy/pack-offline.sh
 ```
 
 ---

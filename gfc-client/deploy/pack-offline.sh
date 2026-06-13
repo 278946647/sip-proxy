@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
-# Build standalone offline tarballs (client-agent only — no gfc-platform).
+# Build standalone offline tarballs (gfc-client only — no gfc-platform).
 set -euo pipefail
 _DIR="$(cd "$(dirname "$0")" && pwd)"
 CLIENT_ROOT="$(cd "$_DIR/.." && pwd)"
 OUT="${OUT:-$CLIENT_ROOT/dist}"
-VERSION="${VERSION:-0.1.0}"
+VERSION="${VERSION:-1.0.0}"
 SINGBOX_VERSION="${SINGBOX_VERSION:-1.13.4}"
-MOSDNS_VERSION="${MOSDNS_VERSION:-5.3.3}"
 
-if [[ ! -f "$CLIENT_ROOT/client_agent/__init__.py" ]]; then
-  echo "ERROR: $CLIENT_ROOT/client_agent missing"
+if [[ ! -f "$CLIENT_ROOT/go.mod" ]]; then
+  echo "ERROR: $CLIENT_ROOT/go.mod missing"
   exit 1
 fi
 
@@ -18,20 +17,16 @@ WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
 pack_arch() {
-  local sb_arch=$1 mos_arch=$2 label=$3
+  local sb_arch=$1 label=$2
   local root="$WORK/gfc-client-offline-${label}-${VERSION}"
-  mkdir -p "$root/bin" "$root/deploy"
+  mkdir -p "$root/bin" "$root/deploy" "$root/share/rules"
 
-  echo "==> Pack $label (client-agent standalone)"
+  echo "==> Pack $label (gfc-client standalone)"
   rsync -a "$CLIENT_ROOT/" "$root/" \
-    --exclude dist --exclude .venv --exclude state --exclude deploy/pack-offline.sh \
-    --exclude deploy/build-image.sh
-  rsync -a "$_DIR/" "$root/deploy/" \
-    --exclude pack-offline.sh --exclude build-image.sh
-  cp "$_DIR/install.sh" "$root/install.sh"
-  cp "$_DIR/install-ubuntu.sh" "$root/install-ubuntu.sh"
-  cp "$_DIR/flash-line-code.sh" "$root/flash-line-code.sh"
-  chmod +x "$root"/*.sh "$root/deploy"/*.sh 2>/dev/null || true
+    --exclude dist --exclude web/node_modules --exclude web/dist --exclude web-static \
+    --exclude .git --exclude bin
+
+  cp -a "$CLIENT_ROOT/share/rules/." "$root/share/rules/" 2>/dev/null || true
 
   local tmp url
   tmp=$(mktemp -d)
@@ -41,27 +36,29 @@ pack_arch() {
   tar -xzf "$tmp/sb.tgz" -C "$tmp"
   install -m 755 "$(find "$tmp" -name sing-box -type f | head -1)" "$root/bin/sing-box"
 
-  url="https://github.com/IrineSistiana/mosdns/releases/download/v${MOSDNS_VERSION}/mosdns-linux-${mos_arch}.zip"
-  echo "    Download mosdns: $url"
+  url="https://github.com/IrineSistiana/mosdns-x/releases/latest/download/mosdns-linux-${sb_arch}.zip"
+  echo "    mosdns-x $url"
   curl -fsSL "$url" -o "$tmp/mosdns.zip"
   unzip -q "$tmp/mosdns.zip" -d "$tmp"
   install -m 755 "$(find "$tmp" -name mosdns -type f | head -1)" "$root/bin/mosdns"
   rm -rf "$tmp"
 
+  chmod +x "$root/deploy"/*.sh 2>/dev/null || true
+
   cat >"$root/README.txt" <<EOF
-GFC Client Offline Package ${VERSION} (${label}) — standalone, no control plane code
+GFC Client Offline Package ${VERSION} (${label})
 1. Copy tar to Ubuntu 22.04 device
 2. tar xzf gfc-client-offline-${label}-${VERSION}.tar.gz && cd gfc-client-offline-${label}-${VERSION}
-3. sudo bash flash-line-code.sh /path/to/linecode.b32
-4. sudo bash install.sh --config deploy/install.env.example --yes
+3. sudo bash deploy/flash-line-code.sh --file /path/to/linecode.b32   # optional before install
+4. sudo bash deploy/install-ubuntu.sh
 EOF
 
   tar -czf "$OUT/gfc-client-offline-${label}-${VERSION}.tar.gz" -C "$WORK" "gfc-client-offline-${label}-${VERSION}"
   echo "    -> $OUT/gfc-client-offline-${label}-${VERSION}.tar.gz"
 }
 
-pack_arch amd64 amd64 x86_64
-pack_arch arm64 arm64 aarch64
+pack_arch amd64 x86_64
+pack_arch arm64 aarch64
 
 echo "==> Offline packages in $OUT"
 ls -lh "$OUT"/*.tar.gz
