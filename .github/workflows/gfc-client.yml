@@ -1,0 +1,28 @@
+name: gfc-client
+
+on:
+  push:
+    paths:
+      - 'gfc-client/**'
+  pull_request:
+    paths:
+      - 'gfc-client/**'
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: gfc-client
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Build
+        run: bash deploy/build.sh
+      - name: Vet
+        run: go vet ./...

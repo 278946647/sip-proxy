@@ -18,16 +18,20 @@ sip-proxy/
 │   ├── deploy/node/       # 转发节点安装
 │   └── docker-compose.yml
 │
-└── client-agent/          # 客户端盒子（独立交付，可单独打包）
-    ├── client_agent/      # Python Agent
-    └── deploy/            # 安装 / 离线 tar / 镜像构建
+├── gfc-client/            # 客户端盒子（Go + Vue3，新架构）
+│   ├── cmd/               # gfc-api / gfc-agent
+│   ├── internal/          # 核心逻辑
+│   ├── web/               # Vue3 管理界面
+│   └── deploy/            # 安装脚本
+│
+└── client-agent/          # [legacy] Python 客户端，逐步废弃
 ```
 
 | 组件 | 目录 | 部署目标 |
 |------|------|----------|
 | 控制平台 | `gfc-platform/` | Ubuntu + Docker，路径如 `/opt/gfc` |
 | 转发节点 | `gfc-platform/node-agent` | Ubuntu 裸机，路径如 `/var/socks` |
-| 客户端盒子 | `client-agent/` | Ubuntu 22.04 软路由，路径 `/opt/gfc-client` |
+| 客户端盒子 | `gfc-client/` | Ubuntu 22.04 软路由，路径 `/opt/gfc-client` |
 
 ---
 
@@ -51,16 +55,13 @@ cd /var/socks-src/gfc-platform
 sudo bash deploy/node/install.sh
 ```
 
-### 3. 客户端盒子（仅需 client-agent）
+### 3. 客户端盒子（gfc-client）
 
 ```bash
-# 从 monorepo
-cd client-agent
-sudo bash deploy/flash-line-code.sh /path/to/linecode.b32
-sudo bash deploy/install.sh --config deploy/install.env.example --yes
-
-# 或打离线包（不含 gfc-platform）
-bash deploy/pack-offline.sh
+git clone https://github.com/278946647/sip-proxy.git
+cd sip-proxy/gfc-client
+sudo bash deploy/install-ubuntu.sh
+sudo bash deploy/flash-line-code.sh --file /path/to/linecode.b32
 ```
 
 ---
@@ -70,7 +71,8 @@ bash deploy/pack-offline.sh
 | 文档 | 说明 |
 |------|------|
 | [gfc-platform 平台手册](gfc-platform/docs/SETUP_AND_UPGRADE.md) | 控制面 / 转发节点开局与升级 |
-| [client-agent 部署](client-agent/docs/CLIENT_DEPLOY.md) | 离线 tar、镜像、三种代理模式 |
+| [gfc-client 部署](gfc-client/README.md) | Go 客户端安装、刷码、API |
+| [client-agent 部署 (legacy)](client-agent/docs/CLIENT_DEPLOY.md) | 旧 Python 客户端 |
 | [首次推送 GitHub](docs/GITHUB_FIRST_PUSH.md) | Git 初始化与 push |
 
 ---
