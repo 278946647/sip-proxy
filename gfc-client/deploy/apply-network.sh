@@ -182,13 +182,15 @@ import sys
 from pathlib import Path
 nft_boot, wan, lan, enable_masq, proxy_mode = sys.argv[1:6]
 masq = ""
-if wan:
+if wan and enable_masq == "1":
+    masq_rules = f'    oifname "{wan}" masquerade'
+    if proxy_mode in ("gateway", "transparent"):
+        masq_rules += '\n    oifname "gfctun" masquerade'
     masq = f"""
 table ip gfc_client_nat {{
   chain postrouting {{
     type nat hook postrouting priority srcnat; policy accept;
-    oifname "{wan}" masquerade
-    oifname "gfctun" masquerade
+{masq_rules}
   }}
 }}"""
 forward = ""
