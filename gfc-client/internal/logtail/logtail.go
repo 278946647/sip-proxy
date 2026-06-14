@@ -13,6 +13,7 @@ var logFiles = map[string]string{
 	"sing-box": "sing-box.log",
 	"mosdns":   "mosdns.log",
 	"api":      "gfc-api.log",
+	"web":      "gfc-api.log",
 }
 
 func Tail(cfg *config.Config, service string, lines int) map[string]any {

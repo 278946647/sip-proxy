@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	Version = "1.0.0"
+	Version = "1.1.0"
 
 	DefaultRoot      = "/opt/gfc-client"
 	DefaultEtc       = "/etc/gfc-client"
@@ -18,8 +18,17 @@ const (
 	DefaultAPIPort   = 8787
 	DefaultWebPort   = 80
 	DefaultFlashPort = 81
-	DefaultMosDNS    = 5335
+	DefaultMosDNS    = 53
 	TunInterface     = "gfctun"
+
+	BackupGenerations = 5
+
+	ServiceNetwork = "gfc-network.service"
+	ServiceAgent   = "gfc-agent.service"
+	ServiceWeb     = "gfc-web.service"
+	ServiceMosDNS  = "gfc-mosdns.service"
+	ServiceSingbox = "gfc-sing-box.service"
+	ServiceDnsmasq = "dnsmasq.service"
 )
 
 type Paths struct {
@@ -44,6 +53,8 @@ type Paths struct {
 	PolicySelFile   string
 	NFTBoot         string
 	NFTDNS          string
+	DnsmasqConf     string
+	BackupsDir      string
 	WebRoot         string
 }
 
@@ -88,8 +99,10 @@ func Load() *Config {
 		DataplaneMode:   filepath.Join(etc, "dataplane-mode.json"),
 		RoutingModeFile: filepath.Join(etc, "routing-mode.json"),
 		PolicySelFile:   filepath.Join(etc, "policy", "selector.json"),
-		NFTBoot:         filepath.Join(etc, "gfc-boot.nft"),
-		NFTDNS:          filepath.Join(etc, "gfc-dns.nft"),
+		NFTBoot:         filepath.Join(etc, "nftables.conf"),
+		NFTDNS:          filepath.Join(etc, "nftables-dns.conf"),
+		DnsmasqConf:     filepath.Join(etc, "dnsmasq.conf"),
+		BackupsDir:      filepath.Join(lib, "backups"),
 		WebRoot:         filepath.Join(root, "web"),
 	}
 
@@ -172,6 +185,7 @@ func (c *Config) EnsureDirs() error {
 		filepath.Join(c.Paths.Etc, "mosdns"),
 		filepath.Join(c.Paths.Etc, "policy"),
 		c.Paths.Log,
+		c.Paths.BackupsDir,
 	}
 	for _, d := range dirs {
 		if err := os.MkdirAll(d, 0o755); err != nil {

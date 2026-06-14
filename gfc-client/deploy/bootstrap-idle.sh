@@ -22,11 +22,11 @@ if [[ -d "$SRC_ROOT/share/easymosdns" ]]; then
   rsync -a "$SRC_ROOT/share/easymosdns/" "$GFC_ROOT/share/easymosdns/"
 fi
 
-systemctl stop gfc-mosdns gfc-client-sing-box 2>/dev/null || true
+systemctl stop gfc-mosdns gfc-sing-box 2>/dev/null || true
 bash "$SCRIPT_DIR/singbox-nft-cleanup.sh" 2>/dev/null || true
 
 echo "==> Bootstrap idle dataplane"
 "$BIN"
-systemctl restart gfc-mosdns gfc-client-sing-box
+systemctl restart gfc-mosdns gfc-sing-box
 echo "    mosdns: $(systemctl is-active gfc-mosdns 2>/dev/null || echo unknown)"
-echo "    sing-box: $(systemctl is-active gfc-client-sing-box 2>/dev/null || echo unknown)"
+echo "    sing-box: $(systemctl is-active gfc-sing-box 2>/dev/null || echo unknown)"

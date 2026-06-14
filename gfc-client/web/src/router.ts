@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import Dashboard from './pages/Dashboard.vue'
 import Nodes from './pages/Nodes.vue'
 import Policy from './pages/Policy.vue'
+import Singbox from './pages/Singbox.vue'
 import DNS from './pages/DNS.vue'
 import Rules from './pages/Rules.vue'
 import Network from './pages/Network.vue'
@@ -16,6 +17,7 @@ const router = createRouter({
     { path: '/', component: Dashboard },
     { path: '/nodes', component: Nodes },
     { path: '/policy', component: Policy },
+    { path: '/singbox', component: Singbox },
     { path: '/dns', component: DNS },
     { path: '/rules', component: Rules },
     { path: '/network', component: Network },

@@ -37,6 +37,31 @@ export async function selectPolicy(id: string, outbound: string) {
   return data.data
 }
 
+export async function getDNSStats() {
+  const { data } = await api.get('/dns/stats')
+  return data.data
+}
+
+export async function getSingboxStats() {
+  const { data } = await api.get('/singbox/stats')
+  return data.data
+}
+
+export async function getAgent() {
+  const { data } = await api.get('/agent')
+  return data.data
+}
+
+export async function checkUpgrade(manifestURL?: string) {
+  const { data } = await api.post('/upgrade/check', manifestURL ? { manifest_url: manifestURL } : {})
+  return data.data
+}
+
+export async function getUpgradeStatus() {
+  const { data } = await api.get('/upgrade/status')
+  return data.data
+}
+
 export async function getDNSLists() {
   const { data } = await api.get('/dns/lists')
   return data.data

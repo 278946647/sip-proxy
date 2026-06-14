@@ -6,7 +6,7 @@ echo "==> GFC client egress check"
 echo
 
 echo "--- services ---"
-systemctl is-active gfc-client-sing-box gfc-mosdns gfc-client-agent gfc-client-api 2>/dev/null || true
+systemctl is-active gfc-sing-box gfc-mosdns gfc-agent gfc-web gfc-network 2>/dev/null || true
 echo
 
 echo "--- gfctun / routes ---"

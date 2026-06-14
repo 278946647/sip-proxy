@@ -103,6 +103,16 @@ func ListInterfaces() []string {
 	return names
 }
 
+func (m *Manager) ApplyNetwork() (map[string]any, error) {
+	script := filepath.Join(m.cfg.Paths.Root, "deploy", "apply-network.sh")
+	if _, err := os.Stat(script); err != nil {
+		return nil, err
+	}
+	cmd := exec.Command("bash", script)
+	out, err := cmd.CombinedOutput()
+	return map[string]any{"output": string(out), "ok": err == nil}, err
+}
+
 func (m *Manager) ApplyBridge(body map[string]any) (map[string]any, error) {
 	cfg := m.loadBridge()
 	for k, v := range body {

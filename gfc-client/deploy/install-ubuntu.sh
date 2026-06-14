@@ -18,10 +18,10 @@ echo "==> Packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq curl rsync nftables iproute2 dnsmasq netplan.io \
-  git ca-certificates unzip xz-utils
+  git ca-certificates unzip xz-utils openssh-client autossh
 
 mkdir -p "$GFC_ROOT" /etc/gfc-client /var/log/gfc-client /var/lib/gfc-client/state \
-  /var/lib/gfc-client/rules /var/lib/gfc-client/dns-lists \
+  /var/lib/gfc-client/rules /var/lib/gfc-client/dns-lists /var/lib/gfc-client/backups \
   /etc/gfc-client/mosdns /etc/gfc-client/policy
 
 echo "==> Sysctl BBR"
@@ -107,53 +107,46 @@ EOF
   chmod 600 /etc/gfc-client/gfc.env
 fi
 
+echo "==> systemd-resolved"
+if systemctl is-enabled systemd-resolved &>/dev/null; then
+  systemctl disable --now systemd-resolved || true
+fi
+
 echo "==> systemd units"
-cat >/etc/systemd/system/gfc-client-agent.service <<EOF
+# retire legacy unit names
+for legacy in gfc-client-agent gfc-client-api gfc-client-sing-box; do
+  systemctl disable --now "$legacy" 2>/dev/null || true
+  rm -f "/etc/systemd/system/${legacy}.service"
+done
+
+cat >/etc/systemd/system/gfc-network.service <<EOF
 [Unit]
-Description=GFC Client Agent
-After=network-online.target
+Description=GFC Client Network Bootstrap
+After=network-online.target systemd-networkd.service
 Wants=network-online.target
+Before=dnsmasq.service gfc-mosdns.service
 
 [Service]
-Type=simple
+Type=oneshot
+RemainAfterExit=yes
 EnvironmentFile=/etc/gfc-client/gfc.env
-ExecStart=/usr/local/bin/gfc-agent
-Restart=always
-RestartSec=3
-StandardOutput=append:/var/log/gfc-client/gfc-agent.log
-StandardError=append:/var/log/gfc-client/gfc-agent.log
+ExecStart=/bin/bash ${GFC_ROOT}/deploy/gfc-network.sh start
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-cat >/etc/systemd/system/gfc-client-api.service <<EOF
+cat >/etc/systemd/system/gfc-mosdns.service <<'EOF'
 [Unit]
-Description=GFC Client API + Web UI
-After=network-online.target
-Wants=network-online.target
+Description=GFC MosDNS (sole DNS :53)
+After=gfc-network.service
+Requires=gfc-network.service
+Before=gfc-sing-box.service
 
 [Service]
 Type=simple
-EnvironmentFile=/etc/gfc-client/gfc.env
-Environment=GFC_WEB_MODE=both
-ExecStart=/usr/local/bin/gfc-api
-Restart=always
-RestartSec=3
-StandardOutput=append:/var/log/gfc-client/gfc-api.log
-StandardError=append:/var/log/gfc-client/gfc-api.log
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-cat >/etc/systemd/system/gfc-mosdns.service <<EOF
-[Unit]
-Description=GFC Client MosDNS
-After=network.target
-
-[Service]
-Type=simple
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 WorkingDirectory=/etc/gfc-client/mosdns/easymosdns
 ExecStart=/usr/local/bin/mosdns start -c /etc/gfc-client/mosdns/easymosdns/config.yaml
 Restart=on-failure
@@ -165,10 +158,12 @@ StandardError=append:/var/log/gfc-client/mosdns.log
 WantedBy=multi-user.target
 EOF
 
-cat >/etc/systemd/system/gfc-client-sing-box.service <<EOF
+cat >/etc/systemd/system/gfc-sing-box.service <<EOF
 [Unit]
-Description=GFC Client sing-box TUN (gfctun)
-After=network.target gfc-mosdns.service
+Description=GFC Sing-box TUN (gfctun)
+After=gfc-mosdns.service
+Requires=gfc-mosdns.service
+Before=gfc-agent.service
 
 [Service]
 Type=simple
@@ -185,20 +180,58 @@ StandardError=append:/var/log/gfc-client/sing-box.log
 WantedBy=multi-user.target
 EOF
 
+cat >/etc/systemd/system/gfc-agent.service <<EOF
+[Unit]
+Description=GFC Client Agent
+After=gfc-sing-box.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/gfc-client/gfc.env
+ExecStart=/usr/local/bin/gfc-agent
+Restart=always
+RestartSec=3
+StandardOutput=append:/var/log/gfc-client/gfc-agent.log
+StandardError=append:/var/log/gfc-client/gfc-agent.log
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+cat >/etc/systemd/system/gfc-web.service <<EOF
+[Unit]
+Description=GFC Client Web UI
+After=gfc-agent.service
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/gfc-client/gfc.env
+Environment=GFC_WEB_MODE=both
+ExecStart=/usr/local/bin/gfc-api
+Restart=always
+RestartSec=3
+StandardOutput=append:/var/log/gfc-client/gfc-api.log
+StandardError=append:/var/log/gfc-client/gfc-api.log
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
 systemctl daemon-reload
-systemctl enable gfc-client-agent gfc-client-api gfc-mosdns gfc-client-sing-box
+systemctl enable gfc-network gfc-mosdns gfc-sing-box gfc-agent gfc-web
 
 echo "==> logrotate"
 install -m 644 "$GFC_ROOT/deploy/gfc-client-logrotate" /etc/logrotate.d/gfc-client
 
-echo "==> Network (WAN/LAN bridge)"
+echo "==> Network bootstrap"
 chmod +x "$GFC_ROOT/deploy"/*.sh
-bash "$GFC_ROOT/deploy/apply-network.sh" || echo "WARN: apply-network skipped (no NIC?)"
+systemctl start gfc-network || bash "$GFC_ROOT/deploy/gfc-network.sh" start || echo "WARN: gfc-network skipped"
 
 echo "==> Bootstrap dataplane (idle)"
 chmod +x "$GFC_ROOT/deploy/bootstrap-idle.sh"
 bash "$GFC_ROOT/deploy/bootstrap-idle.sh"
-systemctl restart gfc-client-agent gfc-client-api || true
+systemctl restart gfc-agent gfc-web gfc-mosdns gfc-sing-box || true
 
 echo ""
 echo "Install complete."

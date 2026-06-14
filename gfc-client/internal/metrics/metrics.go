@@ -5,34 +5,14 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"runtime"
 	"time"
 
 	"github.com/278946647/sip-proxy/gfc-client/internal/config"
+	"github.com/278946647/sip-proxy/gfc-client/internal/stats"
 )
 
 func Collect(cfg *config.Config, controlPlaneURL string, reachable bool) map[string]any {
-	hostname, _ := os.Hostname()
-	m := map[string]any{
-		"ts":                  time.Now().UTC().Format(time.RFC3339),
-		"hostname":            hostname,
-		"agent_version":       config.Version,
-		"control_plane_url":   controlPlaneURL,
-		"control_plane_reachable": reachable,
-		"go_os":               runtime.GOOS,
-		"go_arch":             runtime.GOARCH,
-		"proxy_mode":          cfg.ProxyMode,
-	}
-	if addrs, err := net.InterfaceAddrs(); err == nil {
-		var ips []string
-		for _, a := range addrs {
-			if ipnet, ok := a.(*net.IPNet); ok && ipnet.IP.To4() != nil {
-				ips = append(ips, ipnet.IP.String())
-			}
-		}
-		m["ips"] = ips
-	}
-	return m
+	return stats.CollectExtended(cfg, controlPlaneURL, reachable)
 }
 
 func WriteStatus(path string, metrics map[string]any, device map[string]any) error {

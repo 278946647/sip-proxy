@@ -4,10 +4,10 @@ Ubuntu 22.04 软路由客户端：**Go 后端 + Vue3 管理界面 + MosDNS + Sin
 
 ## 架构
 
-- **MosDNS** `:5335` — DNS 缓存与国内/国外分流
+- **MosDNS** `:53` — 唯一 DNS，国内/国外分流
 - **Sing-box TUN** `gfctun` — GeoIP/GeoSite 流量分流，VLESS Reality 出站
-- **gfc-agent** — 刷码激活、心跳、配置拉取与渲染
-- **gfc-api** — REST API + Vue3 Web（`:80` 管理 / `:81` 刷码）
+- **gfc-agent** — 刷码激活、心跳、配置编排与渲染
+- **gfc-web** — REST API + Vue3 Web（`:80` 管理 / `:81` 刷码）
 
 控制平台通过 **线路码** 下发：控制面 URL、节点 IP/端口、VLESS 参数；其余配置本地固定。
 

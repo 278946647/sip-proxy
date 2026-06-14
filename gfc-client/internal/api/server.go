@@ -13,12 +13,16 @@ import (
 	"github.com/278946647/sip-proxy/gfc-client/internal/config"
 	"github.com/278946647/sip-proxy/gfc-client/internal/dataplane"
 	"github.com/278946647/sip-proxy/gfc-client/internal/dnslists"
+	"github.com/278946647/sip-proxy/gfc-client/internal/envfile"
 	"github.com/278946647/sip-proxy/gfc-client/internal/logtail"
 	"github.com/278946647/sip-proxy/gfc-client/internal/network"
 	"github.com/278946647/sip-proxy/gfc-client/internal/render/mosdns"
 	"github.com/278946647/sip-proxy/gfc-client/internal/render/singbox"
+	"github.com/278946647/sip-proxy/gfc-client/internal/reversessh"
 	"github.com/278946647/sip-proxy/gfc-client/internal/rules"
+	"github.com/278946647/sip-proxy/gfc-client/internal/stats"
 	"github.com/278946647/sip-proxy/gfc-client/internal/store"
+	"github.com/278946647/sip-proxy/gfc-client/internal/upgrade"
 )
 
 type Server struct {
@@ -29,6 +33,7 @@ type Server struct {
 	dns        *dnslists.Manager
 	rules      *rules.Manager
 	network    *network.Manager
+	revSSH     *reversessh.Manager
 	mode       string // admin | flash
 }
 
@@ -43,6 +48,7 @@ func NewServer(cfg *config.Config, st *store.Store, mode string) *Server {
 		dns:        dnslists.New(cfg),
 		rules:      rules.New(cfg),
 		network:    network.New(cfg),
+		revSSH:     reversessh.New(cfg),
 		mode:       mode,
 	}
 }
@@ -67,6 +73,13 @@ func (s *Server) Router() *gin.Engine {
 		v1.GET("/policy/groups", s.listPolicy)
 		v1.PUT("/policy/groups/:id/select", s.selectPolicy)
 
+		v1.GET("/dns/stats", s.getDNSStats)
+		v1.GET("/singbox/stats", s.getSingboxStats)
+		v1.GET("/agent", s.getAgent)
+
+		v1.GET("/upgrade/status", s.getUpgradeStatus)
+		v1.POST("/upgrade/check", s.checkUpgrade)
+
 		v1.GET("/dns/lists", s.dnsLists)
 		v1.GET("/dns/lists/:name", s.dnsExport)
 		v1.POST("/dns/lists/:name", s.dnsUpdate)
@@ -82,6 +95,7 @@ func (s *Server) Router() *gin.Engine {
 		v1.POST("/services/:name/restart", s.restartService)
 		v1.POST("/dataplane/reload", s.reloadDataplane)
 		v1.POST("/dataplane/apply", s.applyDataplane)
+		v1.POST("/dataplane/rollback", s.rollbackDataplane)
 
 		v1.GET("/network", s.getNetwork)
 		v1.GET("/network/interfaces", s.getInterfaces)
@@ -145,7 +159,16 @@ func (s *Server) getStatus(c *gin.Context) {
 	if s.activation.IsActivated() {
 		state = "active"
 	}
-	data := map[string]any{"state": state, "device": device, "dataplane": readJSONFile(s.cfg.Paths.DataplaneMode)}
+	data := map[string]any{
+		"state":     state,
+		"device":    device,
+		"dataplane": readJSONFile(s.cfg.Paths.DataplaneMode),
+		"network":   s.network.Status(),
+		"system":    stats.System(),
+		"tun":       stats.TunStatus(config.TunInterface),
+		"dns":       stats.DNSProbe("127.0.0.1", config.DefaultMosDNS),
+		"agent":     stats.AgentStatus(s.cfg),
+	}
 	s.ok(c, data)
 }
 
@@ -346,13 +369,18 @@ func (s *Server) reloadDataplane(c *gin.Context) {
 	s.ok(c, map[string]any{"ok": ok, "message": msg})
 }
 
+func (s *Server) rollbackDataplane(c *gin.Context) {
+	ok, msg := s.engine.Rollback()
+	s.ok(c, map[string]any{"ok": ok, "message": msg})
+}
+
 func (s *Server) applyDataplane(c *gin.Context) {
 	payload := s.engine.LoadBundle()
 	if payload == nil {
 		s.fail(c, 400, "no config bundle")
 		return
 	}
-	ok, msg := s.engine.ApplyPayload(payload, true)
+	ok, msg := s.engine.ApplyPayload(payload, "manual", true)
 	s.ok(c, map[string]any{"ok": ok, "message": msg})
 }
 
@@ -398,6 +426,38 @@ func (s *Server) getSettings(c *gin.Context) {
 	s.ok(c, settings)
 }
 
+func (s *Server) getDNSStats(c *gin.Context) {
+	logPath := filepath.Join(s.cfg.Paths.Log, "mosdns.log")
+	s.ok(c, stats.MosDNS(logPath, 800))
+}
+
+func (s *Server) getSingboxStats(c *gin.Context) {
+	s.ok(c, stats.Singbox("http://127.0.0.1:9090"))
+}
+
+func (s *Server) getAgent(c *gin.Context) {
+	device, _ := s.store.GetDevice()
+	data := stats.AgentStatus(s.cfg)
+	data["device"] = device
+	data["reverse_ssh"] = s.revSSH.Status()
+	if device != nil {
+		data["reverse_ssh_port"] = reversessh.Port(device.DeviceKey, 0)
+	}
+	s.ok(c, data)
+}
+
+func (s *Server) getUpgradeStatus(c *gin.Context) {
+	s.ok(c, upgrade.Check(""))
+}
+
+func (s *Server) checkUpgrade(c *gin.Context) {
+	var body struct {
+		ManifestURL string `json:"manifest_url"`
+	}
+	_ = c.BindJSON(&body)
+	s.ok(c, upgrade.Check(body.ManifestURL))
+}
+
 func (s *Server) putSettings(c *gin.Context) {
 	var body map[string]any
 	if err := c.BindJSON(&body); err != nil {
@@ -405,7 +465,26 @@ func (s *Server) putSettings(c *gin.Context) {
 		return
 	}
 	_ = s.store.UpdateSettings(body)
-	s.ok(c, body)
+
+	result := map[string]any{"saved": true}
+	if mode, ok := body["proxy_mode"].(string); ok && strings.TrimSpace(mode) != "" {
+		mode = strings.ToLower(strings.TrimSpace(mode))
+		if err := envfile.Set(s.cfg.Paths.EnvFile, "GFC_PROXY_MODE", mode); err != nil {
+			s.fail(c, 500, err.Error())
+			return
+		}
+		_ = os.Setenv("GFC_PROXY_MODE", mode)
+		s.cfg.ProxyMode = mode
+		netOut, err := s.network.ApplyNetwork()
+		result["proxy_mode"] = mode
+		result["network"] = netOut
+		if err != nil {
+			result["network_error"] = err.Error()
+		}
+		ok, msg := s.engine.ReapplyLocal(true)
+		result["dataplane"] = map[string]any{"ok": ok, "message": msg}
+	}
+	s.ok(c, result)
 }
 
 func (s *Server) putLogging(c *gin.Context) {

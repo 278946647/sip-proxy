@@ -13,8 +13,6 @@ import (
 	"github.com/278946647/sip-proxy/gfc-client/internal/config"
 )
 
-const mosDNSPort = 5335
-
 var domesticDNS = []string{
 	"223.5.5.5/32", "223.6.6.6/32", "119.29.29.29/32", "114.114.114.114/32",
 }
@@ -70,13 +68,10 @@ func (r *Renderer) SelectedOutbound() string {
 func (r *Renderer) IdleConfig() map[string]any {
 	logBlock := map[string]any{"level": r.LogLevel()}
 	return map[string]any{
-		"log":      logBlock,
-		"dns":      map[string]any{"servers": []any{map[string]any{"type": "local", "tag": "local"}}, "final": "local"},
-		"inbounds": []any{},
-		"outbounds": []any{
-			map[string]any{"type": "direct", "tag": "direct"},
-		},
-		"route": map[string]any{"final": "direct"},
+		"log":       logBlock,
+		"inbounds":  []any{},
+		"outbounds": []any{map[string]any{"type": "direct", "tag": "direct"}},
+		"route":     map[string]any{"final": "direct"},
 	}
 }
 
@@ -159,10 +154,9 @@ func (r *Renderer) RenderActive(payload map[string]any, ruleSets []map[string]an
 	routeRules = append(routeRules, map[string]any{"outbound": proxyOutbound})
 
 	route := map[string]any{
-		"auto_detect_interface":     true,
-		"final":                     proxyOutbound,
-		"default_domain_resolver":   map[string]any{"server": "local"},
-		"rules":                     routeRules,
+		"auto_detect_interface": true,
+		"final":                 proxyOutbound,
+		"rules":                 routeRules,
 	}
 	if len(ruleSets) > 0 {
 		route["rule_set"] = ruleSets
@@ -174,22 +168,16 @@ func (r *Renderer) RenderActive(payload map[string]any, ruleSets []map[string]an
 	}
 
 	return map[string]any{
-		"log": logBlock,
-		"dns": map[string]any{
-			"servers": []any{
-				map[string]any{"type": "local", "tag": "local"},
-				map[string]any{"type": "udp", "tag": "mosdns", "server": "127.0.0.1", "server_port": mosDNSPort},
-			},
-			"final":              "mosdns",
-			"strategy":           "ipv4_only",
-			"independent_cache":  true,
-			"cache_capacity":     4096,
-		},
+		"log":       logBlock,
 		"inbounds":  inbounds,
 		"outbounds": outbounds,
 		"route":     route,
 		"experimental": map[string]any{
 			"cache_file": map[string]any{"enabled": false},
+			"clash_api": map[string]any{
+				"external_controller": "127.0.0.1:9090",
+				"secret":              "",
+			},
 		},
 	}, nil
 }
@@ -242,12 +230,10 @@ func buildVLESSOutbound(nm map[string]any, tag string) map[string]any {
 }
 
 func (r *Renderer) buildInbounds(proxyMode string) []any {
-	if proxyMode == "transparent" {
-		return []any{map[string]any{
-			"type": "tproxy", "tag": "tproxy-in", "listen": "0.0.0.0", "listen_port": 7895,
-		}}
-	}
-	autoRoute := proxyMode == "gateway"
+	mode := strings.ToLower(strings.TrimSpace(proxyMode))
+	autoRoute := mode == "gateway" || mode == "transparent"
+	strictRoute := mode == "gateway" || mode == "transparent"
+
 	tun := map[string]any{
 		"type":           "tun",
 		"tag":            "tun-in",
@@ -255,15 +241,15 @@ func (r *Renderer) buildInbounds(proxyMode string) []any {
 		"address":        []string{"172.19.0.1/30"},
 		"mtu":            1500,
 		"auto_route":     autoRoute,
-		"strict_route":   autoRoute,
+		"strict_route":   strictRoute,
 		"stack":          "system",
 	}
 	if autoRoute {
 		tun["auto_redirect"] = true
-		tun["dns_mode"] = "native"
 		tun["route_address"] = []string{"0.0.0.0/1", "128.0.0.0/1"}
 		tun["route_exclude_address"] = r.routeExclude()
 	}
+	// bypass: TUN up without auto_route; traffic enters via gateway/FORWARD path
 	return []any{tun}
 }
 
@@ -281,9 +267,9 @@ func (r *Renderer) routeExclude() []string {
 
 func (r *Renderer) dnsRouteRules(nodeAddr string, payload map[string]any, proxyTag string) []map[string]any {
 	rules := []map[string]any{
-		{"ip_cidr": []string{"127.0.0.1/32"}, "port": []int{mosDNSPort}, "outbound": "direct-local"},
 		{"ip_cidr": domesticDNS, "port": []int{53}, "outbound": "direct"},
 		{"ip_cidr": intlDOH, "port": []int{443}, "outbound": proxyTag},
+		{"ip_cidr": []string{"127.0.0.1/32"}, "port": []int{config.DefaultMosDNS}, "outbound": "direct-local"},
 	}
 	if dr := directIPRule(nodeAddr); dr != nil {
 		rules = append(rules, dr)

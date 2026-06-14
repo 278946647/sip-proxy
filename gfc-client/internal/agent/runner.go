@@ -8,12 +8,14 @@ import (
 	"strings"
 	"time"
 
+import (
 	"github.com/278946647/sip-proxy/gfc-client/internal/activation"
 	"github.com/278946647/sip-proxy/gfc-client/internal/config"
 	"github.com/278946647/sip-proxy/gfc-client/internal/controlplane"
 	"github.com/278946647/sip-proxy/gfc-client/internal/dataplane"
 	"github.com/278946647/sip-proxy/gfc-client/internal/linecode"
 	"github.com/278946647/sip-proxy/gfc-client/internal/metrics"
+	"github.com/278946647/sip-proxy/gfc-client/internal/reversessh"
 	"github.com/278946647/sip-proxy/gfc-client/internal/store"
 )
 
@@ -22,6 +24,7 @@ type Runner struct {
 	store      *store.Store
 	engine     *dataplane.Engine
 	activation *activation.Service
+	revSSH     *reversessh.Manager
 }
 
 func NewRunner(cfg *config.Config, st *store.Store) *Runner {
@@ -31,6 +34,7 @@ func NewRunner(cfg *config.Config, st *store.Store) *Runner {
 		store:      st,
 		engine:     engine,
 		activation: activation.New(cfg, st, engine),
+		revSSH:     reversessh.New(cfg),
 	}
 }
 
@@ -104,8 +108,12 @@ func (r *Runner) tick() {
 	device := map[string]any{"device_key": state.DeviceKey, "line_id": state.LineID, "tid": state.TID}
 	_ = metrics.WriteStatus(r.cfg.Paths.StatusFile, m, device)
 
-	var reverseSSH *int
+	sshPort := reversessh.Port(state.DeviceKey, 0)
+	reverseSSH := &sshPort
 	_ = client.Heartbeat(m, r.cfg.DeviceName, reverseSSH, r.cfg.ProxyMode, config.Version)
+	if ok, msg := r.revSSH.Sync(state.DeviceKey); ok {
+		fmt.Printf("reverse ssh: %s\n", msg)
+	}
 
 	bundle, err := client.PullConfig()
 	if err != nil {
@@ -123,12 +131,18 @@ func (r *Runner) tick() {
 		needApply = !r.configMatches(payload2)
 	}
 	if needApply {
-		ok, msg := r.engine.ApplyPayload(payload2, true)
+		ok, msg := r.engine.ApplyPayload(payload2, bundle.Version, true)
 		if ok {
 			_ = client.AckConfig(bundle.Version, "applied", msg)
 			state.AppliedVersion = bundle.Version
 			_ = r.saveState(state)
 			r.syncNode(payload2)
+			_ = r.store.SaveDevice(store.Device{
+				DeviceKey: state.DeviceKey, DeviceName: r.cfg.DeviceName,
+				LineID: state.LineID, TID: state.TID, ClientToken: state.ClientToken,
+				ControlPlaneURL: client.ActiveServer(), ProxyMode: r.cfg.ProxyMode,
+				State: "active", AppliedVersion: bundle.Version,
+			})
 			fmt.Printf("applied version=%s %s\n", bundle.Version, msg)
 		} else {
 			_ = client.AckConfig(bundle.Version, "failed", msg)

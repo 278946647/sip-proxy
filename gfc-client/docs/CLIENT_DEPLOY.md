@@ -57,10 +57,11 @@ API：`http://<IP>/api/v1/`
 
 | 单元 | 说明 |
 |------|------|
-| `gfc-client-agent` | 激活 / 心跳 / 配置 apply |
-| `gfc-client-api` | REST + Web UI |
-| `gfc-mosdns` | DNS 分流 `:5335` |
-| `gfc-client-sing-box` | TUN 出站 |
+| `gfc-network` | 网络初始化、resolved 禁用、nftables |
+| `gfc-agent` | 激活 / 心跳 / 配置编排 apply |
+| `gfc-web` | REST + Web UI |
+| `gfc-mosdns` | 唯一 DNS `:53` |
+| `gfc-sing-box` | TUN 出站 |
 
 日志：`/var/log/gfc-client/`
 

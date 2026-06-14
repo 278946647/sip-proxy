@@ -6,6 +6,7 @@ const nav = [
   { to: '/', label: '概览' },
   { to: '/nodes', label: '节点' },
   { to: '/policy', label: '策略组' },
+  { to: '/singbox', label: 'Sing-box' },
   { to: '/dns', label: 'DNS' },
   { to: '/rules', label: '分流规则' },
   { to: '/network', label: '网络' },
