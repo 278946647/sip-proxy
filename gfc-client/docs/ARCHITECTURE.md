@@ -212,8 +212,8 @@ table inet gfc_dns_hijack  # PREROUTING + OUTPUT DNS redirect
 ### 3.7 Web UI (gfc-web / gfc-api)
 
 - 静态资源: `/opt/gfc-client/web/`
-- API: `http://<LAN>:80/api/v1/*`
-- 刷码页: `http://<LAN>:81`（独立端口，降低暴露面）
+- API: `http://<LAN>:8080/api/v1/*`
+- 刷码页: `http://<LAN>/`（**80** 端口，独立 listener，仅刷码）
 - 只读展示 + 有限本地操作（DNS 列表、规则更新、服务重启）；**不绕过 Orchestrator 写配置**
 
 ---
@@ -418,8 +418,8 @@ paths:                         # 可覆盖默认路径
   log: /var/log/gfc-client
 
 web:
-  admin_port: 80
-  flash_port: 81
+  admin_port: 8080
+  flash_port: 80
   admin_token: ""              # 空则仅 LAN 免鉴权
 
 network:
@@ -581,7 +581,7 @@ ExecStart=/usr/local/bin/gfc-api
 |------|------|
 | `ct state established,related` | accept |
 | `iif lo` | accept |
-| `iif <LAN> tcp dport { 22, 80, 81, 443 }` | accept |
+| `iif <LAN> tcp dport { 22, 80, 443, 8080 }` | accept |
 | `iif <LAN> udp dport { 53, 67, 68 }` | accept |
 | `iif <LAN> tcp dport 53` | accept |
 | `iif <LAN> icmp type echo-request` | accept |
@@ -776,7 +776,7 @@ gfc-agent
 | **服务 Services** | `/services` | systemd 状态、重启 | 有 |
 | **日志 Logs** | `/logs` | 聚合日志 tail | 有 |
 | **设置 Settings** | `/settings` | 设备名、代理模式、日志级别 | 有 |
-| **刷码 Flash** | `/flash.html` (:81) | 线路码刷入 | 有 |
+| **刷码 Flash** | `/flash.html` (:80) | 线路码刷入 | 有 |
 
 ### 9.2 Dashboard 目标布局
 

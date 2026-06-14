@@ -7,7 +7,7 @@ Ubuntu 22.04 软路由客户端：**Go 后端 + Vue3 管理界面 + MosDNS + Sin
 - **MosDNS** `:53` — 唯一 DNS，国内/国外分流
 - **Sing-box TUN** `gfctun` — GeoIP/GeoSite 流量分流，VLESS Reality 出站
 - **gfc-agent** — 刷码激活、心跳、配置编排与渲染
-- **gfc-web** — REST API + Vue3 Web（`:80` 管理 / `:81` 刷码）
+- **gfc-web** — REST API + Vue3 Web（`:8080` 管理 / `:80` 刷码）
 
 控制平台通过 **线路码** 下发：控制面 URL、节点 IP/端口、VLESS 参数；其余配置本地固定。
 
@@ -24,7 +24,7 @@ sudo bash deploy/verify-install.sh
 
 ```bash
 sudo bash deploy/flash-line-code.sh --file /path/to/linecode.b32
-# 或访问 http://<LAN-IP>:81
+# 或访问 http://<LAN-IP>/  （80 端口刷码）
 ```
 
 ## 目录

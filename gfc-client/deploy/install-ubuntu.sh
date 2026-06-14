@@ -106,11 +106,24 @@ GFC_LIB=/var/lib/gfc-client
 DEVICE_NAME=gfc-box-001
 GFC_PROXY_MODE=gateway
 POLL_SECONDS=10
-GFC_CLIENT_WEB_PORT=80
-GFC_CLIENT_FLASH_PORT=81
+GFC_CLIENT_WEB_PORT=8080
+GFC_CLIENT_FLASH_PORT=80
 EOF
   chmod 600 /etc/gfc-client/gfc.env
 fi
+
+gfc_env_set() {
+  local key=$1 val=$2 file=/etc/gfc-client/gfc.env
+  touch "$file"
+  chmod 600 "$file"
+  if grep -q "^${key}=" "$file"; then
+    sed -i "s|^${key}=.*|${key}=${val}|" "$file"
+  else
+    echo "${key}=${val}" >>"$file"
+  fi
+}
+gfc_env_set GFC_CLIENT_WEB_PORT 8080
+gfc_env_set GFC_CLIENT_FLASH_PORT 80
 
 echo "==> systemd-resolved"
 if systemctl is-enabled systemd-resolved &>/dev/null; then
@@ -249,8 +262,20 @@ fix_mosdns_tree_perms /etc/gfc-client
 echo "==> Start services (ordered)"
 bash "$GFC_ROOT/deploy/start-services.sh" || echo "WARN: some services failed to start"
 
+# shellcheck source=lib-lan-ip.sh
+source "$SCRIPT_DIR/lib-lan-ip.sh"
+# shellcheck disable=SC1091
+[[ -f /etc/gfc-client/gfc.env ]] && source /etc/gfc-client/gfc.env
+LAN_IP="$(gfc_lan_ip)"
+LAN_IF="$(gfc_lan_iface)"
+FLASH_PORT="${GFC_CLIENT_FLASH_PORT:-80}"
+WEB_PORT="${GFC_CLIENT_WEB_PORT:-8080}"
+FLASH_URL="http://${LAN_IP}"
+[[ "$FLASH_PORT" != "80" ]] && FLASH_URL+=":${FLASH_PORT}"
+
 echo ""
 echo "Install complete."
-echo "  Web admin : http://$(hostname -I | awk '{print $1}'):80"
-echo "  Flash     : http://$(hostname -I | awk '{print $1}'):81"
-echo "  Logs      : /var/log/gfc-client/"
+echo "  LAN (${LAN_IF}) : ${LAN_IP}"
+echo "  Flash (刷码)    : ${FLASH_URL}"
+echo "  Web admin       : http://${LAN_IP}:${WEB_PORT}"
+echo "  Logs            : /var/log/gfc-client/"

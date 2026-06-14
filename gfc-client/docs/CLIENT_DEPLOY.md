@@ -27,7 +27,7 @@ sudo bash deploy/verify-install.sh
 
 ```bash
 sudo bash deploy/flash-line-code.sh --file /path/to/linecode.b32
-# 或浏览器 http://192.168.68.1:81
+# 或浏览器 http://<bridge_lan IP>/  （默认 80 端口刷码）
 ```
 
 ---
@@ -48,10 +48,10 @@ bash deploy/pack-offline.sh
 
 | 端口 | 说明 |
 |------|------|
-| **80** | Vue3 管理后台 |
-| **81** | 刷码页 |
+| **80** | 刷码页 |
+| **8080** | Vue3 管理后台 + API |
 
-API：`http://<IP>/api/v1/`
+API：`http://<bridge_lan IP>:8080/api/v1/`
 
 ---
 

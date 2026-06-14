@@ -16,8 +16,8 @@ const (
 	DefaultLib       = "/var/lib/gfc-client"
 	DefaultLog       = "/var/log/gfc-client"
 	DefaultAPIPort   = 8787
-	DefaultWebPort   = 80
-	DefaultFlashPort = 81
+	DefaultWebPort   = 8080
+	DefaultFlashPort = 80
 	DefaultMosDNS    = 53
 	TunInterface     = "gfctun"
 

@@ -501,22 +501,34 @@ func (s *Server) putLogging(c *gin.Context) {
 }
 
 func (s *Server) serveStatic(c *gin.Context) {
-	if s.mode == "flash" {
-		p := c.Request.URL.Path
-		if p != "/" && p != "/flash.html" && !strings.HasPrefix(p, "/assets/") {
-			if strings.HasPrefix(p, "/api") {
-				return
-			}
-		}
-	}
 	webRoot := s.cfg.Paths.WebRoot
-	path := c.Request.URL.Path
-	if path == "/" {
-		if s.mode == "flash" {
-			path = "/flash.html"
-		} else {
-			path = "/index.html"
+	reqPath := c.Request.URL.Path
+
+	if s.mode == "flash" {
+		if reqPath == "/" {
+			c.Redirect(http.StatusFound, "/flash.html")
+			return
 		}
+		if reqPath != "/flash.html" && !strings.HasPrefix(reqPath, "/assets/") {
+			c.Redirect(http.StatusFound, "/flash.html")
+			return
+		}
+		if reqPath == "/flash.html" {
+			c.File(filepath.Join(webRoot, "index.html"))
+			return
+		}
+		fp := filepath.Join(webRoot, filepath.Clean("/"+reqPath))
+		if st, err := os.Stat(fp); err == nil && !st.IsDir() {
+			c.File(fp)
+			return
+		}
+		c.File(filepath.Join(webRoot, "index.html"))
+		return
+	}
+
+	path := reqPath
+	if path == "/" {
+		path = "/index.html"
 	}
 	fp := filepath.Join(webRoot, filepath.Clean("/"+path))
 	if st, err := os.Stat(fp); err != nil || st.IsDir() {

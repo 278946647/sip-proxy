@@ -197,7 +197,7 @@ if wan and lan:
     iifname "{lan}" oifname "{wan}" accept
     iifname "{wan}" oifname "{lan}" ct state established,related accept"""
     input_rules += f"""
-    iifname "{lan}" tcp dport {{ 22, 80, 81, 443 }} accept
+    iifname "{lan}" tcp dport {{ 22, 80, 443, 8080 }} accept
     iifname "{lan}" udp dport {{ 53, 67, 68 }} accept
     iifname "{lan}" tcp dport 53 accept
     iifname "{lan}" icmp type echo-request accept"""
