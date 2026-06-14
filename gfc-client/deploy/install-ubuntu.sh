@@ -22,8 +22,8 @@ apt-get install -y -qq curl rsync nftables iproute2 dnsmasq netplan.io \
 
 # shellcheck source=lib-mosdns-nft.sh
 source "$SCRIPT_DIR/lib-mosdns-nft.sh"
-ensure_mosdns_user
-echo "    system user ${GFC_MOSDNS_USER} uid=${GFC_MOSDNS_UID}"
+migrate_mosdns_user || ensure_mosdns_user
+echo "    system user ${GFC_MOSDNS_USER} uid=$(id -u "$GFC_MOSDNS_USER" 2>/dev/null || echo ?)"
 
 mkdir -p "$GFC_ROOT" /etc/gfc-client /var/log/gfc-client /var/lib/gfc-client/state \
   /var/lib/gfc-client/rules /var/lib/gfc-client/dns-lists /var/lib/gfc-client/backups \

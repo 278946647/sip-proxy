@@ -8,12 +8,30 @@ ensure_mosdns_user() {
     groupadd -r "$GFC_MOSDNS_USER"
   fi
   if id -u "$GFC_MOSDNS_USER" &>/dev/null; then
+    return 0
+  fi
+  if getent passwd "$GFC_MOSDNS_UID" >/dev/null; then
+    echo "ERROR: uid ${GFC_MOSDNS_UID} already used by $(getent passwd "$GFC_MOSDNS_UID" | cut -d: -f1)" >&2
+    return 1
+  fi
+  useradd -r -u "$GFC_MOSDNS_UID" -g "$GFC_MOSDNS_USER" -s /usr/sbin/nologin \
+    -d /var/lib/gfc-client -M "$GFC_MOSDNS_USER"
+}
+
+# Recreate mosdns when uid drifted (e.g. user created before fixed-uid install).
+migrate_mosdns_user() {
+  if ! getent group "$GFC_MOSDNS_USER" >/dev/null; then
+    groupadd -r "$GFC_MOSDNS_USER"
+  fi
+  if id -u "$GFC_MOSDNS_USER" &>/dev/null; then
     local uid
     uid="$(id -u "$GFC_MOSDNS_USER")"
-    if [[ "$uid" != "$GFC_MOSDNS_UID" ]]; then
-      echo "WARN: ${GFC_MOSDNS_USER} uid=${uid}, expected ${GFC_MOSDNS_UID} (remove user and reinstall to fix)" >&2
+    if [[ "$uid" == "$GFC_MOSDNS_UID" ]]; then
+      return 0
     fi
-    return 0
+    echo "    migrate ${GFC_MOSDNS_USER} uid ${uid} -> ${GFC_MOSDNS_UID}"
+    systemctl stop gfc-mosdns.service 2>/dev/null || true
+    userdel "$GFC_MOSDNS_USER" 2>/dev/null || true
   fi
   if getent passwd "$GFC_MOSDNS_UID" >/dev/null; then
     echo "ERROR: uid ${GFC_MOSDNS_UID} already used by $(getent passwd "$GFC_MOSDNS_UID" | cut -d: -f1)" >&2

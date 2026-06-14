@@ -221,7 +221,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib-mosdns-nft.sh
 source "$SCRIPT_DIR/lib-mosdns-nft.sh"
 LAN_IF="${LAN:-bridge_lan}"
-ensure_mosdns_user
+migrate_mosdns_user || ensure_mosdns_user
 write_gfc_nft_dns_conf "$LAN_IF" "$MOSDNS_PORT" "$NFT_DNS"
 echo "    nft dns -> $NFT_DNS (exclude uid ${GFC_MOSDNS_UID})"
 

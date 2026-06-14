@@ -10,7 +10,7 @@ echo "==> ensure-dns"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib-mosdns-nft.sh
 source "$SCRIPT_DIR/lib-mosdns-nft.sh"
-ensure_mosdns_user
+migrate_mosdns_user
 
 # 4a. Stub resolver must be off before MosDNS binds :53
 if systemctl is-active --quiet systemd-resolved 2>/dev/null; then

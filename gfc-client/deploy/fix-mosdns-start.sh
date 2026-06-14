@@ -18,8 +18,8 @@ fi
 source "$SCRIPT_DIR/lib-mosdns-nft.sh"
 
 echo "==> fix-mosdns-start"
-ensure_mosdns_user
-echo "    ${GFC_MOSDNS_USER} uid=${GFC_MOSDNS_UID}"
+migrate_mosdns_user
+echo "    ${GFC_MOSDNS_USER} uid=$(id -u "$GFC_MOSDNS_USER")"
 
 chattr -i /etc/resolv.conf 2>/dev/null || true
 cat >/etc/resolv.conf <<'EOF'
