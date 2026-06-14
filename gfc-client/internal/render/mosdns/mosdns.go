@@ -117,6 +117,7 @@ func (r *Renderer) Render() error {
 	text = strings.ReplaceAll(text, "./ecs_noncn_domain.txt", filepath.Join(base, "ecs_noncn_domain.txt"))
 	text = strings.ReplaceAll(text, "./hosts.txt", filepath.Join(base, "hosts.txt"))
 	text = listenRe.ReplaceAllString(text, fmt.Sprintf(`addr: "0.0.0.0:%d"`, config.DefaultMosDNS))
+	text = stripUnsupportedUpstreamKeys(text)
 	if !strings.Contains(text, "main_sequence") {
 		return fmt.Errorf("render dropped main_sequence (source %s)", cfgPath)
 	}
@@ -124,6 +125,20 @@ func (r *Renderer) Render() error {
 		return err
 	}
 	return os.WriteFile(cfgPath, []byte(text), 0o644)
+}
+
+// stripUnsupportedUpstreamKeys removes upstream fields mosdns-x does not accept.
+func stripUnsupportedUpstreamKeys(raw string) string {
+	lines := strings.Split(raw, "\n")
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "enable_http3: false" || trimmed == "enable_http3: true" {
+			continue
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
 }
 
 func CheckConfig(path string) error {

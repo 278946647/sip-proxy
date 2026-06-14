@@ -247,10 +247,8 @@ plugins:
       upstream:
         - addr: "https://1.1.1.1/dns-query"
           dial_addr: "1.1.1.1:443"
-          enable_http3: false
         - addr: "https://8.8.8.8/dns-query"
           dial_addr: "8.8.8.8:443"
-          enable_http3: false
 
   # 转发至分流服务器的插件
   - tag: forward_easymosdns
