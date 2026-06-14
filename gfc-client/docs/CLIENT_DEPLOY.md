@@ -21,6 +21,8 @@ sudo bash deploy/install-ubuntu.sh
 sudo bash deploy/verify-install.sh
 ```
 
+安装会自动创建系统用户 `mosdns`（**固定 UID 65353**）及同名用户组，并生成 OUTPUT DNS 劫持规则（`meta skuid != 65353` 豁免 MosDNS 上游 :53 查询）。
+
 刷码：
 
 ```bash
