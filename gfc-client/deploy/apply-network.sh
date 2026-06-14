@@ -273,11 +273,25 @@ PY
 
 if command -v netplan >/dev/null; then
   chmod 600 /etc/netplan/*.yaml 2>/dev/null || true
-  netplan apply && echo "    netplan apply: ok"
+  if [[ "${GFC_SKIP_NETPLAN_APPLY:-0}" == "1" ]]; then
+    echo "    netplan apply: skipped (GFC_SKIP_NETPLAN_APPLY=1)"
+  else
+    echo "    netplan apply (timeout 90s)..."
+    if timeout 90 netplan apply; then
+      echo "    netplan apply: ok"
+    else
+      echo "    WARN: netplan apply timed out or failed — set GFC_SKIP_NETPLAN_APPLY=1 to skip"
+    fi
+  fi
 fi
 if [[ -f "$DNSMASQ_FILE" ]] && command -v systemctl >/dev/null; then
   systemctl enable dnsmasq
-  systemctl restart dnsmasq && echo "    dnsmasq: ok"
+  echo "    dnsmasq restart..."
+  if timeout 30 systemctl restart dnsmasq; then
+    echo "    dnsmasq: ok"
+  else
+    echo "    WARN: dnsmasq restart timed out or failed"
+  fi
 elif command -v systemctl >/dev/null; then
   systemctl stop dnsmasq 2>/dev/null || true
 fi

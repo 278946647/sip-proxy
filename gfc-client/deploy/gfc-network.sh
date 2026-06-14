@@ -9,6 +9,8 @@ APPLY_NETWORK="${GFC_ROOT}/deploy/apply-network.sh"
 
 [[ -f "$GFC_ENV" ]] && set -a && source "$GFC_ENV" && set +a
 
+STAMP="/run/gfc-client/network-applied"
+
 disable_resolved() {
   if systemctl is-enabled systemd-resolved &>/dev/null; then
     systemctl disable --now systemd-resolved || true
@@ -26,14 +28,23 @@ EOF
 }
 
 start() {
+  if [[ -f "$STAMP" && "${GFC_FORCE_NETWORK_APPLY:-0}" != "1" ]]; then
+    echo "==> gfc-network already applied ($(cat "$STAMP")), skip"
+    return 0
+  fi
   echo "==> gfc-network start"
+  echo "    disable systemd-resolved..."
   disable_resolved
+  echo "    sysctl..."
   sysctl -p /etc/sysctl.d/99-gfc-client.conf >/dev/null 2>&1 || sysctl -w net.ipv4.ip_forward=1 >/dev/null
   if [[ -x "$APPLY_NETWORK" ]]; then
+    echo "    apply-network..."
     bash "$APPLY_NETWORK"
   else
     echo "WARN: apply-network.sh missing at $APPLY_NETWORK"
   fi
+  date -u +%Y-%m-%dT%H:%M:%SZ | install -D /dev/stdin "$STAMP"
+  echo "==> gfc-network done"
 }
 
 stop() {

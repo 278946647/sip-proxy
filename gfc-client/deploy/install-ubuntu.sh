@@ -226,7 +226,9 @@ install -m 644 "$GFC_ROOT/deploy/gfc-client-logrotate" /etc/logrotate.d/gfc-clie
 
 echo "==> Network bootstrap"
 chmod +x "$GFC_ROOT/deploy"/*.sh
-systemctl start gfc-network || bash "$GFC_ROOT/deploy/gfc-network.sh" start || echo "WARN: gfc-network skipped"
+bash "$GFC_ROOT/deploy/gfc-network.sh" start || echo "WARN: gfc-network script failed"
+# Unit enabled for boot; avoid second netplan apply via systemctl during install
+systemctl reset-failed gfc-network.service 2>/dev/null || true
 
 echo "==> Bootstrap dataplane (idle)"
 chmod +x "$GFC_ROOT/deploy/bootstrap-idle.sh"
