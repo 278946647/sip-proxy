@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-import (
 	"github.com/278946647/sip-proxy/gfc-client/internal/activation"
 	"github.com/278946647/sip-proxy/gfc-client/internal/config"
 	"github.com/278946647/sip-proxy/gfc-client/internal/controlplane"
