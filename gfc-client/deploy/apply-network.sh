@@ -285,8 +285,7 @@ if command -v netplan >/dev/null; then
   fi
 fi
 if [[ -f "$DNSMASQ_FILE" ]] && command -v systemctl >/dev/null; then
-  systemctl enable dnsmasq 2>/dev/null || true
-  echo "    dnsmasq restart..."
+  echo "    dnsmasq start..."
   systemctl stop dnsmasq 2>/dev/null || true
   if timeout 20 systemctl start dnsmasq; then
     echo "    dnsmasq: ok"

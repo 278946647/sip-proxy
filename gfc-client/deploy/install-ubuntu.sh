@@ -129,6 +129,7 @@ Before=dnsmasq.service gfc-mosdns.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+TimeoutStartSec=180
 EnvironmentFile=/etc/gfc-client/gfc.env
 ExecStart=/bin/bash ${GFC_ROOT}/deploy/gfc-network.sh start
 
@@ -220,6 +221,8 @@ EOF
 
 systemctl daemon-reload
 systemctl enable gfc-network gfc-mosdns gfc-sing-box gfc-agent gfc-web
+
+systemctl enable dnsmasq 2>/dev/null || true
 
 echo "==> logrotate"
 install -m 644 "$GFC_ROOT/deploy/gfc-client-logrotate" /etc/logrotate.d/gfc-client
