@@ -149,7 +149,6 @@ func (r *Renderer) RenderActive(payload map[string]any, ruleSets []map[string]an
 	routeRules := r.dnsRouteRules(address, payload, proxyOutbound)
 	routingMode := r.RoutingMode()
 	if routingMode != "global" {
-		routeRules = append([]map[string]any{{"action": "sniff"}}, routeRules...)
 		r.appendSplitRules(&routeRules, len(ruleSets) > 0, proxyOutbound)
 	}
 	routeRules = append(routeRules, map[string]any{"outbound": proxyOutbound})
@@ -158,9 +157,6 @@ func (r *Renderer) RenderActive(payload map[string]any, ruleSets []map[string]an
 		"auto_detect_interface": true,
 		"final":                 proxyOutbound,
 		"rules":                 routeRules,
-	}
-	if wan := strings.TrimSpace(r.cfg.WanIface); wan != "" {
-		route["default_interface"] = wan
 	}
 	if len(ruleSets) > 0 {
 		route["rule_set"] = ruleSets
@@ -252,21 +248,9 @@ func (r *Renderer) buildInbounds(proxyMode string) []any {
 		tun["auto_redirect"] = true
 		tun["route_address"] = []string{"0.0.0.0/1", "128.0.0.0/1"}
 		tun["route_exclude_address"] = r.routeExclude()
-		if ex := r.tunExcludeInterfaces(strictRoute); len(ex) > 0 {
-			tun["exclude_interface"] = ex
-		}
 	}
 	// bypass: TUN up without auto_route; traffic enters via gateway/FORWARD path
 	return []any{tun}
-}
-
-func (r *Renderer) tunExcludeInterfaces(strictRoute bool) []string {
-	_ = strictRoute
-	// Only exclude WAN: LAN must stay in auto_redirect path so clients hit split routing.
-	if wan := strings.TrimSpace(r.cfg.WanIface); wan != "" {
-		return []string{wan}
-	}
-	return nil
 }
 
 func (r *Renderer) routeExclude() []string {

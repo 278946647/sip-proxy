@@ -27,8 +27,6 @@ mkdir -p "$GFC_ROOT" /etc/gfc-client /var/log/gfc-client /var/lib/gfc-client/sta
 echo "==> Sysctl BBR"
 cat >/etc/sysctl.d/99-gfc-client.conf <<'EOF'
 net.ipv4.ip_forward = 1
-net.ipv4.conf.all.rp_filter = 0
-net.ipv4.conf.default.rp_filter = 0
 net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = bbr
 EOF

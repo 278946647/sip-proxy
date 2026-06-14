@@ -177,20 +177,17 @@ if [[ "$PROXY_MODE" == "bypass" ]]; then
   ENABLE_MASQ="${GFC_BYPASS_MASQ:-0}"
 fi
 
-python3 - "$NFT_BOOT" "$WAN" "$LAN" "$ENABLE_MASQ" "$PROXY_MODE" <<'PY'
+python3 - "$NFT_BOOT" "$WAN" "$LAN" "$ENABLE_MASQ" <<'PY'
 import sys
 from pathlib import Path
-nft_boot, wan, lan, enable_masq, proxy_mode = sys.argv[1:6]
+nft_boot, wan, lan, enable_masq = sys.argv[1:5]
 masq = ""
 if wan and enable_masq == "1":
-    masq_rules = f'    oifname "{wan}" masquerade'
-    if proxy_mode in ("gateway", "transparent"):
-        masq_rules += '\n    oifname "gfctun" masquerade'
     masq = f"""
 table ip gfc_client_nat {{
   chain postrouting {{
     type nat hook postrouting priority srcnat; policy accept;
-{masq_rules}
+    oifname "{wan}" masquerade
   }}
 }}"""
 forward = ""
@@ -199,12 +196,6 @@ if wan and lan:
     forward = f"""
     iifname "{lan}" oifname "{wan}" accept
     iifname "{wan}" oifname "{lan}" ct state established,related accept"""
-    if proxy_mode in ("gateway", "transparent"):
-        forward += f"""
-    iifname "{lan}" oifname "gfctun" accept
-    iifname "gfctun" oifname "{lan}" ct state established,related accept
-    iifname "gfctun" oifname "{wan}" accept
-    iifname "{wan}" oifname "gfctun" ct state established,related accept"""
     input_rules += f"""
     iifname "{lan}" tcp dport {{ 22, 80, 81, 443 }} accept
     iifname "{lan}" udp dport {{ 53, 67, 68 }} accept
@@ -311,11 +302,6 @@ if command -v nft >/dev/null; then
   nft list table inet gfc_dns_hijack &>/dev/null && nft delete table inet gfc_dns_hijack || true
   nft -f "$NFT_BOOT" && echo "    nft filter: ok" || echo "    WARN: nft filter failed"
   nft -f "$NFT_DNS" && echo "    nft dns: ok" || echo "    WARN: nft dns failed"
-fi
-
-if command -v systemctl >/dev/null && systemctl is-enabled gfc-sing-box.service &>/dev/null; then
-  echo "    restart sing-box (pick up auto_redirect after bridge/nft)..."
-  systemctl try-restart gfc-sing-box.service 2>/dev/null || systemctl restart gfc-sing-box.service 2>/dev/null || true
 fi
 
 echo "==> network apply done"
