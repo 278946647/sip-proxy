@@ -22,8 +22,12 @@ fetch_one geosite-cn.srs "${BASE}/geosite/cn.srs"
 fetch_one geoip-cn.srs "${BASE}/geoip/cn.srs"
 fetch_one geosite-geolocation-not-cn.srs "${BASE}/geosite/geolocation-!cn.srs"
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib-api-url.sh
+source "$SCRIPT_DIR/lib-api-url.sh"
+API="$(gfc_admin_api_url)"
 echo "==> meta-rules ready under ${RULES_DIR}"
-if command -v curl >/dev/null && curl -fsS --connect-timeout 2 http://127.0.0.1/api/v1/dataplane/reload >/dev/null 2>&1; then
-  echo "==> reload dataplane via API"
-  curl -fsS -X POST http://127.0.0.1/api/v1/dataplane/reload || true
+if command -v curl >/dev/null && curl -fsS --connect-timeout 2 "${API}/dataplane/reload" >/dev/null 2>&1; then
+  echo "==> reload dataplane via API (${API})"
+  curl -fsS -X POST "${API}/dataplane/reload" || true
 fi

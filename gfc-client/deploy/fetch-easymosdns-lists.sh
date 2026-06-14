@@ -11,7 +11,10 @@ case "$SOURCE" in
     ;;
 esac
 
-API="${GFC_API_URL:-http://127.0.0.1/api/v1}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib-api-url.sh
+source "$SCRIPT_DIR/lib-api-url.sh"
+API="${GFC_API_URL:-$(gfc_admin_api_url)}"
 echo "==> easymosdns update source=$SOURCE"
 curl -fsS -X POST "${API}/dns/easymosdns/update" \
   -H 'Content-Type: application/json' \

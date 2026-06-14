@@ -2,10 +2,12 @@
 # Re-apply mosdns + sing-box from local config bundle
 set -euo pipefail
 
-API="${GFC_API_URL:-http://127.0.0.1/api/v1}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib-api-url.sh
+source "$SCRIPT_DIR/lib-api-url.sh"
+API="${GFC_API_URL:-$(gfc_admin_api_url)}"
 
-echo "==> reload dataplane"
+echo "==> reload dataplane (${API})"
 curl -fsS -X POST "${API}/dataplane/reload"
 echo
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 bash "$SCRIPT_DIR/start-services.sh"
