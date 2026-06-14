@@ -27,10 +27,27 @@ EOF
   chmod 644 /etc/resolv.conf
 }
 
+reload_nft() {
+  local boot="${GFC_ETC}/nftables.conf"
+  local dns="${GFC_ETC}/nftables-dns.conf"
+  command -v nft >/dev/null || return 0
+  [[ -f "$boot" ]] || return 0
+  nft list table ip gfc_client_nat &>/dev/null && nft delete table ip gfc_client_nat || true
+  nft list table inet gfc_client_filter &>/dev/null && nft delete table inet gfc_client_filter || true
+  nft list table inet gfc_dns_hijack &>/dev/null && nft delete table inet gfc_dns_hijack || true
+  nft -f "$boot" 2>/dev/null || true
+  [[ -f "$dns" ]] && nft -f "$dns" 2>/dev/null || true
+}
+
 start() {
   if [[ -f "$STAMP" && "${GFC_FORCE_NETWORK_APPLY:-0}" != "1" ]]; then
     echo "==> gfc-network already applied ($(cat "$STAMP")), lightweight refresh"
     disable_resolved
+    sysctl -p /etc/sysctl.d/99-gfc-client.conf >/dev/null 2>&1 || true
+    reload_nft
+    if systemctl is-active gfc-sing-box.service &>/dev/null; then
+      systemctl try-restart gfc-sing-box.service 2>/dev/null || true
+    fi
     return 0
   fi
   echo "==> gfc-network start"

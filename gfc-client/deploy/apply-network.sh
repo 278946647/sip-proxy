@@ -313,4 +313,9 @@ if command -v nft >/dev/null; then
   nft -f "$NFT_DNS" && echo "    nft dns: ok" || echo "    WARN: nft dns failed"
 fi
 
+if command -v systemctl >/dev/null && systemctl is-enabled gfc-sing-box.service &>/dev/null; then
+  echo "    restart sing-box (pick up auto_redirect after bridge/nft)..."
+  systemctl try-restart gfc-sing-box.service 2>/dev/null || systemctl restart gfc-sing-box.service 2>/dev/null || true
+fi
+
 echo "==> network apply done"
