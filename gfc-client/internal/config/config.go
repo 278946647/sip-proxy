@@ -2,6 +2,7 @@ package config
 
 import (
 	"bufio"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -193,4 +194,24 @@ func (c *Config) EnsureDirs() error {
 		}
 	}
 	return nil
+}
+
+// ResolvedWanIface returns WAN interface from env or network-roles.json.
+func (c *Config) ResolvedWanIface() string {
+	if w := strings.TrimSpace(c.WanIface); w != "" {
+		return w
+	}
+	path := filepath.Join(c.Paths.Etc, "network-roles.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var roles map[string]any
+	if json.Unmarshal(data, &roles) != nil {
+		return ""
+	}
+	if w, ok := roles["wan"].(string); ok {
+		return strings.TrimSpace(w)
+	}
+	return ""
 }

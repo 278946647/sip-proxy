@@ -103,7 +103,7 @@ func (r *Renderer) RenderActive(payload map[string]any, ruleSets []map[string]an
 
 	directLocal := map[string]any{"type": "direct", "tag": "direct-local"}
 	direct := map[string]any{"type": "direct", "tag": "direct"}
-	if wan := r.cfg.WanIface; wan != "" {
+	if wan := r.cfg.ResolvedWanIface(); wan != "" {
 		direct["bind_interface"] = wan
 	}
 
@@ -157,6 +157,9 @@ func (r *Renderer) RenderActive(payload map[string]any, ruleSets []map[string]an
 		"auto_detect_interface": true,
 		"final":                 proxyOutbound,
 		"rules":                 routeRules,
+	}
+	if wan := r.cfg.ResolvedWanIface(); wan != "" {
+		route["default_interface"] = wan
 	}
 	if len(ruleSets) > 0 {
 		route["rule_set"] = ruleSets
