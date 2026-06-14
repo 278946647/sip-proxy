@@ -55,10 +55,10 @@ func (o *Orchestrator) snapshotBefore(version string) error {
 func (o *Orchestrator) BootstrapIdle() (bool, string) {
 	var msgs []string
 	_ = o.dnsLists.EnsureDefaults()
-	ok, rmsgs := o.rules.EnsureLocal(true)
+	ok, rmsgs := o.rules.EnsureLocal(false)
 	msgs = append(msgs, rmsgs...)
 	if !ok {
-		msgs = append(msgs, "rules incomplete")
+		msgs = append(msgs, "rules incomplete (using bundled if present)")
 	}
 	if err := o.mosdns.Render(); err != nil {
 		return false, "mosdns: " + err.Error()
@@ -77,7 +77,6 @@ func (o *Orchestrator) BootstrapIdle() (bool, string) {
 	}
 	msgs = append(msgs, "sing-box idle ok")
 	o.writeMode("idle", false)
-	msgs = append(msgs, o.RestartServices()...)
 	return true, joinMsgs(msgs)
 }
 

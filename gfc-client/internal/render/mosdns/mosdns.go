@@ -102,7 +102,7 @@ func validEasyConfig(path string) bool {
 // Render applies only path and listen-port fixes to the easymosdns config.
 // Split rules and upstream lists come from easymosdns itself.
 func (r *Renderer) Render() error {
-	if err := r.EnsureTree(true); err != nil {
+	if err := r.EnsureTree(false); err != nil {
 		return err
 	}
 	base := r.cfg.Paths.EasyMosdnsDir

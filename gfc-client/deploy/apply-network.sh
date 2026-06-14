@@ -234,7 +234,7 @@ fi
 cat >>"$NFT_DNS" <<EOF
   }
   chain output_dns {
-    type nat hook output priority dstnat; policy accept;
+    type nat hook output priority -100; policy accept;
     ip daddr != 127.0.0.1 udp dport 53 redirect to :${MOSDNS_PORT}
     ip daddr != 127.0.0.1 tcp dport 53 redirect to :${MOSDNS_PORT}
   }
@@ -285,12 +285,13 @@ if command -v netplan >/dev/null; then
   fi
 fi
 if [[ -f "$DNSMASQ_FILE" ]] && command -v systemctl >/dev/null; then
-  systemctl enable dnsmasq
+  systemctl enable dnsmasq 2>/dev/null || true
   echo "    dnsmasq restart..."
-  if timeout 30 systemctl restart dnsmasq; then
+  systemctl stop dnsmasq 2>/dev/null || true
+  if timeout 20 systemctl start dnsmasq; then
     echo "    dnsmasq: ok"
   else
-    echo "    WARN: dnsmasq restart timed out or failed"
+    echo "    WARN: dnsmasq start timed out or failed"
   fi
 elif command -v systemctl >/dev/null; then
   systemctl stop dnsmasq 2>/dev/null || true
@@ -300,8 +301,8 @@ if command -v nft >/dev/null; then
   nft list table inet gfc_client_filter &>/dev/null && nft delete table inet gfc_client_filter || true
   nft list table inet gfc_dns &>/dev/null && nft delete table inet gfc_dns || true
   nft list table inet gfc_dns_hijack &>/dev/null && nft delete table inet gfc_dns_hijack || true
-  nft -f "$NFT_BOOT" && echo "    nft filter: ok"
-  nft -f "$NFT_DNS" && echo "    nft dns: ok"
+  nft -f "$NFT_BOOT" && echo "    nft filter: ok" || echo "    WARN: nft filter failed"
+  nft -f "$NFT_DNS" && echo "    nft dns: ok" || echo "    WARN: nft dns failed"
 fi
 
 echo "==> network apply done"
