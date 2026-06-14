@@ -7,5 +7,5 @@ API="${GFC_API_URL:-http://127.0.0.1/api/v1}"
 echo "==> reload dataplane"
 curl -fsS -X POST "${API}/dataplane/reload"
 echo
-systemctl restart gfc-mosdns gfc-sing-box
-systemctl is-active gfc-mosdns gfc-sing-box gfc-agent
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+bash "$SCRIPT_DIR/start-services.sh"
