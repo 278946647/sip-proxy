@@ -20,6 +20,11 @@ apt-get update -qq
 apt-get install -y -qq curl rsync nftables iproute2 dnsmasq netplan.io \
   git ca-certificates unzip xz-utils openssh-client autossh
 
+# shellcheck source=lib-mosdns-nft.sh
+source "$SCRIPT_DIR/lib-mosdns-nft.sh"
+ensure_mosdns_user
+echo "    system user ${GFC_MOSDNS_USER} uid=${GFC_MOSDNS_UID}"
+
 mkdir -p "$GFC_ROOT" /etc/gfc-client /var/log/gfc-client /var/lib/gfc-client/state \
   /var/lib/gfc-client/rules /var/lib/gfc-client/dns-lists /var/lib/gfc-client/backups \
   /etc/gfc-client/mosdns /etc/gfc-client/policy
@@ -146,6 +151,8 @@ Before=gfc-sing-box.service
 
 [Service]
 Type=simple
+User=mosdns
+Group=mosdns
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 WorkingDirectory=/etc/gfc-client/mosdns/easymosdns
@@ -236,6 +243,8 @@ timeout 30 systemctl start gfc-network.service || echo "WARN: gfc-network unit s
 
 echo "==> Bootstrap dataplane (idle)"
 bash "$GFC_ROOT/deploy/bootstrap-idle.sh"
+
+fix_mosdns_tree_perms /etc/gfc-client
 
 echo "==> Start services (ordered)"
 bash "$GFC_ROOT/deploy/start-services.sh" || echo "WARN: some services failed to start"

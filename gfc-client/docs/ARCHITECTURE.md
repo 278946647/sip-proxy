@@ -624,14 +624,18 @@ table inet gfc_dns_hijack {
 **原因**: OUTPUT 不经过 PREROUTING；Ubuntu 本机、`apt`、`curl`、Docker 默认走 OUTPUT。
 
 ```
-  chain output {
-    type nat hook output priority dstnat; policy accept;
-    # 排除 MosDNS 自身
-    skuid != <mosdns_uid> udp dport 53 redirect to :53
-    skuid != <mosdns_uid> tcp dport 53 redirect to :53
-    # 或：daddr != 127.0.0.1 且 dport 53 → redirect
+  chain output_dns {
+    type nat hook output priority -100; policy accept;
+    meta skuid != 65353 ip daddr != 127.0.0.1 udp dport 53 redirect to :53
+    meta skuid != 65353 ip daddr != 127.0.0.1 tcp dport 53 redirect to :53
   }
 ```
+
+**说明**:
+
+- MosDNS 进程（固定系统用户 `mosdns`，**UID 65353**）发出的 :53 查询不劫持，国内上游直连；国际解析走 DoH:443，由 sing-box TUN 代理，不经 :53 劫持。
+- 安装脚本 `useradd -r -u 65353` 保证换机/重装后 nft 规则常量不变，无需运行时查 UID。
+- 国际 DNS 不经 OUTPUT :53 规则，无需在 nft 层区分国内/国际。
 
 **配合**: `/etc/resolv.conf` 固定 `nameserver 127.0.0.1`，双保险。
 

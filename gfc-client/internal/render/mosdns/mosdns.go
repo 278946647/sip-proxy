@@ -118,6 +118,7 @@ func (r *Renderer) Render() error {
 	text = strings.ReplaceAll(text, "./hosts.txt", filepath.Join(base, "hosts.txt"))
 	text = listenAddrRe.ReplaceAllString(text, fmt.Sprintf(`addr: "0.0.0.0:%d"`, config.DefaultMosDNS))
 	text = stripUnsupportedUpstreamKeys(text)
+	text = stripFileLog(text)
 	if !strings.Contains(text, "main_sequence") {
 		return fmt.Errorf("render dropped main_sequence (source %s)", cfgPath)
 	}
@@ -125,6 +126,19 @@ func (r *Renderer) Render() error {
 		return err
 	}
 	return os.WriteFile(cfgPath, []byte(text), 0o644)
+}
+
+// stripFileLog drops easymosdns file logging (systemd captures stderr; avoids permission churn).
+func stripFileLog(raw string) string {
+	lines := strings.Split(raw, "\n")
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if strings.TrimSpace(line) == `file: "./mosdns.log"` {
+			continue
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
 }
 
 // stripUnsupportedUpstreamKeys removes upstream fields mosdns-x does not accept.

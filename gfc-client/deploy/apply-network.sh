@@ -217,30 +217,13 @@ Path(nft_boot).write_text(text)
 PY
 echo "    nft filter -> $NFT_BOOT"
 
-cat >"$NFT_DNS" <<EOF
-#!/usr/sbin/nft -f
-table inet gfc_dns_hijack {
-  chain prerouting {
-    type nat hook prerouting priority dstnat; policy accept;
-EOF
-
-if [[ -n "${LAN:-}" ]]; then
-  cat >>"$NFT_DNS" <<EOF
-    iifname "${LAN}" udp dport 53 redirect to :${MOSDNS_PORT}
-    iifname "${LAN}" tcp dport 53 redirect to :${MOSDNS_PORT}
-EOF
-fi
-
-cat >>"$NFT_DNS" <<EOF
-  }
-  chain output_dns {
-    type nat hook output priority -100; policy accept;
-    ip daddr != 127.0.0.1 udp dport 53 redirect to :${MOSDNS_PORT}
-    ip daddr != 127.0.0.1 tcp dport 53 redirect to :${MOSDNS_PORT}
-  }
-}
-EOF
-echo "    nft dns -> $NFT_DNS"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib-mosdns-nft.sh
+source "$SCRIPT_DIR/lib-mosdns-nft.sh"
+LAN_IF="${LAN:-bridge_lan}"
+ensure_mosdns_user
+write_gfc_nft_dns_conf "$LAN_IF" "$MOSDNS_PORT" "$NFT_DNS"
+echo "    nft dns -> $NFT_DNS (exclude uid ${GFC_MOSDNS_UID})"
 
 update_env() {
   local key=$1 val=$2
