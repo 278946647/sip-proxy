@@ -118,6 +118,7 @@ func (r *Renderer) Render() error {
 	text = strings.ReplaceAll(text, "./hosts.txt", filepath.Join(base, "hosts.txt"))
 	text = listenAddrRe.ReplaceAllString(text, fmt.Sprintf(`addr: "0.0.0.0:%d"`, config.DefaultMosDNS))
 	text = stripUnsupportedUpstreamKeys(text)
+	text = patchGatewayDNS(text)
 	if !strings.Contains(text, "main_sequence") {
 		return fmt.Errorf("render dropped main_sequence (source %s)", cfgPath)
 	}
@@ -127,7 +128,33 @@ func (r *Renderer) Render() error {
 	return os.WriteFile(cfgPath, []byte(text), 0o644)
 }
 
-// stripUnsupportedUpstreamKeys removes upstream fields mosdns-x does not accept.
+// patchGatewayDNS tunes easymosdns for on-box gateway: faster fallback, skip slow remote API.
+func patchGatewayDNS(raw string) string {
+	raw = strings.ReplaceAll(raw, "fast_fallback: 2500", "fast_fallback: 800")
+	raw = strings.ReplaceAll(raw, "timeout: 6", "timeout: 4")
+	// Prefer DoH via sing-box proxy over mosdns.apad.pro (often slow / blocked).
+	old := `            - primary:
+                # 默认用分流服务器
+                - forward_easymosdns
+              secondary:
+                # 超时用远程服务器
+                - forward_remote
+              fast_fallback: 800`
+	new := `            - primary:
+                - forward_remote
+              secondary:
+                - forward_local
+              fast_fallback: 800`
+	raw = strings.ReplaceAll(raw, old, new)
+	// Unknown domains: remote DoH first, local DNS as fallback.
+	raw = strings.ReplaceAll(raw, `            - ecs_local
+            - forward_easymosdns`, `            - forward_remote
+            - if: "[response_server_failed]"
+              exec:
+                - ecs_local
+                - forward_local`)
+	return raw
+}
 func stripUnsupportedUpstreamKeys(raw string) string {
 	lines := strings.Split(raw, "\n")
 	out := make([]string, 0, len(lines))

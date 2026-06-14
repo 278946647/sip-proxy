@@ -57,13 +57,12 @@ route = cfg.setdefault("route", {})
 changed = False
 
 if tun and tun.get("auto_redirect"):
-    ex = []
-    if wan:
-        ex.append(wan)
-    if lan:
-        ex.append(lan)
+    ex = [wan] if wan else []
     if ex and tun.get("exclude_interface") != ex:
         tun["exclude_interface"] = ex
+        changed = True
+    elif not ex and "exclude_interface" in tun:
+        del tun["exclude_interface"]
         changed = True
 
 if wan and route.get("default_interface") != wan:

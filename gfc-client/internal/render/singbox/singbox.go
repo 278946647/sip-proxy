@@ -261,17 +261,12 @@ func (r *Renderer) buildInbounds(proxyMode string) []any {
 }
 
 func (r *Renderer) tunExcludeInterfaces(strictRoute bool) []string {
-	var ex []string
+	_ = strictRoute
+	// Only exclude WAN: LAN must stay in auto_redirect path so clients hit split routing.
 	if wan := strings.TrimSpace(r.cfg.WanIface); wan != "" {
-		ex = append(ex, wan)
+		return []string{wan}
 	}
-	// strict_route needs LAN in exclude so return traffic to clients is not dropped.
-	if strictRoute {
-		if lan := strings.TrimSpace(r.cfg.LanIface); lan != "" {
-			ex = append(ex, lan)
-		}
-	}
-	return ex
+	return nil
 }
 
 func (r *Renderer) routeExclude() []string {
