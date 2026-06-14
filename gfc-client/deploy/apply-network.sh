@@ -177,17 +177,18 @@ if [[ "$PROXY_MODE" == "bypass" ]]; then
   ENABLE_MASQ="${GFC_BYPASS_MASQ:-0}"
 fi
 
-python3 - "$NFT_BOOT" "$WAN" "$LAN" "$ENABLE_MASQ" <<'PY'
+python3 - "$NFT_BOOT" "$WAN" "$LAN" "$ENABLE_MASQ" "$PROXY_MODE" <<'PY'
 import sys
 from pathlib import Path
-nft_boot, wan, lan, enable_masq = sys.argv[1:5]
+nft_boot, wan, lan, enable_masq, proxy_mode = sys.argv[1:6]
 masq = ""
-if wan and enable_masq == "1":
+if wan:
     masq = f"""
 table ip gfc_client_nat {{
   chain postrouting {{
     type nat hook postrouting priority srcnat; policy accept;
     oifname "{wan}" masquerade
+    oifname "gfctun" masquerade
   }}
 }}"""
 forward = ""
@@ -196,6 +197,12 @@ if wan and lan:
     forward = f"""
     iifname "{lan}" oifname "{wan}" accept
     iifname "{wan}" oifname "{lan}" ct state established,related accept"""
+    if proxy_mode in ("gateway", "transparent"):
+        forward += f"""
+    iifname "{lan}" oifname "gfctun" accept
+    iifname "gfctun" oifname "{lan}" ct state established,related accept
+    iifname "gfctun" oifname "{wan}" accept
+    iifname "{wan}" oifname "gfctun" ct state established,related accept"""
     input_rules += f"""
     iifname "{lan}" tcp dport {{ 22, 80, 81, 443 }} accept
     iifname "{lan}" udp dport {{ 53, 67, 68 }} accept
