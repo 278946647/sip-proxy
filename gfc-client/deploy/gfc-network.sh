@@ -29,7 +29,8 @@ EOF
 
 start() {
   if [[ -f "$STAMP" && "${GFC_FORCE_NETWORK_APPLY:-0}" != "1" ]]; then
-    echo "==> gfc-network already applied ($(cat "$STAMP")), skip"
+    echo "==> gfc-network already applied ($(cat "$STAMP")), lightweight refresh"
+    disable_resolved
     return 0
   fi
   echo "==> gfc-network start"

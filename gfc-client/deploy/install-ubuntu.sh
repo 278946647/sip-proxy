@@ -140,7 +140,7 @@ cat >/etc/systemd/system/gfc-mosdns.service <<'EOF'
 [Unit]
 Description=GFC MosDNS (sole DNS :53)
 After=gfc-network.service
-Requires=gfc-network.service
+Wants=gfc-network.service
 Before=gfc-sing-box.service
 
 [Service]
@@ -162,7 +162,7 @@ cat >/etc/systemd/system/gfc-sing-box.service <<EOF
 [Unit]
 Description=GFC Sing-box TUN (gfctun)
 After=gfc-mosdns.service
-Requires=gfc-mosdns.service
+Wants=gfc-mosdns.service
 Before=gfc-agent.service
 
 [Service]
@@ -227,13 +227,15 @@ install -m 644 "$GFC_ROOT/deploy/gfc-client-logrotate" /etc/logrotate.d/gfc-clie
 echo "==> Network bootstrap"
 chmod +x "$GFC_ROOT/deploy"/*.sh
 bash "$GFC_ROOT/deploy/gfc-network.sh" start || echo "WARN: gfc-network script failed"
-# Unit enabled for boot; avoid second netplan apply via systemctl during install
 systemctl reset-failed gfc-network.service 2>/dev/null || true
+# Mark oneshot active (ExecStart is instant when stamp exists)
+timeout 30 systemctl start gfc-network.service || echo "WARN: gfc-network unit start failed"
 
 echo "==> Bootstrap dataplane (idle)"
-chmod +x "$GFC_ROOT/deploy/bootstrap-idle.sh"
 bash "$GFC_ROOT/deploy/bootstrap-idle.sh"
-systemctl restart gfc-agent gfc-web gfc-mosdns gfc-sing-box || true
+
+echo "==> Start services (ordered)"
+bash "$GFC_ROOT/deploy/start-services.sh" || echo "WARN: some services failed to start"
 
 echo ""
 echo "Install complete."

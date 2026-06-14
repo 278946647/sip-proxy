@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Render idle mosdns + sing-box configs and restart data plane services.
+# Render idle configs only; service start is handled by start-services.sh
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -22,8 +22,8 @@ if [[ -d "$SRC_ROOT/share/easymosdns" ]]; then
   rsync -a "$SRC_ROOT/share/easymosdns/" "$GFC_ROOT/share/easymosdns/"
 fi
 
-echo "    stop data plane..."
-systemctl stop gfc-mosdns gfc-sing-box 2>/dev/null || true
+echo "    stop data plane (for clean render)..."
+systemctl stop gfc-sing-box gfc-mosdns 2>/dev/null || true
 bash "$SCRIPT_DIR/singbox-nft-cleanup.sh" 2>/dev/null || true
 
 echo "==> Bootstrap idle dataplane"
@@ -32,13 +32,4 @@ if ! timeout 120 "$BIN"; then
   echo "ERROR: gfc-bootstrap failed or timed out" >&2
   exit 1
 fi
-
-echo "    restart mosdns (timeout 45s)..."
-timeout 45 systemctl restart gfc-mosdns || echo "    WARN: gfc-mosdns restart failed"
-
-echo "    restart sing-box (timeout 30s)..."
-timeout 30 systemctl restart gfc-sing-box || echo "    WARN: gfc-sing-box restart failed"
-
-echo "    mosdns: $(systemctl is-active gfc-mosdns 2>/dev/null || echo unknown)"
-echo "    sing-box: $(systemctl is-active gfc-sing-box 2>/dev/null || echo unknown)"
-echo "==> Bootstrap idle done"
+echo "==> Bootstrap idle done (configs only; use start-services.sh to start units)"
