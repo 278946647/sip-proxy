@@ -22,10 +22,26 @@ EOF
 chmod 644 /etc/resolv.conf
 echo "    resolv.conf -> 127.0.0.1"
 
-# 4b. Config must listen on :53 (bootstrap should have rendered this)
+# 4b. MosDNS must listen on :53 (not legacy :5335)
 CFG="${GFC_ETC}/mosdns/easymosdns/config.yaml"
-if [[ -f "$CFG" ]] && ! grep -q "0.0.0.0:${MOSDNS_PORT}\"" "$CFG"; then
-  echo "    WARN: mosdns config not on :${MOSDNS_PORT} — run gfc-bootstrap or fix config"
+FIXED=0
+if [[ -f "$CFG" ]]; then
+  if grep -q '0.0.0.0:5335' "$CFG"; then
+    echo "    fix mosdns :5335 -> :${MOSDNS_PORT}"
+    sed -i "s/0.0.0.0:5335/0.0.0.0:${MOSDNS_PORT}/g" "$CFG"
+    FIXED=1
+  fi
+  if ! grep -qE "addr: \"0\\.0\\.0\\.0:${MOSDNS_PORT}\"" "$CFG"; then
+    if command -v gfc-bootstrap >/dev/null; then
+      echo "    render mosdns via gfc-bootstrap..."
+      gfc-bootstrap || true
+      FIXED=1
+    fi
+  fi
+  if [[ "$FIXED" == "1" ]]; then
+    systemctl try-restart gfc-mosdns.service 2>/dev/null || true
+    sleep 1
+  fi
 fi
 
 # 4c. Port conflict check

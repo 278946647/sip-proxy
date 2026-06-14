@@ -18,7 +18,7 @@ import (
 
 const easyConfigURL = "https://raw.githubusercontent.com/pmkol/easymosdns/main/config.yaml"
 
-var listenRe = regexp.MustCompile(`addr:\s*["']0\.0\.0\.0:53["']`)
+var listenAddrRe = regexp.MustCompile(`addr:\s*["']0\.0\.0\.0:\d+["']`)
 
 type Renderer struct {
 	cfg *config.Config
@@ -116,7 +116,7 @@ func (r *Renderer) Render() error {
 	text = strings.ReplaceAll(text, "./ecs_cn_domain.txt", filepath.Join(base, "ecs_cn_domain.txt"))
 	text = strings.ReplaceAll(text, "./ecs_noncn_domain.txt", filepath.Join(base, "ecs_noncn_domain.txt"))
 	text = strings.ReplaceAll(text, "./hosts.txt", filepath.Join(base, "hosts.txt"))
-	text = listenRe.ReplaceAllString(text, fmt.Sprintf(`addr: "0.0.0.0:%d"`, config.DefaultMosDNS))
+	text = listenAddrRe.ReplaceAllString(text, fmt.Sprintf(`addr: "0.0.0.0:%d"`, config.DefaultMosDNS))
 	text = stripUnsupportedUpstreamKeys(text)
 	if !strings.Contains(text, "main_sequence") {
 		return fmt.Errorf("render dropped main_sequence (source %s)", cfgPath)

@@ -36,7 +36,7 @@ check "mosdns config" "test -f /etc/gfc-client/mosdns/easymosdns/config.yaml"
 check "sing-box config" "test -f /etc/gfc-client/sing-box.json"
 check "resolv.conf 127.0.0.1" "grep -q 'nameserver 127.0.0.1' /etc/resolv.conf"
 check "resolved stopped" "! systemctl is-active --quiet systemd-resolved"
-check "mosdns listens :53" "grep -q '0.0.0.0:53' /etc/gfc-client/mosdns/easymosdns/config.yaml"
+check "mosdns listens :53" "grep -qE 'addr: \"0\\.0\\.0\\.0:53\"' /etc/gfc-client/mosdns/easymosdns/config.yaml"
 check "nftables dns hijack" "test -f /etc/gfc-client/nftables-dns.conf"
 
 if [[ -f /etc/gfc-client/activation.b32 ]]; then
