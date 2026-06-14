@@ -240,15 +240,17 @@ plugins:
         - addr: "223.5.5.5"
         - addr: "119.29.29.29"
 
-  # 转发至远程服务器的插件
+  # 转发至远程服务器的插件（DoH；sing-box 路由 1.1.1.1/8.8.8.8:443 走代理）
   - tag: forward_remote
     type: fast_forward
     args:
       upstream:
-        - addr: "tcp://208.67.220.220:5353"
-          enable_pipeline: true
-          #socks5: "127.0.0.1:1080"
-        - addr: "udpme://8.8.8.8"
+        - addr: "https://1.1.1.1/dns-query"
+          dial_addr: "1.1.1.1:443"
+          enable_http3: false
+        - addr: "https://8.8.8.8/dns-query"
+          dial_addr: "8.8.8.8:443"
+          enable_http3: false
 
   # 转发至分流服务器的插件
   - tag: forward_easymosdns

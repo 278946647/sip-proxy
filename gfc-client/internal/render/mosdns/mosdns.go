@@ -31,7 +31,7 @@ func NewRenderer(cfg *config.Config) *Renderer {
 func (r *Renderer) EnsureTree(tryDownload bool) error {
 	base := r.cfg.Paths.EasyMosdnsDir
 	bundle := filepath.Join(r.cfg.Paths.Root, "share", "easymosdns")
-	tmpl := filepath.Join(base, "config.yaml")
+	tmpl := r.cfg.Paths.MosdnsConfig
 
 	if validEasyConfig(tmpl) {
 		return nil
@@ -84,7 +84,7 @@ func (r *Renderer) syncFromBundle(base, bundle string) error {
 	if err := copyBundledTree(bundle, base); err != nil {
 		return err
 	}
-	if !validEasyConfig(filepath.Join(base, "config.yaml")) {
+	if !validEasyConfig(r.cfg.Paths.MosdnsConfig) {
 		return fmt.Errorf("bundled easymosdns config invalid")
 	}
 	return nil
@@ -99,12 +99,15 @@ func validEasyConfig(path string) bool {
 	return strings.Contains(s, "main_sequence") && strings.Contains(s, "data_providers:")
 }
 
+// Render applies only path and listen-port fixes to the easymosdns config.
+// Split rules and upstream lists come from easymosdns itself.
 func (r *Renderer) Render() error {
 	if err := r.EnsureTree(true); err != nil {
 		return err
 	}
 	base := r.cfg.Paths.EasyMosdnsDir
-	raw, err := os.ReadFile(filepath.Join(base, "config.yaml"))
+	cfgPath := r.cfg.Paths.MosdnsConfig
+	raw, err := os.ReadFile(cfgPath)
 	if err != nil {
 		return err
 	}
@@ -114,112 +117,13 @@ func (r *Renderer) Render() error {
 	text = strings.ReplaceAll(text, "./ecs_noncn_domain.txt", filepath.Join(base, "ecs_noncn_domain.txt"))
 	text = strings.ReplaceAll(text, "./hosts.txt", filepath.Join(base, "hosts.txt"))
 	text = listenRe.ReplaceAllString(text, fmt.Sprintf(`addr: "0.0.0.0:%d"`, config.DefaultMosDNS))
-	text = patchIntlDoH(text)
-	text = injectGFCOverlay(text, r.cfg.Paths.DNSListsDir)
 	if !strings.Contains(text, "main_sequence") {
-		return fmt.Errorf("render dropped main_sequence (source %s)", filepath.Join(base, "config.yaml"))
+		return fmt.Errorf("render dropped main_sequence (source %s)", cfgPath)
 	}
-	if err := os.MkdirAll(filepath.Dir(r.cfg.Paths.MosdnsConfig), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(r.cfg.Paths.MosdnsConfig, []byte(text), 0o644)
-}
-
-func patchIntlDoH(raw string) string {
-	if strings.Contains(raw, "https://1.1.1.1/dns-query") {
-		return raw
-	}
-	// EasyMosdns ships tcp/udpme upstreams; replacing them with a broken regex drops main_sequence.
-	if strings.Contains(raw, "udpme://") || strings.Contains(raw, "tcp://208.67") {
-		return raw
-	}
-	block := `
-  - tag: forward_remote
-    type: fast_forward
-    args:
-      upstream:
-        - addr: "https://1.1.1.1/dns-query"
-          dial_addr: "1.1.1.1:443"
-          enable_http3: false
-        - addr: "https://8.8.8.8/dns-query"
-          dial_addr: "8.8.8.8:443"
-          enable_http3: false
-`
-	re := regexp.MustCompile(`(?m)^  - tag: forward_remote\n    type: fast_forward\n    args:\n      upstream:\n(?:        - .*\n|          .*\n)+`)
-	if !re.MatchString(raw) {
-		return raw
-	}
-	out := re.ReplaceAllString(raw, strings.TrimSpace(block)+"\n\n")
-	if !strings.Contains(out, "main_sequence") {
-		return raw
-	}
-	return out
-}
-
-func injectGFCOverlay(raw, listsDir string) string {
-	if strings.Contains(raw, "gfc_block") {
-		return raw
-	}
-	block := filepath.Join(listsDir, "block.txt")
-	china := filepath.Join(listsDir, "china.txt")
-	global := filepath.Join(listsDir, "global.txt")
-	providers := fmt.Sprintf(`
-  - tag: gfc_block
-    file: %s
-    auto_reload: false
-  - tag: gfc_china
-    file: %s
-    auto_reload: false
-  - tag: gfc_global
-    file: %s
-    auto_reload: false
-`, block, china, global)
-	plugins := `
-  - tag: query_is_gfc_block
-    type: query_matcher
-    args:
-      domain:
-        - "provider:gfc_block"
-  - tag: query_is_gfc_china
-    type: query_matcher
-    args:
-      domain:
-        - "provider:gfc_china"
-  - tag: query_is_gfc_global
-    type: query_matcher
-    args:
-      domain:
-        - "provider:gfc_global"
-`
-	seq := `
-        - if: query_is_gfc_block
-          exec:
-            - black_hole
-            - ttl_1h
-            - _return
-        - if: query_is_gfc_china
-          exec:
-            - forward_local
-            - ttl_5m
-            - _return
-        - if: query_is_gfc_global
-          exec:
-            - _prefer_ipv4
-            - forward_remote
-            - ttl_5m
-            - _return
-`
-	if strings.Contains(raw, "data_providers:") {
-		raw = strings.Replace(raw, "data_providers:", "data_providers:"+providers, 1)
-	}
-	if strings.Contains(raw, "plugins:") && !strings.Contains(raw, "query_is_gfc_block") {
-		raw = strings.Replace(raw, "plugins:", "plugins:"+plugins, 1)
-	}
-	if strings.Contains(raw, "  - tag: main_sequence") && !strings.Contains(raw, "query_is_gfc_block") {
-		anchor := "  - tag: main_sequence\n    type: sequence\n    args:\n      exec:"
-		raw = strings.Replace(raw, anchor, anchor+seq, 1)
-	}
-	return raw
+	return os.WriteFile(cfgPath, []byte(text), 0o644)
 }
 
 func CheckConfig(path string) error {
@@ -235,7 +139,6 @@ func CheckConfig(path string) error {
 	if err == nil {
 		return nil
 	}
-	// Foreground start still running when the probe window ends => config loads.
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return nil
 	}

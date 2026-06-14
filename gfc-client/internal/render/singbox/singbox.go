@@ -151,7 +151,7 @@ func (r *Renderer) RenderActive(payload map[string]any, ruleSets []map[string]an
 	}
 
 	inbounds := r.buildInbounds(proxyMode)
-	routeRules := r.dnsRouteRules(address, payload)
+	routeRules := r.dnsRouteRules(address, payload, proxyOutbound)
 	routingMode := r.RoutingMode()
 	if routingMode != "global" {
 		r.appendSplitRules(&routeRules, len(ruleSets) > 0, proxyOutbound)
@@ -260,6 +260,7 @@ func (r *Renderer) buildInbounds(proxyMode string) []any {
 	}
 	if autoRoute {
 		tun["auto_redirect"] = true
+		tun["dns_mode"] = "native"
 		tun["route_address"] = []string{"0.0.0.0/1", "128.0.0.0/1"}
 		tun["route_exclude_address"] = r.routeExclude()
 	}
@@ -271,17 +272,18 @@ func (r *Renderer) routeExclude() []string {
 		"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
 		"127.0.0.0/8", "169.254.0.0/16", "224.0.0.0/4",
 	}
+	ex = append(ex, domesticDNS...)
 	if r.cfg.LanCIDR != "" {
 		ex = append(ex, r.cfg.LanCIDR)
 	}
 	return ex
 }
 
-func (r *Renderer) dnsRouteRules(nodeAddr string, payload map[string]any) []map[string]any {
+func (r *Renderer) dnsRouteRules(nodeAddr string, payload map[string]any, proxyTag string) []map[string]any {
 	rules := []map[string]any{
 		{"ip_cidr": []string{"127.0.0.1/32"}, "port": []int{mosDNSPort}, "outbound": "direct-local"},
 		{"ip_cidr": domesticDNS, "port": []int{53}, "outbound": "direct"},
-		{"ip_cidr": intlDOH, "port": []int{443}, "outbound": "proxy"},
+		{"ip_cidr": intlDOH, "port": []int{443}, "outbound": proxyTag},
 	}
 	if dr := directIPRule(nodeAddr); dr != nil {
 		rules = append(rules, dr)
@@ -293,10 +295,7 @@ func (r *Renderer) dnsRouteRules(nodeAddr string, payload map[string]any) []map[
 			}
 		}
 	}
-	rules = append(rules,
-		map[string]any{"port": []int{53}, "action": "hijack-dns"},
-		map[string]any{"ip_is_private": true, "outbound": "direct"},
-	)
+	rules = append(rules, map[string]any{"ip_is_private": true, "outbound": "direct"})
 	return rules
 }
 

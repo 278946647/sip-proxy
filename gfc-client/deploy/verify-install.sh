@@ -14,7 +14,7 @@ check() {
   fi
 }
 
-if [[ ! -f /etc/gfc-client/sing-box.json || ! -f /etc/gfc-client/mosdns/config.yaml ]]; then
+if [[ ! -f /etc/gfc-client/sing-box.json || ! -f /etc/gfc-client/mosdns/easymosdns/config.yaml ]]; then
   echo "==> idle configs missing, running bootstrap"
   sudo bash "$SCRIPT_DIR/bootstrap-idle.sh" || true
 fi
@@ -31,7 +31,7 @@ check "api active" "systemctl is-active --quiet gfc-client-api"
 check "mosdns active" "systemctl is-active --quiet gfc-mosdns"
 check "sing-box active" "systemctl is-active --quiet gfc-client-sing-box"
 check "rules dir" "test -d /var/lib/gfc-client/rules"
-check "mosdns config" "test -f /etc/gfc-client/mosdns/config.yaml"
+check "mosdns config" "test -f /etc/gfc-client/mosdns/easymosdns/config.yaml"
 check "sing-box config" "test -f /etc/gfc-client/sing-box.json"
 
 if [[ -f /etc/gfc-client/activation.b32 ]]; then

@@ -147,16 +147,15 @@ echo "    netplan -> $NETPLAN_FILE"
 
 if [[ -n "${LAN:-}" ]]; then
   cat >"$DNSMASQ_FILE" <<EOF
-# GFC client LAN DHCP + DNS -> mosdns
+# GFC client LAN DHCP; DNS via nft redirect to mosdns :${MOSDNS_PORT}
 interface=${LAN}
 bind-interfaces
 except-interface=lo
 listen-address=${LAN_ADDRESS}
+port=0
 dhcp-range=${DHCP_START},${DHCP_END},${LAN_NETMASK},12h
 dhcp-option=option:router,${LAN_ADDRESS}
 dhcp-option=option:dns-server,${LAN_ADDRESS}
-server=127.0.0.1#${MOSDNS_PORT}
-no-resolv
 cache-size=1000
 EOF
   echo "    dnsmasq -> $DNSMASQ_FILE"

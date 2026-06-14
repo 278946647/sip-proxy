@@ -154,8 +154,8 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/etc/gfc-client/mosdns
-ExecStart=/usr/local/bin/mosdns start -c /etc/gfc-client/mosdns/config.yaml
+WorkingDirectory=/etc/gfc-client/mosdns/easymosdns
+ExecStart=/usr/local/bin/mosdns start -c /etc/gfc-client/mosdns/easymosdns/config.yaml
 Restart=on-failure
 RestartSec=3
 StandardOutput=append:/var/log/gfc-client/mosdns.log
@@ -175,6 +175,7 @@ Type=simple
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 ExecStart=/usr/local/bin/sing-box run -c /etc/gfc-client/sing-box.json
+ExecStopPost=/bin/bash ${GFC_ROOT}/deploy/singbox-nft-cleanup.sh
 Restart=on-failure
 RestartSec=3
 StandardOutput=append:/var/log/gfc-client/sing-box.log

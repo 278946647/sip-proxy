@@ -83,7 +83,7 @@ func Load() *Config {
 		RulesDir:        filepath.Join(lib, "rules"),
 		DNSListsDir:     filepath.Join(lib, "dns-lists"),
 		SingboxConfig:   filepath.Join(etc, "sing-box.json"),
-		MosdnsConfig:    filepath.Join(etc, "mosdns", "config.yaml"),
+		MosdnsConfig:    filepath.Join(etc, "mosdns", "easymosdns", "config.yaml"),
 		EasyMosdnsDir:   filepath.Join(etc, "mosdns", "easymosdns"),
 		DataplaneMode:   filepath.Join(etc, "dataplane-mode.json"),
 		RoutingModeFile: filepath.Join(etc, "routing-mode.json"),

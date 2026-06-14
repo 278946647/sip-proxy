@@ -23,6 +23,7 @@ if [[ -d "$SRC_ROOT/share/easymosdns" ]]; then
 fi
 
 systemctl stop gfc-mosdns gfc-client-sing-box 2>/dev/null || true
+bash "$SCRIPT_DIR/singbox-nft-cleanup.sh" 2>/dev/null || true
 
 echo "==> Bootstrap idle dataplane"
 "$BIN"
