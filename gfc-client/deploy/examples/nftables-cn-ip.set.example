@@ -1,0 +1,3 @@
+# nft elements include format: comma-separated CIDRs (no braces, no one-per-line bare strings)
+# Used by: elements = { include "/etc/gfc-client/nftables-cn-ip.set" }
+1.0.1.0/24, 1.0.2.0/23, 1.0.8.0/21

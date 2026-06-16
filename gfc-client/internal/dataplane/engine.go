@@ -22,6 +22,14 @@ func (e *Engine) Rollback() (bool, string) {
 	return e.Orchestrator.Rollback()
 }
 
+func (e *Engine) ReapplyLocal(restart bool) (bool, string) {
+	return e.Orchestrator.ReapplyLocal(restart)
+}
+
+func (e *Engine) BootstrapIdle() (bool, string) {
+	return e.Orchestrator.BootstrapIdle()
+}
+
 func ServiceStatus() map[string]any {
 	return orchestrator.ServiceStatus()
 }

@@ -29,6 +29,7 @@ const (
 	ServiceWeb     = "gfc-web.service"
 	ServiceMosDNS  = "gfc-mosdns.service"
 	ServiceSingbox = "gfc-sing-box.service"
+	ServiceRouting = "gfc-routing.service"
 	ServiceDnsmasq = "dnsmasq.service"
 )
 

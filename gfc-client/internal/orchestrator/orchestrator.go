@@ -193,6 +193,7 @@ func (o *Orchestrator) RestartServices() []string {
 	return []string{
 		o.restartUnit(config.ServiceMosDNS),
 		o.restartUnit(config.ServiceSingbox),
+		o.restartUnit(config.ServiceRouting),
 	}
 }
 
@@ -200,6 +201,7 @@ func (o *Orchestrator) RestartUnit(name string) (bool, string) {
 	units := map[string]string{
 		"agent":    config.ServiceAgent,
 		"sing-box": config.ServiceSingbox,
+		"routing":  config.ServiceRouting,
 		"mosdns":   config.ServiceMosDNS,
 		"api":      config.ServiceWeb,
 		"web":      config.ServiceWeb,
@@ -250,6 +252,7 @@ func ServiceStatus() map[string]any {
 	units := map[string]string{
 		"agent":    config.ServiceAgent,
 		"sing-box": config.ServiceSingbox,
+		"routing":  config.ServiceRouting,
 		"mosdns":   config.ServiceMosDNS,
 		"web":      config.ServiceWeb,
 		"network":  config.ServiceNetwork,

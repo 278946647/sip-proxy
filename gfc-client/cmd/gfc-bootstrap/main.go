@@ -21,7 +21,18 @@ func main() {
 	}
 	defer st.Close()
 
-	ok, msg := dataplane.New(cfg).BootstrapIdle()
+	engine := dataplane.New(cfg)
+	if len(os.Args) > 1 && os.Args[1] == "--reapply" {
+		ok, msg := engine.ReapplyLocal(true)
+		if !ok {
+			fmt.Fprintf(os.Stderr, "reapply failed: %s\n", msg)
+			os.Exit(1)
+		}
+		fmt.Println(msg)
+		return
+	}
+
+	ok, msg := engine.BootstrapIdle()
 	if !ok {
 		fmt.Fprintf(os.Stderr, "bootstrap failed: %s\n", msg)
 		os.Exit(1)

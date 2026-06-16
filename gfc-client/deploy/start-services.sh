@@ -6,7 +6,7 @@ GFC_ROOT="${GFC_ROOT:-/opt/gfc-client}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 reset_units() {
-  for u in gfc-network gfc-mosdns gfc-sing-box gfc-agent gfc-web; do
+  for u in gfc-network gfc-mosdns gfc-sing-box gfc-routing gfc-agent gfc-web; do
     systemctl stop "${u}.service" 2>/dev/null || true
     systemctl reset-failed "${u}.service" 2>/dev/null || true
   done
@@ -43,9 +43,10 @@ echo "    layer 4: dns"
 bash "$SCRIPT_DIR/ensure-dns.sh" || echo "    WARN: ensure-dns had issues"
 start_one gfc-mosdns.service 45 || true
 
-# Layer 5: traffic plane
-echo "    layer 5: sing-box"
+# Layer 5: sing-box (outbound engine) + kernel policy routing
+echo "    layer 5: sing-box + routing"
 start_one gfc-sing-box.service 30 || true
+start_one gfc-routing.service 45 || true
 
 # Layer 6: management plane
 echo "    layer 6: agent + web"
@@ -53,4 +54,4 @@ start_one gfc-agent.service 30 || true
 start_one gfc-web.service 30 || true
 
 echo "==> start-services done"
-systemctl is-active gfc-network gfc-mosdns gfc-sing-box gfc-agent gfc-web 2>/dev/null || true
+systemctl is-active gfc-network gfc-mosdns gfc-sing-box gfc-routing gfc-agent gfc-web 2>/dev/null || true

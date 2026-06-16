@@ -1,0 +1,14 @@
+#!/usr/sbin/nft -f
+# Scheme B — main table (CN set filled by nftables-cn-ip-load.nft)
+table inet gfc_client_mangle {
+  set cn_ip {
+    type ipv4_addr
+    flags interval
+  }
+  set bypass_ip {
+    type ipv4_addr
+    flags interval
+    elements = { 103.78.41.15/32 }
+  }
+  chain classify { ... }
+}

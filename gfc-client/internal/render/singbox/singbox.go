@@ -7,7 +7,9 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/278946647/sip-proxy/gfc-client/internal/config"
@@ -49,6 +51,14 @@ func (r *Renderer) RoutingMode() string {
 		}
 	}
 	return "split"
+}
+
+func (r *Renderer) RoutingScheme() string {
+	scheme := strings.ToLower(strings.TrimSpace(os.Getenv("GFC_ROUTING_SCHEME")))
+	if scheme == "" {
+		return "kernel-split"
+	}
+	return scheme
 }
 
 func (r *Renderer) SelectedOutbound() string {
@@ -101,11 +111,12 @@ func (r *Renderer) RenderActive(payload map[string]any, ruleSets []map[string]an
 		proxyMode = r.cfg.ProxyMode
 	}
 
-	directLocal := map[string]any{"type": "direct", "tag": "direct-local"}
-	direct := map[string]any{"type": "direct", "tag": "direct"}
-	if wan := r.cfg.ResolvedWanIface(); wan != "" {
-		direct["bind_interface"] = wan
+	wan := r.resolveWanIface()
+	if wan == "" {
+		return nil, fmt.Errorf("WAN interface unknown — set GFC_WAN_IFACE in gfc.env and run apply-network.sh")
 	}
+	directLocal := map[string]any{"type": "direct", "tag": "direct-local"}
+	direct := map[string]any{"type": "direct", "tag": "direct", "bind_interface": wan}
 
 	nodeTag := "proxy"
 	outbounds := []any{directLocal, direct}
@@ -124,14 +135,14 @@ func (r *Renderer) RenderActive(payload map[string]any, ruleSets []map[string]an
 			if i == 0 {
 				tag = nodeTag
 			}
-			ob := buildVLESSOutbound(nm, tag)
+			ob := buildVLESSOutbound(nm, tag, wan)
 			if ob != nil {
 				outbounds = append(outbounds, ob)
 				nodeTags = append(nodeTags, tag)
 			}
 		}
 	} else {
-		outbounds = append(outbounds, buildVLESSFromPayload(address, port, vless, nodeTag))
+		outbounds = append(outbounds, buildVLESSFromPayload(address, port, vless, nodeTag, wan))
 	}
 
 	if len(nodeTags) > 1 {
@@ -146,23 +157,43 @@ func (r *Renderer) RenderActive(payload map[string]any, ruleSets []map[string]an
 	}
 
 	inbounds := r.buildInbounds(proxyMode)
-	routeRules := r.dnsRouteRules(address, payload, proxyOutbound)
+	scheme := r.RoutingScheme()
 	routingMode := r.RoutingMode()
-	if routingMode != "global" {
-		r.appendSplitRules(&routeRules, len(ruleSets) > 0, proxyOutbound)
+
+	var routeRules []map[string]any
+	var activeRuleSets []map[string]any
+	if scheme == "kernel-split" {
+		// CN/intl split is done in kernel nft (cn_ip + fwmark). TUN traffic → VLESS only.
+		// Relay node must use direct+WAN bind (not loop back through TUN/VLESS).
+		routeRules = []map[string]any{}
+		if dr := directIPRule(address); dr != nil {
+			routeRules = append(routeRules, dr)
+		}
+		if servers, ok := payload["controlPlaneServers"].([]any); ok {
+			for _, s := range servers {
+				if dr := directIPRule(fmt.Sprint(s)); dr != nil {
+					routeRules = append(routeRules, dr)
+				}
+			}
+		}
+		routeRules = append(routeRules, map[string]any{"outbound": proxyOutbound})
+	} else {
+		routeRules = r.dnsRouteRules(address, payload, proxyOutbound)
+		if routingMode != "global" {
+			activeRuleSets = ruleSets
+			r.appendSplitRules(&routeRules, len(ruleSets) > 0, proxyOutbound)
+		}
+		routeRules = append(routeRules, map[string]any{"outbound": proxyOutbound})
 	}
-	routeRules = append(routeRules, map[string]any{"outbound": proxyOutbound})
 
 	route := map[string]any{
-		"auto_detect_interface": true,
+		"auto_detect_interface": false,
+		"default_interface":     wan,
 		"final":                 proxyOutbound,
 		"rules":                 routeRules,
 	}
-	if wan := r.cfg.ResolvedWanIface(); wan != "" {
-		route["default_interface"] = wan
-	}
-	if len(ruleSets) > 0 {
-		route["rule_set"] = ruleSets
+	if len(activeRuleSets) > 0 {
+		route["rule_set"] = activeRuleSets
 	}
 
 	logBlock := map[string]any{"level": r.LogLevel()}
@@ -185,7 +216,47 @@ func (r *Renderer) RenderActive(payload map[string]any, ruleSets []map[string]an
 	}, nil
 }
 
-func buildVLESSFromPayload(address string, port int, vless map[string]any, tag string) map[string]any {
+func (r *Renderer) resolveWanIface() string {
+	if w := strings.TrimSpace(r.cfg.ResolvedWanIface()); w != "" {
+		return w
+	}
+	return detectDefaultInterface()
+}
+
+func detectDefaultInterface() string {
+	if dev := ifaceFromRouteOutput(runIPRoute("ip", "-4", "route", "show", "default")); dev != "" {
+		return dev
+	}
+	for _, dst := range []string{"1.1.1.1", "8.8.8.8"} {
+		if dev := ifaceFromRouteOutput(runIPRoute("ip", "-4", "route", "get", dst)); dev != "" {
+			return dev
+		}
+	}
+	return ""
+}
+
+func runIPRoute(args ...string) string {
+	out, err := exec.Command(args[0], args[1:]...).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func ifaceFromRouteOutput(line string) string {
+	if line == "" {
+		return ""
+	}
+	fields := strings.Fields(line)
+	for i := 0; i < len(fields)-1; i++ {
+		if fields[i] == "dev" {
+			return fields[i+1]
+		}
+	}
+	return ""
+}
+
+func buildVLESSFromPayload(address string, port int, vless map[string]any, tag, wan string) map[string]any {
 	flow, _ := vless["flow"].(string)
 	if flow == "" {
 		flow = "xtls-rprx-vision"
@@ -196,13 +267,14 @@ func buildVLESSFromPayload(address string, port int, vless map[string]any, tag s
 	}
 	pk, _ := vless["publicKey"].(string)
 	sid, _ := vless["shortId"].(string)
-	return map[string]any{
-		"type":        "vless",
-		"tag":         tag,
-		"server":      address,
-		"server_port": port,
-		"uuid":        vless["uuid"],
-		"flow":        flow,
+	ob := map[string]any{
+		"type":            "vless",
+		"tag":             tag,
+		"server":          address,
+		"server_port":     port,
+		"uuid":            vless["uuid"],
+		"flow":            flow,
+		"bind_interface":  wan,
 		"tls": map[string]any{
 			"enabled":     true,
 			"server_name": sni,
@@ -214,9 +286,10 @@ func buildVLESSFromPayload(address string, port int, vless map[string]any, tag s
 			},
 		},
 	}
+	return ob
 }
 
-func buildVLESSOutbound(nm map[string]any, tag string) map[string]any {
+func buildVLESSOutbound(nm map[string]any, tag, wan string) map[string]any {
 	vless, _ := nm["vless"].(map[string]any)
 	if vless == nil {
 		vless = nm
@@ -229,43 +302,25 @@ func buildVLESSOutbound(nm map[string]any, tag string) map[string]any {
 	if addr == "" {
 		return nil
 	}
-	return buildVLESSFromPayload(addr, port, vless, tag)
+	return buildVLESSFromPayload(addr, port, vless, tag, wan)
 }
 
 func (r *Renderer) buildInbounds(proxyMode string) []any {
-	mode := strings.ToLower(strings.TrimSpace(proxyMode))
-	autoRoute := mode == "gateway" || mode == "transparent"
-	strictRoute := mode == "gateway" || mode == "transparent"
-
+	_ = strings.ToLower(strings.TrimSpace(proxyMode))
+	// Kernel policy routing (nft fwmark + ip rule) feeds gfctun.
+	// sing-box is outbound-only: no auto_route / auto_redirect / strict_route.
+	// gvisor avoids system-stack routing loops with kernel fwmark → gfctun policy.
 	tun := map[string]any{
 		"type":           "tun",
 		"tag":            "tun-in",
 		"interface_name": config.TunInterface,
 		"address":        []string{"172.19.0.1/30"},
 		"mtu":            1500,
-		"auto_route":     autoRoute,
-		"strict_route":   strictRoute,
-		"stack":          "system",
+		"auto_route":     false,
+		"strict_route":   false,
+		"stack":          "gvisor",
 	}
-	if autoRoute {
-		tun["auto_redirect"] = true
-		tun["route_address"] = []string{"0.0.0.0/1", "128.0.0.0/1"}
-		tun["route_exclude_address"] = r.routeExclude()
-	}
-	// bypass: TUN up without auto_route; traffic enters via gateway/FORWARD path
 	return []any{tun}
-}
-
-func (r *Renderer) routeExclude() []string {
-	ex := []string{
-		"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
-		"127.0.0.0/8", "169.254.0.0/16", "224.0.0.0/4",
-	}
-	ex = append(ex, domesticDNS...)
-	if r.cfg.LanCIDR != "" {
-		ex = append(ex, r.cfg.LanCIDR)
-	}
-	return ex
 }
 
 func (r *Renderer) dnsRouteRules(nodeAddr string, payload map[string]any, proxyTag string) []map[string]any {
@@ -328,7 +383,28 @@ func WriteConfig(path string, data map[string]any) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, raw, 0o644)
+	if err := os.WriteFile(path, raw, 0o640); err != nil {
+		return err
+	}
+	fixSingboxConfigOwner(path)
+	return nil
+}
+
+func fixSingboxConfigOwner(path string) {
+	name := strings.TrimSpace(os.Getenv("GFC_SINGBOX_USER"))
+	if name == "" {
+		name = "singbox"
+	}
+	grp, err := user.LookupGroup(name)
+	if err != nil {
+		return
+	}
+	gid, err := strconv.Atoi(grp.Gid)
+	if err != nil {
+		return
+	}
+	_ = os.Chown(path, 0, gid)
+	_ = os.Chmod(path, 0o640)
 }
 
 func CheckConfig(path string) error {

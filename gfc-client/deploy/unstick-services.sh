@@ -3,7 +3,7 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 echo "==> unstick gfc services"
-for u in gfc-network gfc-mosdns gfc-sing-box gfc-agent gfc-web dnsmasq; do
+for u in gfc-network gfc-mosdns gfc-sing-box gfc-routing gfc-agent gfc-web dnsmasq; do
   systemctl stop "${u}.service" 2>/dev/null || true
   systemctl reset-failed "${u}.service" 2>/dev/null || true
 done

@@ -22,8 +22,12 @@ apt-get install -y -qq curl rsync nftables iproute2 dnsmasq netplan.io \
 
 # shellcheck source=lib-mosdns-nft.sh
 source "$SCRIPT_DIR/lib-mosdns-nft.sh"
+# shellcheck source=lib-singbox-user.sh
+source "$SCRIPT_DIR/lib-singbox-user.sh"
 migrate_mosdns_user || ensure_mosdns_user
 echo "    system user ${GFC_MOSDNS_USER} uid=$(id -u "$GFC_MOSDNS_USER" 2>/dev/null || echo ?)"
+migrate_singbox_user || ensure_singbox_user
+echo "    system user ${GFC_SINGBOX_USER} uid=$(id -u "$GFC_SINGBOX_USER" 2>/dev/null || echo ?)"
 
 mkdir -p "$GFC_ROOT" /etc/gfc-client /var/log/gfc-client /var/lib/gfc-client/state \
   /var/lib/gfc-client/rules /var/lib/gfc-client/dns-lists /var/lib/gfc-client/backups \
@@ -32,6 +36,8 @@ mkdir -p "$GFC_ROOT" /etc/gfc-client /var/log/gfc-client /var/lib/gfc-client/sta
 echo "==> Sysctl BBR"
 cat >/etc/sysctl.d/99-gfc-client.conf <<'EOF'
 net.ipv4.ip_forward = 1
+net.ipv4.conf.all.rp_filter = 2
+net.ipv4.conf.default.rp_filter = 2
 net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = bbr
 EOF
@@ -124,6 +130,12 @@ gfc_env_set() {
 }
 gfc_env_set GFC_CLIENT_WEB_PORT 8080
 gfc_env_set GFC_CLIENT_FLASH_PORT 80
+gfc_env_set GFC_POLICY_MARK 0x2023
+gfc_env_set GFC_POLICY_TABLE 2022
+gfc_env_set GFC_TUN_INTERFACE gfctun
+gfc_env_set GFC_MOSDNS_UID 65353
+gfc_env_set GFC_SINGBOX_UID 65354
+gfc_env_set GFC_ROUTING_SCHEME kernel-split
 
 echo "==> systemd-resolved"
 if systemctl is-enabled systemd-resolved &>/dev/null; then
@@ -131,7 +143,6 @@ if systemctl is-enabled systemd-resolved &>/dev/null; then
 fi
 
 echo "==> systemd units"
-# retire legacy unit names
 for legacy in gfc-client-agent gfc-client-api gfc-client-sing-box; do
   systemctl disable --now "$legacy" 2>/dev/null || true
   rm -f "/etc/systemd/system/${legacy}.service"
@@ -179,33 +190,13 @@ StandardError=append:/var/log/gfc-client/mosdns.log
 WantedBy=multi-user.target
 EOF
 
-cat >/etc/systemd/system/gfc-sing-box.service <<EOF
-[Unit]
-Description=GFC Sing-box TUN (gfctun)
-After=gfc-mosdns.service
-Wants=gfc-mosdns.service
-Before=gfc-agent.service
-
-[Service]
-Type=simple
-AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
-ExecStart=/usr/local/bin/sing-box run -c /etc/gfc-client/sing-box.json
-ExecStopPost=/bin/bash ${GFC_ROOT}/deploy/singbox-nft-cleanup.sh
-Restart=on-failure
-RestartSec=3
-StandardOutput=append:/var/log/gfc-client/sing-box.log
-StandardError=append:/var/log/gfc-client/sing-box.log
-
-[Install]
-WantedBy=multi-user.target
-EOF
+bash "$SCRIPT_DIR/install-gfc-units.sh"
 
 cat >/etc/systemd/system/gfc-agent.service <<EOF
 [Unit]
 Description=GFC Client Agent
-After=gfc-sing-box.service network-online.target
-Wants=network-online.target
+After=gfc-routing.service gfc-sing-box.service network-online.target
+Wants=gfc-routing.service network-online.target
 
 [Service]
 Type=simple
@@ -240,7 +231,7 @@ WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemctl enable gfc-network gfc-mosdns gfc-sing-box gfc-agent gfc-web
+systemctl enable gfc-network gfc-mosdns gfc-sing-box gfc-routing gfc-agent gfc-web
 
 systemctl enable dnsmasq 2>/dev/null || true
 

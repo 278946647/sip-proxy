@@ -10,6 +10,8 @@ DNSMASQ_FILE="/etc/dnsmasq.d/gfc-client.conf"
 DNSMASQ_ETC="${GFC_ETC}/dnsmasq.conf"
 NFT_BOOT="${GFC_ETC}/nftables.conf"
 NFT_DNS="${GFC_ETC}/nftables-dns.conf"
+NFT_POLICY="${GFC_ETC}/nftables-policy.conf"
+TUN_IFACE="${GFC_TUN_INTERFACE:-gfctun}"
 MOSDNS_PORT="${GFC_MOSDNS_PORT:-53}"
 PROXY_MODE="${GFC_PROXY_MODE:-gateway}"
 
@@ -23,6 +25,9 @@ BRIDGE_NAME="${GFC_BRIDGE_NAME:-bridge_lan}"
 
 [[ -f "$GFC_ENV" ]] && set -a && source "$GFC_ENV" && set +a
 PROXY_MODE="${GFC_PROXY_MODE:-$PROXY_MODE}"
+GFC_POLICY_MARK="${GFC_POLICY_MARK:-0x2023}"
+GFC_POLICY_TABLE="${GFC_POLICY_TABLE:-2022}"
+export GFC_POLICY_MARK GFC_POLICY_TABLE
 
 mkdir -p "$GFC_ETC"
 
@@ -92,12 +97,22 @@ PY
 echo "==> network wan=$WAN lan=${LAN:-none} bridge=$USE_BRIDGE proxy=$PROXY_MODE ifaces=$IFACES"
 
 if [[ "$USE_BRIDGE" == "1" ]]; then
-  python3 - "$NETPLAN_FILE" "$WAN" "$LAN" "$BRIDGE_MEMBERS" "$LAN_ADDRESS" "$LAN_PREFIX" <<'PY'
-import sys
+  python3 - "$NETPLAN_FILE" "$WAN" "$LAN" "$BRIDGE_MEMBERS" "$LAN_ADDRESS" "$LAN_PREFIX" "$PROXY_MODE" <<'PY'
+import os, sys
 from pathlib import Path
-netplan, wan, bridge, members, addr, prefix = sys.argv[1:7]
+netplan, wan, bridge, members, addr, prefix, proxy = sys.argv[1:8]
 ms = [m for m in members.split() if m and m != wan]
-eth = [f"    {wan}:\n      dhcp4: true\n      optional: true"]
+policy = ""
+if proxy in ("gateway", "transparent"):
+    mark = int(os.environ.get("GFC_POLICY_MARK", "0x2023"), 0)
+    table = int(os.environ.get("GFC_POLICY_TABLE", "2022"))
+    policy = f"""
+      routing-policy:
+        - from: 0.0.0.0/0
+          mark: {mark}
+          table: {table}
+          priority: 100"""
+eth = [f"    {wan}:\n      dhcp4: true\n      optional: true{policy}"]
 for m in ms:
     eth.append(f"    {m}:\n      dhcp4: false\n      optional: true")
 member_yaml = ", ".join(ms)
@@ -121,10 +136,20 @@ Path(netplan).write_text(text)
 Path(netplan).chmod(0o600)
 PY
 else
-  python3 - "$NETPLAN_FILE" "$WAN" "$LAN" "$LAN_ADDRESS" "$LAN_PREFIX" <<'PY'
-import sys
+  python3 - "$NETPLAN_FILE" "$WAN" "$LAN" "$LAN_ADDRESS" "$LAN_PREFIX" "$PROXY_MODE" <<'PY'
+import os, sys
 from pathlib import Path
-netplan, wan, lan, addr, prefix = sys.argv[1:6]
+netplan, wan, lan, addr, prefix, proxy = sys.argv[1:7]
+policy = ""
+if proxy in ("gateway", "transparent"):
+    mark = int(os.environ.get("GFC_POLICY_MARK", "0x2023"), 0)
+    table = int(os.environ.get("GFC_POLICY_TABLE", "2022"))
+    policy = f"""
+      routing-policy:
+        - from: 0.0.0.0/0
+          mark: {mark}
+          table: {table}
+          priority: 100"""
 lan_block = ""
 if lan:
     lan_block = f"""
@@ -140,7 +165,7 @@ network:
   ethernets:
     {wan}:
       dhcp4: true
-      optional: true{lan_block}
+      optional: true{policy}{lan_block}
 """
 Path(netplan).write_text(text)
 Path(netplan).chmod(0o600)
@@ -177,10 +202,10 @@ if [[ "$PROXY_MODE" == "bypass" ]]; then
   ENABLE_MASQ="${GFC_BYPASS_MASQ:-0}"
 fi
 
-python3 - "$NFT_BOOT" "$WAN" "$LAN" "$ENABLE_MASQ" <<'PY'
+python3 - "$NFT_BOOT" "$WAN" "$LAN" "$ENABLE_MASQ" "$TUN_IFACE" <<'PY'
 import sys
 from pathlib import Path
-nft_boot, wan, lan, enable_masq = sys.argv[1:5]
+nft_boot, wan, lan, enable_masq, tun = sys.argv[1:6]
 masq = ""
 if wan and enable_masq == "1":
     masq = f"""
@@ -194,21 +219,23 @@ forward = ""
 input_rules = "    ct state established,related accept\n    iif lo accept"
 if wan and lan:
     forward = f"""
+    iifname "{lan}" oifname "{tun}" accept
+    iifname "{tun}" oifname "{lan}" ct state established,related accept
     iifname "{lan}" oifname "{wan}" accept
     iifname "{wan}" oifname "{lan}" ct state established,related accept"""
     input_rules += f"""
-    iifname "{lan}" tcp dport {{ 22, 80, 443, 8080 }} accept
+    iifname "{lan}" tcp dport {{ 22, 80, 212, 443, 8080 }} accept
     iifname "{lan}" udp dport {{ 53, 67, 68 }} accept
     iifname "{lan}" tcp dport 53 accept
     iifname "{lan}" icmp type echo-request accept"""
 text = f"""#!/usr/sbin/nft -f
 table inet gfc_client_filter {{
   chain input {{
-    type filter hook input priority filter; policy drop;
+    type filter hook input priority -200; policy drop;
 {input_rules}
   }}
   chain forward {{
-    type filter hook forward priority filter; policy drop;{forward}
+    type filter hook forward priority -200; policy drop;{forward}
   }}
 }}
 {masq}
@@ -220,10 +247,27 @@ echo "    nft filter -> $NFT_BOOT"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib-mosdns-nft.sh
 source "$SCRIPT_DIR/lib-mosdns-nft.sh"
+# shellcheck source=lib-singbox-user.sh
+source "$SCRIPT_DIR/lib-singbox-user.sh"
+# shellcheck source=lib-policy-routing.sh
+source "$SCRIPT_DIR/lib-policy-routing.sh"
 LAN_IF="${LAN:-bridge_lan}"
 migrate_mosdns_user || ensure_mosdns_user
+migrate_singbox_user || ensure_singbox_user
+fix_singbox_tree_perms "$GFC_ETC"
 write_gfc_nft_dns_conf "$LAN_IF" "$MOSDNS_PORT" "$NFT_DNS"
 echo "    nft dns -> $NFT_DNS (exclude uid ${GFC_MOSDNS_UID})"
+
+LAN_CIDR="${LAN_NETWORK}/${LAN_PREFIX}"
+if gfc_policy_mode_enabled && [[ -n "${LAN:-}" ]]; then
+  POLICY_BYPASS_IPS="$(resolve_policy_bypass_ips)"
+  write_gfc_nft_policy_conf "$LAN_IF" "$LAN_CIDR" "$NFT_POLICY" "$POLICY_BYPASS_IPS"
+  echo "    nft policy -> $NFT_POLICY (mark ${GFC_POLICY_MARK}, sing-box uid ${GFC_SINGBOX_UID:-65354})"
+  [[ -n "$POLICY_BYPASS_IPS" ]] && echo "    nft bypass ips: ${POLICY_BYPASS_IPS}"
+else
+  rm -f "$NFT_POLICY"
+  echo "    nft policy: skipped (proxy_mode=$PROXY_MODE)"
+fi
 
 update_env() {
   local key=$1 val=$2
@@ -238,7 +282,13 @@ update_env() {
 }
 update_env GFC_WAN_IFACE "$WAN"
 update_env GFC_MOSDNS_PORT "$MOSDNS_PORT"
+update_env GFC_MOSDNS_UID "${GFC_MOSDNS_UID:-65353}"
+update_env GFC_SINGBOX_UID "${GFC_SINGBOX_UID:-65354}"
+update_env GFC_POLICY_MARK "${GFC_POLICY_MARK}"
+update_env GFC_POLICY_TABLE "${GFC_POLICY_TABLE}"
+update_env GFC_ROUTING_SCHEME "${GFC_ROUTING_SCHEME:-kernel-split}"
 [[ -n "${LAN:-}" ]] && update_env GFC_LAN_IFACE "$LAN"
+[[ -n "${LAN:-}" ]] && update_env GFC_LAN_CIDR "${LAN_NETWORK}/${LAN_PREFIX}"
 [[ "$USE_BRIDGE" == "1" ]] && update_env GFC_BRIDGE_NAME "$LAN"
 
 python3 - "$GFC_ETC/network-roles.json" "$WAN" "$LAN" "$IFACES" "$USE_BRIDGE" "$LAN_ADDRESS" "$LAN_PREFIX" "$LAN_NETWORK" "$DHCP_START" "$DHCP_END" "$PROXY_MODE" <<'PY'
@@ -283,8 +333,24 @@ if command -v nft >/dev/null; then
   nft list table inet gfc_client_filter &>/dev/null && nft delete table inet gfc_client_filter || true
   nft list table inet gfc_dns &>/dev/null && nft delete table inet gfc_dns || true
   nft list table inet gfc_dns_hijack &>/dev/null && nft delete table inet gfc_dns_hijack || true
+  nft list table inet gfc_client_mangle &>/dev/null && nft delete table inet gfc_client_mangle || true
   nft -f "$NFT_BOOT" && echo "    nft filter: ok" || echo "    WARN: nft filter failed"
   nft -f "$NFT_DNS" && echo "    nft dns: ok" || echo "    WARN: nft dns failed"
+  if [[ -f "$NFT_POLICY" ]]; then
+    apply_gfc_nft_policy_conf "$NFT_POLICY" && echo "    nft policy: ok" || echo "    WARN: nft policy failed"
+  else
+    teardown_gfc_nft_policy 2>/dev/null || true
+  fi
+fi
+
+if gfc_policy_mode_enabled; then
+  echo "    policy routing (post-netplan)"
+  ensure_policy_ip_rule || true
+  ensure_policy_table_route || echo "    WARN: gfctun route deferred (sing-box not ready)"
+fi
+
+if [[ -f "${GFC_ETC}/sing-box.json" ]]; then
+  bash "$SCRIPT_DIR/patch-singbox-wan.sh" || echo "    WARN: patch-singbox-wan failed"
 fi
 
 echo "==> network apply done"

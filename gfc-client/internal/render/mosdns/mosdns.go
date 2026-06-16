@@ -178,6 +178,9 @@ func CheckConfig(path string) error {
 		return nil
 	}
 	if s != "" {
+		if strings.Contains(s, "address already in use") || strings.Contains(s, "bind: address already in use") {
+			return nil
+		}
 		return fmt.Errorf("%s", s)
 	}
 	return fmt.Errorf("mosdns start failed (%v)", err)
