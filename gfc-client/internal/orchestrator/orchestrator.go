@@ -81,14 +81,20 @@ func (o *Orchestrator) BootstrapIdle() (bool, string) {
 }
 
 func (o *Orchestrator) ApplyPayload(payload map[string]any, version string, restart bool) (bool, string) {
+	return o.applyPayload(payload, version, restart, true)
+}
+
+func (o *Orchestrator) applyPayload(payload map[string]any, version string, restart, snapshot bool) (bool, string) {
 	node, _ := payload["node"].(map[string]any)
 	addr, _ := node["address"].(string)
 	if strings.TrimSpace(addr) == "" {
 		return o.BootstrapIdle()
 	}
 
-	if err := o.snapshotBefore(version); err != nil {
-		return false, "snapshot: " + err.Error()
+	if snapshot {
+		if err := o.snapshotBefore(version); err != nil {
+			return false, "snapshot: " + err.Error()
+		}
 	}
 
 	var msgs []string
@@ -126,8 +132,9 @@ func (o *Orchestrator) ApplyPayload(payload map[string]any, version string, rest
 		return false, err.Error()
 	}
 	o.writeMode("active", true)
+	msgs = append(msgs, o.postDataplaneRepair()...)
 	if restart {
-		msgs = append(msgs, o.RestartServices()...)
+		msgs = append(msgs, o.restartDataplaneServices()...)
 	}
 	return true, joinMsgs(msgs)
 }
@@ -143,7 +150,22 @@ func (o *Orchestrator) Rollback() (bool, string) {
 		return false, err.Error()
 	}
 	msgs := []string{"restored snapshot " + id}
-	msgs = append(msgs, o.RestartServices()...)
+
+	// Re-render from restored bundle (current templates + WAN patch), not raw JSON only.
+	payload := o.LoadBundle()
+	if payload != nil {
+		if node, _ := payload["node"].(map[string]any); node != nil {
+			if addr, _ := node["address"].(string); strings.TrimSpace(addr) != "" {
+				ok, sub := o.applyPayload(payload, "rollback", true, false)
+				if !ok {
+					return false, joinMsgs(append(msgs, sub))
+				}
+				return true, joinMsgs(append(msgs, sub))
+			}
+		}
+	}
+	msgs = append(msgs, o.postDataplaneRepair()...)
+	msgs = append(msgs, o.restartDataplaneServices()...)
 	return true, joinMsgs(msgs)
 }
 
@@ -173,7 +195,49 @@ func (o *Orchestrator) ReapplyLocal(restart bool) (bool, string) {
 	if strings.TrimSpace(addr) == "" {
 		return o.BootstrapIdle()
 	}
-	return o.ApplyPayload(payload, "local", restart)
+	return o.applyPayload(payload, "local", restart, false)
+}
+
+func (o *Orchestrator) postDataplaneRepair() []string {
+	var msgs []string
+	root := o.cfg.Paths.Root
+	for _, spec := range []struct {
+		label string
+		args  []string
+	}{
+		{"patch-singbox-wan", []string{filepath.Join(root, "deploy", "patch-singbox-wan.sh")}},
+		{"gfc-routing", []string{filepath.Join(root, "deploy", "gfc-routing.sh"), "start"}},
+	} {
+		script := spec.args[0]
+		if _, err := os.Stat(script); err != nil {
+			continue
+		}
+		cmd := exec.Command("/bin/bash", spec.args...)
+		out, err := cmd.CombinedOutput()
+		line := strings.TrimSpace(string(out))
+		if err != nil {
+			msgs = append(msgs, fmt.Sprintf("%s: %s", spec.label, line))
+			continue
+		}
+		if line != "" {
+			msgs = append(msgs, line)
+		} else {
+			msgs = append(msgs, spec.label+": ok")
+		}
+	}
+	return msgs
+}
+
+func (o *Orchestrator) restartDataplaneServices() []string {
+	o.purgeStaleTun()
+	return o.RestartServices()
+}
+
+func (o *Orchestrator) purgeStaleTun() {
+	if _, err := os.Stat("/usr/sbin/ip"); err != nil {
+		return
+	}
+	_ = exec.Command("ip", "link", "delete", config.TunInterface).Run()
 }
 
 func (o *Orchestrator) ReloadDNS() (bool, string) {

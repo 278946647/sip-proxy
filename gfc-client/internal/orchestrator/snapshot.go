@@ -43,7 +43,7 @@ func Save(backupsDir string, id string, files map[string]string) error {
 	return Prune(backupsDir, BackupGenerations)
 }
 
-// Latest returns the most recent snapshot directory name.
+// Latest returns the most recent snapshot directory name (by mtime).
 func Latest(backupsDir string) (string, error) {
 	entries, err := os.ReadDir(backupsDir)
 	if err != nil {
@@ -52,17 +52,22 @@ func Latest(backupsDir string) (string, error) {
 		}
 		return "", err
 	}
-	var names []string
+	var latest string
+	var latestTime time.Time
 	for _, e := range entries {
-		if e.IsDir() {
-			names = append(names, e.Name())
+		if !e.IsDir() {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if latest == "" || info.ModTime().After(latestTime) {
+			latest = e.Name()
+			latestTime = info.ModTime()
 		}
 	}
-	if len(names) == 0 {
-		return "", nil
-	}
-	sort.Strings(names)
-	return names[len(names)-1], nil
+	return latest, nil
 }
 
 // Restore copies files from the latest snapshot back to live paths.
