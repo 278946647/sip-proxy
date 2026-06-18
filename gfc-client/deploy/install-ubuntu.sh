@@ -239,11 +239,11 @@ systemctl enable dnsmasq 2>/dev/null || true
 echo "==> logrotate"
 install -m 644 "$GFC_ROOT/deploy/gfc-client-logrotate" /etc/logrotate.d/gfc-client
 
-echo "==> Network bootstrap"
+echo "==> Network bootstrap (netplan deferred — run finish-network-install.sh after reconnect)"
 chmod +x "$GFC_ROOT/deploy"/*.sh
-bash "$GFC_ROOT/deploy/gfc-network.sh" start || echo "WARN: gfc-network script failed"
+gfc_env_set GFC_SKIP_NETPLAN_APPLY 1
+GFC_SKIP_NETPLAN_APPLY=1 bash "$GFC_ROOT/deploy/gfc-network.sh" start || echo "WARN: gfc-network script failed"
 systemctl reset-failed gfc-network.service 2>/dev/null || true
-# Mark oneshot active (ExecStart is instant when stamp exists)
 timeout 30 systemctl start gfc-network.service || echo "WARN: gfc-network unit start failed"
 
 echo "==> Bootstrap dataplane (idle)"
@@ -266,8 +266,20 @@ FLASH_URL="http://${LAN_IP}"
 [[ "$FLASH_PORT" != "80" ]] && FLASH_URL+=":${FLASH_PORT}"
 
 echo ""
-echo "Install complete."
+echo "Install complete (network apply deferred)."
 echo "  LAN (${LAN_IF}) : ${LAN_IP}"
 echo "  Flash (刷码)    : ${FLASH_URL}"
 echo "  Web admin       : http://${LAN_IP}:${WEB_PORT}"
 echo "  Logs            : /var/log/gfc-client/"
+echo ""
+WAN_IP="$(ip -4 -o addr show dev "${GFC_WAN_IFACE:-ens160}" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1 || true)"
+echo "  *** NEXT STEP (required) ***"
+echo "  netplan was NOT applied during install (avoids SSH drop on ${LAN_IF} member ifaces)."
+if [[ -n "$WAN_IP" ]]; then
+  echo "  1. Reconnect via WAN if possible: ssh -p ${GFC_SSH_PORT:-212} root@${WAN_IP}"
+else
+  echo "  1. Reconnect via same IP (session may drop once during finish script)"
+fi
+echo "  2. sudo bash ${GFC_ROOT}/deploy/finish-network-install.sh"
+echo "  3. sudo bash ${GFC_ROOT}/deploy/flash-line-code.sh --file /path/to/linecode.b32"
+echo "  4. sudo bash ${GFC_ROOT}/deploy/reapply-active.sh"
