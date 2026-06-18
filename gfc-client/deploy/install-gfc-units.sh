@@ -19,6 +19,7 @@ Group=${GFC_SINGBOX_USER}
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 PrivateDevices=no
+ExecCondition=/bin/grep -q '"type": "tun"' /etc/gfc-client/sing-box.json
 # '+' = run as root even though User=singbox (nft/ip/chown need root; gfc.env is 600).
 ExecStartPre=+/bin/bash ${GFC_ROOT}/deploy/singbox-nft-cleanup.sh
 ExecStartPre=+/bin/bash -c 'chown root:${GFC_SINGBOX_USER} /etc/gfc-client/sing-box.json 2>/dev/null; chmod 640 /etc/gfc-client/sing-box.json 2>/dev/null; touch /var/log/gfc-client/sing-box.log; chown ${GFC_SINGBOX_USER}:${GFC_SINGBOX_USER} /var/log/gfc-client/sing-box.log'
@@ -46,6 +47,7 @@ Type=oneshot
 RemainAfterExit=yes
 TimeoutStartSec=60
 EnvironmentFile=/etc/gfc-client/gfc.env
+ExecCondition=/bin/grep -q '"type": "tun"' /etc/gfc-client/sing-box.json
 ExecStartPre=/bin/bash ${GFC_ROOT}/deploy/singbox-nft-cleanup.sh
 ExecStart=/bin/bash ${GFC_ROOT}/deploy/gfc-routing.sh start
 ExecStop=/bin/bash ${GFC_ROOT}/deploy/gfc-routing.sh stop

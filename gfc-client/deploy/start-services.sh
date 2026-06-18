@@ -4,6 +4,13 @@ set -euo pipefail
 
 GFC_ROOT="${GFC_ROOT:-/opt/gfc-client}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+GFC_ENV="${GFC_ENV_FILE:-/etc/gfc-client/gfc.env}"
+[[ -f "$GFC_ENV" ]] && set -a && source "$GFC_ENV" && set +a
+LAN_IFACE="${GFC_LAN_IFACE:-${GFC_BRIDGE_NAME:-bridge_lan}}"
+TUN_IFACE="${GFC_TUN_INTERFACE:-gfctun}"
+
+# shellcheck source=lib-gfc-mode.sh
+source "$SCRIPT_DIR/lib-gfc-mode.sh"
 
 reset_units() {
   for u in gfc-network gfc-mosdns gfc-sing-box gfc-routing gfc-agent gfc-web; do
@@ -25,7 +32,16 @@ start_one() {
   return 1
 }
 
+ensure_idle_configs() {
+  if [[ -f /etc/gfc-client/sing-box.json && -f /etc/gfc-client/mosdns/easymosdns/config.yaml ]]; then
+    return 0
+  fi
+  echo "    idle configs missing — bootstrap..."
+  bash "$SCRIPT_DIR/bootstrap-idle.sh"
+}
+
 echo "==> start-services (ordered)"
+ensure_idle_configs
 reset_units
 
 # Layer 1: network (script does real work; unit marks RemainAfterExit)
@@ -34,19 +50,38 @@ bash "$SCRIPT_DIR/gfc-network.sh" start || echo "    WARN: gfc-network script fa
 start_one gfc-network.service 60 || echo "    WARN: gfc-network unit not active"
 
 # Layer 2: DHCP only (enable done at install; here only start)
-if systemctl list-unit-files dnsmasq.service &>/dev/null; then
-  timeout 20 systemctl start dnsmasq.service 2>/dev/null || echo "    WARN: dnsmasq optional start failed"
+if [[ "${GFC_SKIP_NETPLAN_APPLY:-0}" == "1" ]]; then
+  echo "    dnsmasq: deferred (finish-network-install.sh)"
+elif ! ip link show "$LAN_IFACE" &>/dev/null; then
+  echo "    dnsmasq: deferred (${LAN_IFACE} not up)"
+else
+  if systemctl list-unit-files dnsmasq.service &>/dev/null; then
+    timeout 20 systemctl start dnsmasq.service 2>/dev/null || echo "    WARN: dnsmasq optional start failed"
+  fi
 fi
 
 # Layer 4: DNS prep then MosDNS (Layer 3 nft loaded by network script)
 echo "    layer 4: dns"
 bash "$SCRIPT_DIR/ensure-dns.sh" || echo "    WARN: ensure-dns had issues"
-start_one gfc-mosdns.service 45 || true
+bash "$SCRIPT_DIR/fix-mosdns-start.sh" || echo "    WARN: fix-mosdns-start had issues"
 
-# Layer 5: sing-box (outbound engine) + kernel policy routing
-echo "    layer 5: sing-box + routing"
-start_one gfc-sing-box.service 30 || true
-start_one gfc-routing.service 45 || true
+# Layer 5: sing-box + routing only after line code / TUN config
+if gfc_need_proxy_dataplane; then
+  echo "    layer 5: sing-box + routing"
+  start_one gfc-sing-box.service 30 || true
+  if [[ "${GFC_SKIP_NETPLAN_APPLY:-0}" == "1" ]]; then
+    echo "    gfc-routing: deferred (finish-network-install.sh)"
+  elif ! ip link show "$TUN_IFACE" &>/dev/null; then
+    echo "    gfc-routing: deferred (${TUN_IFACE} not up — reapply after line code)"
+  else
+    start_one gfc-routing.service 45 || true
+  fi
+else
+  echo "    layer 5: proxy skipped (router-only until flash + reapply)"
+  systemctl stop gfc-sing-box gfc-routing 2>/dev/null || true
+  systemctl reset-failed gfc-sing-box gfc-routing 2>/dev/null || true
+  bash "$SCRIPT_DIR/gfc-routing.sh" start 2>/dev/null || true
+fi
 
 # Layer 6: management plane
 echo "    layer 6: agent + web"

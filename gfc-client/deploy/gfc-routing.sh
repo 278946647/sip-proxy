@@ -17,8 +17,15 @@ source "$SCRIPT_DIR/lib-policy-routing.sh"
 
 start() {
   echo "==> gfc-routing start"
-  refresh_gfc_policy_nft || true
-  apply_policy_routing
+  # shellcheck source=lib-gfc-mode.sh
+  source "${SCRIPT_DIR}/lib-gfc-mode.sh"
+  if gfc_need_proxy_dataplane; then
+    refresh_gfc_policy_nft || true
+  fi
+  if ! apply_policy_routing; then
+    echo "    WARN: proxy routing not ready (start sing-box after line code)" >&2
+    exit 1
+  fi
   echo "==> gfc-routing done"
 }
 

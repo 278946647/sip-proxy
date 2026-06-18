@@ -26,6 +26,7 @@ rm -f /run/gfc-client/network-applied
 export GFC_FORCE_NETWORK_APPLY=1
 export GFC_SKIP_NETPLAN_APPLY=0
 
+bash "$GFC_ROOT/deploy/bootstrap-idle.sh" || echo "WARN: bootstrap-idle failed"
 bash "$GFC_ROOT/deploy/gfc-network.sh" start
 bash "$GFC_ROOT/deploy/start-services.sh"
 bash "$GFC_ROOT/deploy/verify-install.sh"

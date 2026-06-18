@@ -202,8 +202,8 @@ bash "$SCRIPT_DIR/install-gfc-units.sh"
 cat >/etc/systemd/system/gfc-agent.service <<EOF
 [Unit]
 Description=GFC Client Agent
-After=gfc-routing.service gfc-sing-box.service network-online.target
-Wants=gfc-routing.service network-online.target
+After=gfc-network.service gfc-mosdns.service network-online.target
+Wants=gfc-network.service network-online.target
 
 [Service]
 Type=simple
@@ -258,7 +258,13 @@ bash "$GFC_ROOT/deploy/bootstrap-idle.sh"
 fix_mosdns_tree_perms /etc/gfc-client
 
 echo "==> Start services (ordered)"
-bash "$GFC_ROOT/deploy/start-services.sh" || echo "WARN: some services failed to start"
+if [[ "${GFC_SKIP_NETPLAN_APPLY:-0}" == "1" ]]; then
+  echo "    dataplane start deferred — run finish-network-install.sh after reconnect"
+  timeout 30 systemctl start gfc-agent.service 2>/dev/null || echo "WARN: gfc-agent start failed"
+  timeout 30 systemctl start gfc-web.service 2>/dev/null || echo "WARN: gfc-web start failed"
+else
+  bash "$GFC_ROOT/deploy/start-services.sh" || echo "WARN: some services failed to start"
+fi
 
 # shellcheck source=lib-lan-ip.sh
 source "$SCRIPT_DIR/lib-lan-ip.sh"

@@ -187,6 +187,29 @@ policy_ip_rule_present() {
   return 1
 }
 
+purge_policy_ip_rule() {
+  local mark="${GFC_POLICY_MARK:-0x2023}" table="${GFC_POLICY_TABLE:-2022}"
+  local removed=0
+  while ip -4 rule list 2>/dev/null | grep -qE "lookup ${table}"; do
+    if ip -4 rule del pref 100 fwmark "$mark" lookup "$table" 2>/dev/null; then
+      removed=1
+      continue
+    fi
+    if ip -4 rule del fwmark "$mark" lookup "$table" 2>/dev/null; then
+      removed=1
+      continue
+    fi
+    if ip -4 rule del lookup "$table" 2>/dev/null; then
+      removed=1
+      continue
+    fi
+    break
+  done
+  if [[ "$removed" == "1" ]]; then
+    echo "    ip rule: removed fwmark → table ${table} (router-only idle)"
+  fi
+}
+
 ensure_policy_ip_rule() {
   local mark="${GFC_POLICY_MARK}"
   local table="${GFC_POLICY_TABLE}"
@@ -235,13 +258,26 @@ apply_policy_routing() {
   fi
 
   script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  # shellcheck source=lib-gfc-mode.sh
+  source "${script_dir}/lib-gfc-mode.sh"
+  if ! gfc_need_proxy_dataplane; then
+    echo "    policy routing: skipped (router-only idle)"
+    teardown_gfc_nft_policy 2>/dev/null || true
+    teardown_policy_routing
+    purge_policy_ip_rule 2>/dev/null || true
+    return 0
+  fi
+
   cleanup="${script_dir}/singbox-nft-cleanup.sh"
   if [[ -x "$cleanup" ]]; then
     bash "$cleanup" 2>/dev/null || true
   fi
 
   ensure_policy_ip_rule
-  ensure_policy_table_route
+  if ! ensure_policy_table_route; then
+    echo "    WARN: gfctun route not applied" >&2
+    return 1
+  fi
   echo "    policy routing: fwmark ${mark} → table ${table} default dev ${tun}"
 }
 

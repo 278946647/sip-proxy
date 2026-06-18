@@ -32,4 +32,8 @@ if ! timeout 120 "$BIN"; then
   echo "ERROR: gfc-bootstrap failed or timed out" >&2
   exit 1
 fi
-echo "==> Bootstrap idle done (configs only; use start-services.sh to start units)"
+
+echo "    start MosDNS (router-only idle)..."
+bash "$SCRIPT_DIR/fix-mosdns-start.sh" || echo "    WARN: fix-mosdns-start failed"
+
+echo "==> Bootstrap idle done"

@@ -258,6 +258,8 @@ source "$SCRIPT_DIR/lib-mosdns-nft.sh"
 source "$SCRIPT_DIR/lib-singbox-user.sh"
 # shellcheck source=lib-policy-routing.sh
 source "$SCRIPT_DIR/lib-policy-routing.sh"
+# shellcheck source=lib-gfc-mode.sh
+source "$SCRIPT_DIR/lib-gfc-mode.sh"
 LAN_IF="${LAN:-bridge_lan}"
 migrate_mosdns_user || ensure_mosdns_user
 migrate_singbox_user || ensure_singbox_user
@@ -266,11 +268,14 @@ write_gfc_nft_dns_conf "$LAN_IF" "$MOSDNS_PORT" "$NFT_DNS"
 echo "    nft dns -> $NFT_DNS (exclude uid ${GFC_MOSDNS_UID})"
 
 LAN_CIDR="${LAN_NETWORK}/${LAN_PREFIX}"
-if gfc_policy_mode_enabled && [[ -n "${LAN:-}" ]]; then
+if gfc_policy_mode_enabled && [[ -n "${LAN:-}" ]] && gfc_need_proxy_dataplane; then
   POLICY_BYPASS_IPS="$(resolve_policy_bypass_ips)"
   write_gfc_nft_policy_conf "$LAN_IF" "$LAN_CIDR" "$NFT_POLICY" "$POLICY_BYPASS_IPS"
   echo "    nft policy -> $NFT_POLICY (mark ${GFC_POLICY_MARK}, sing-box uid ${GFC_SINGBOX_UID:-65354})"
   [[ -n "$POLICY_BYPASS_IPS" ]] && echo "    nft bypass ips: ${POLICY_BYPASS_IPS}"
+elif gfc_policy_mode_enabled && [[ -n "${LAN:-}" ]]; then
+  rm -f "$NFT_POLICY" "${GFC_ETC}/nftables-cn-ip-load.nft"
+  echo "    nft policy: skipped (router-only idle — no TUN until line code)"
 else
   rm -f "$NFT_POLICY"
   echo "    nft policy: skipped (proxy_mode=$PROXY_MODE)"
@@ -335,34 +340,57 @@ if [[ -f "$DNSMASQ_FILE" ]] && command -v systemctl >/dev/null; then
   else
     echo "    dnsmasq start..."
     systemctl stop dnsmasq 2>/dev/null || true
-    if timeout 20 systemctl start dnsmasq; then
+    dnsmasq_ok=0
+    for _attempt in 1 2 3; do
+      if timeout 20 systemctl start dnsmasq; then
+        dnsmasq_ok=1
+        break
+      fi
+      sleep 2
+    done
+    if [[ "$dnsmasq_ok" == "1" ]]; then
       echo "    dnsmasq: ok"
     else
       echo "    WARN: dnsmasq start timed out or failed"
+      journalctl -u dnsmasq -n 15 --no-pager 2>/dev/null || true
     fi
   fi
 elif command -v systemctl >/dev/null; then
   systemctl stop dnsmasq 2>/dev/null || true
 fi
 if command -v nft >/dev/null; then
-  nft list table ip gfc_client_nat &>/dev/null && nft delete table ip gfc_client_nat || true
-  nft list table inet gfc_client_filter &>/dev/null && nft delete table inet gfc_client_filter || true
-  nft list table inet gfc_dns &>/dev/null && nft delete table inet gfc_dns || true
-  nft list table inet gfc_dns_hijack &>/dev/null && nft delete table inet gfc_dns_hijack || true
-  nft list table inet gfc_client_mangle &>/dev/null && nft delete table inet gfc_client_mangle || true
-  nft -f "$NFT_BOOT" && echo "    nft filter: ok" || echo "    WARN: nft filter failed"
-  nft -f "$NFT_DNS" && echo "    nft dns: ok" || echo "    WARN: nft dns failed"
-  if [[ -f "$NFT_POLICY" ]]; then
-    apply_gfc_nft_policy_conf "$NFT_POLICY" && echo "    nft policy: ok" || echo "    WARN: nft policy failed"
+  if [[ "${GFC_SKIP_NETPLAN_APPLY:-0}" == "1" ]]; then
+    echo "    nft load: deferred (configs written — run finish-network-install.sh)"
   else
-    teardown_gfc_nft_policy 2>/dev/null || true
+    nft list table ip gfc_client_nat &>/dev/null && nft delete table ip gfc_client_nat || true
+    nft list table inet gfc_client_filter &>/dev/null && nft delete table inet gfc_client_filter || true
+    nft list table inet gfc_dns &>/dev/null && nft delete table inet gfc_dns || true
+    nft list table inet gfc_dns_hijack &>/dev/null && nft delete table inet gfc_dns_hijack || true
+    nft list table inet gfc_client_mangle &>/dev/null && nft delete table inet gfc_client_mangle || true
+    nft -f "$NFT_BOOT" && echo "    nft filter: ok" || echo "    WARN: nft filter failed"
+    nft -f "$NFT_DNS" && echo "    nft dns: ok" || echo "    WARN: nft dns failed"
+    if [[ -f "$NFT_POLICY" ]] && gfc_need_proxy_dataplane; then
+      apply_gfc_nft_policy_conf "$NFT_POLICY" && echo "    nft policy: ok" || echo "    WARN: nft policy failed"
+    else
+      teardown_gfc_nft_policy 2>/dev/null || true
+      purge_policy_ip_rule 2>/dev/null || true
+      [[ -f "$NFT_POLICY" ]] || echo "    nft policy: not loaded (router-only idle)"
+    fi
   fi
 fi
 
-if gfc_policy_mode_enabled; then
-  echo "    policy routing (post-netplan)"
-  ensure_policy_ip_rule || true
-  ensure_policy_table_route || echo "    WARN: gfctun route deferred (sing-box not ready)"
+if gfc_policy_mode_enabled && gfc_need_proxy_dataplane; then
+  if [[ "${GFC_SKIP_NETPLAN_APPLY:-0}" == "1" ]]; then
+    echo "    policy routing: deferred (netplan/gfctun not ready — run finish-network-install.sh)"
+  else
+    echo "    policy routing (post-netplan)"
+    ensure_policy_ip_rule || true
+    ensure_policy_table_route || echo "    WARN: gfctun route deferred (sing-box not ready)"
+  fi
+elif gfc_policy_mode_enabled; then
+  echo "    policy routing: skipped (router-only idle)"
+  teardown_gfc_nft_policy 2>/dev/null || true
+  purge_policy_ip_rule 2>/dev/null || true
 fi
 
 if [[ -f "${GFC_ETC}/sing-box.json" ]]; then
