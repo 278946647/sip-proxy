@@ -18,8 +18,11 @@ Ubuntu 22.04 软路由 / ARM 盒子。本目录 `gfc-client/` 与 `gfc-platform/
 git clone https://github.com/278946647/sip-proxy.git
 cd sip-proxy/gfc-client
 sudo bash deploy/install-ubuntu.sh
+sudo bash deploy/finish-network-install.sh   # 重连后执行（建议用 WAN IP SSH）
 sudo bash deploy/verify-install.sh
 ```
+
+`install-ubuntu.sh` **不会**当场执行 `netplan apply`（避免 `ens192` 等 LAN 成员口 bridge 化时 SSH 断线）。安装结束后用 **WAN IP** 重连，再跑 `finish-network-install.sh` 完成 netplan + nft + 服务启动。
 
 安装会自动创建系统用户 `mosdns`（**固定 UID 65353**）及同名用户组，并生成 OUTPUT DNS 劫持规则（`meta skuid != 65353` 豁免 MosDNS 上游 :53 查询）。
 
