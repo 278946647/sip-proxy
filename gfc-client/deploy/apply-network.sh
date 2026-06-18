@@ -27,7 +27,8 @@ BRIDGE_NAME="${GFC_BRIDGE_NAME:-bridge_lan}"
 PROXY_MODE="${GFC_PROXY_MODE:-$PROXY_MODE}"
 GFC_POLICY_MARK="${GFC_POLICY_MARK:-0x2023}"
 GFC_POLICY_TABLE="${GFC_POLICY_TABLE:-2022}"
-export GFC_POLICY_MARK GFC_POLICY_TABLE
+GFC_SSH_PORT="${GFC_SSH_PORT:-212}"
+export GFC_POLICY_MARK GFC_POLICY_TABLE GFC_SSH_PORT
 
 mkdir -p "$GFC_ETC"
 
@@ -203,9 +204,10 @@ if [[ "$PROXY_MODE" == "bypass" ]]; then
 fi
 
 python3 - "$NFT_BOOT" "$WAN" "$LAN" "$ENABLE_MASQ" "$TUN_IFACE" <<'PY'
-import sys
+import os, sys
 from pathlib import Path
 nft_boot, wan, lan, enable_masq, tun = sys.argv[1:6]
+ssh_port = int(os.environ.get("GFC_SSH_PORT", "212"))
 masq = ""
 if wan and enable_masq == "1":
     masq = f"""
@@ -216,7 +218,9 @@ table ip gfc_client_nat {{
   }}
 }}"""
 forward = ""
-input_rules = "    ct state established,related accept\n    iif lo accept"
+input_rules = f"""    ct state established,related accept
+    iif lo accept
+    tcp dport {ssh_port} accept"""
 if wan and lan:
     forward = f"""
     iifname "{lan}" oifname "{tun}" accept
@@ -224,7 +228,7 @@ if wan and lan:
     iifname "{lan}" oifname "{wan}" accept
     iifname "{wan}" oifname "{lan}" ct state established,related accept"""
     input_rules += f"""
-    iifname "{lan}" tcp dport {{ 22, 80, 212, 443, 8080 }} accept
+    iifname "{lan}" tcp dport {{ 80, 443, 8080 }} accept
     iifname "{lan}" udp dport {{ 53, 67, 68 }} accept
     iifname "{lan}" tcp dport 53 accept
     iifname "{lan}" icmp type echo-request accept"""
@@ -287,6 +291,7 @@ update_env GFC_SINGBOX_UID "${GFC_SINGBOX_UID:-65354}"
 update_env GFC_POLICY_MARK "${GFC_POLICY_MARK}"
 update_env GFC_POLICY_TABLE "${GFC_POLICY_TABLE}"
 update_env GFC_ROUTING_SCHEME "${GFC_ROUTING_SCHEME:-kernel-split}"
+update_env GFC_SSH_PORT "${GFC_SSH_PORT}"
 [[ -n "${LAN:-}" ]] && update_env GFC_LAN_IFACE "$LAN"
 [[ -n "${LAN:-}" ]] && update_env GFC_LAN_CIDR "${LAN_NETWORK}/${LAN_PREFIX}"
 [[ "$USE_BRIDGE" == "1" ]] && update_env GFC_BRIDGE_NAME "$LAN"

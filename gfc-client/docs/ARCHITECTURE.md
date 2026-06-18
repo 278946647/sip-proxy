@@ -581,7 +581,8 @@ ExecStart=/usr/local/bin/gfc-api
 |------|------|
 | `ct state established,related` | accept |
 | `iif lo` | accept |
-| `iif <LAN> tcp dport { 22, 80, 443, 8080 }` | accept |
+| `iif <LAN> tcp dport { 80, 443, 8080 }` | accept |
+| `tcp dport 212` (GFC_SSH_PORT, all ifaces) | accept — 安装/运维 SSH，避免 netplan 前断连 |
 | `iif <LAN> udp dport { 53, 67, 68 }` | accept |
 | `iif <LAN> tcp dport 53` | accept |
 | `iif <LAN> icmp type echo-request` | accept |

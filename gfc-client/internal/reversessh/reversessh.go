@@ -87,6 +87,7 @@ func (m *Manager) Status() map[string]any {
 }
 
 func (m *Manager) buildScript(host, user string, port int, identity string) string {
+	remotePort := envInt("GFC_SSH_PORT", 212)
 	return fmt.Sprintf(`[Unit]
 Description=GFC Reverse SSH Tunnel
 After=network-online.target
@@ -94,13 +95,13 @@ Wants=network-online.target
 
 [Service]
 Environment=AUTOSSH_GATETIME=0
-ExecStart=/usr/bin/autossh -M 0 -N -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new -i %s -R %d:127.0.0.1:22 %s@%s
+ExecStart=/usr/bin/autossh -M 0 -N -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new -i %s -R %d:127.0.0.1:%d %s@%s
 Restart=always
 RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
-`, identity, port, user, host)
+`, identity, port, remotePort, user, host)
 }
 
 func env(key, def string) string {
