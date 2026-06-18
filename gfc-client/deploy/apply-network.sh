@@ -326,12 +326,20 @@ if command -v netplan >/dev/null; then
   fi
 fi
 if [[ -f "$DNSMASQ_FILE" ]] && command -v systemctl >/dev/null; then
-  echo "    dnsmasq start..."
-  systemctl stop dnsmasq 2>/dev/null || true
-  if timeout 20 systemctl start dnsmasq; then
-    echo "    dnsmasq: ok"
+  if [[ "${GFC_SKIP_NETPLAN_APPLY:-0}" == "1" ]]; then
+    echo "    dnsmasq start: deferred (bridge not up until netplan apply)"
+    systemctl stop dnsmasq 2>/dev/null || true
+  elif [[ -n "${LAN:-}" ]] && ! ip link show "$LAN" &>/dev/null; then
+    echo "    dnsmasq start: deferred (${LAN} not up yet)"
+    systemctl stop dnsmasq 2>/dev/null || true
   else
-    echo "    WARN: dnsmasq start timed out or failed"
+    echo "    dnsmasq start..."
+    systemctl stop dnsmasq 2>/dev/null || true
+    if timeout 20 systemctl start dnsmasq; then
+      echo "    dnsmasq: ok"
+    else
+      echo "    WARN: dnsmasq start timed out or failed"
+    fi
   fi
 elif command -v systemctl >/dev/null; then
   systemctl stop dnsmasq 2>/dev/null || true
