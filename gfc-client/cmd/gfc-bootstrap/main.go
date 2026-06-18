@@ -7,6 +7,7 @@ import (
 
 	"github.com/278946647/sip-proxy/gfc-client/internal/config"
 	"github.com/278946647/sip-proxy/gfc-client/internal/dataplane"
+	"github.com/278946647/sip-proxy/gfc-client/internal/network"
 	"github.com/278946647/sip-proxy/gfc-client/internal/store"
 )
 
@@ -22,6 +23,15 @@ func main() {
 	defer st.Close()
 
 	engine := dataplane.New(cfg)
+	if len(os.Args) > 1 && os.Args[1] == "--apply-network" {
+		result, err := network.New(cfg).ApplyNetwork()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "apply network failed: %s\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("%v\n", result)
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "--reapply" {
 		ok, msg := engine.ReapplyLocal(true)
 		if !ok {

@@ -11,6 +11,7 @@ import (
 
 	"github.com/278946647/sip-proxy/gfc-client/internal/config"
 	"github.com/278946647/sip-proxy/gfc-client/internal/dnslists"
+	"github.com/278946647/sip-proxy/gfc-client/internal/platform"
 	"github.com/278946647/sip-proxy/gfc-client/internal/render/mosdns"
 	"github.com/278946647/sip-proxy/gfc-client/internal/render/singbox"
 	"github.com/278946647/sip-proxy/gfc-client/internal/rules"
@@ -201,18 +202,24 @@ func (o *Orchestrator) ReapplyLocal(restart bool) (bool, string) {
 func (o *Orchestrator) postDataplaneRepair() []string {
 	var msgs []string
 	root := o.cfg.Paths.Root
+	shell := "/bin/bash"
+	routingScript := filepath.Join(root, "deploy", "gfc-routing.sh")
+	if platform.IsOpenWrt() {
+		shell = "/bin/sh"
+		routingScript = filepath.Join(root, "deploy", "immortalwrt", "gfc-routing.sh")
+	}
 	for _, spec := range []struct {
 		label string
 		args  []string
 	}{
 		{"patch-singbox-wan", []string{filepath.Join(root, "deploy", "patch-singbox-wan.sh")}},
-		{"gfc-routing", []string{filepath.Join(root, "deploy", "gfc-routing.sh"), "start"}},
+		{"gfc-routing", []string{routingScript, "start"}},
 	} {
 		script := spec.args[0]
 		if _, err := os.Stat(script); err != nil {
 			continue
 		}
-		cmd := exec.Command("/bin/bash", spec.args...)
+		cmd := exec.Command(shell, spec.args...)
 		out, err := cmd.CombinedOutput()
 		line := strings.TrimSpace(string(out))
 		if err != nil {
@@ -234,7 +241,7 @@ func (o *Orchestrator) restartDataplaneServices() []string {
 }
 
 func (o *Orchestrator) purgeStaleTun() {
-	if _, err := os.Stat("/usr/sbin/ip"); err != nil {
+	if _, err := exec.LookPath("ip"); err != nil {
 		return
 	}
 	_ = exec.Command("ip", "link", "delete", config.TunInterface).Run()
@@ -262,33 +269,15 @@ func (o *Orchestrator) RestartServices() []string {
 }
 
 func (o *Orchestrator) RestartUnit(name string) (bool, string) {
-	units := map[string]string{
-		"agent":    config.ServiceAgent,
-		"sing-box": config.ServiceSingbox,
-		"routing":  config.ServiceRouting,
-		"mosdns":   config.ServiceMosDNS,
-		"api":      config.ServiceWeb,
-		"web":      config.ServiceWeb,
-		"dnsmasq":  config.ServiceDnsmasq,
-		"network":  config.ServiceNetwork,
-	}
-	unit, ok := units[name]
-	if !ok {
-		return false, "unknown service"
-	}
-	return true, o.restartUnit(unit)
+	return platform.RestartLogical(name)
 }
 
 func (o *Orchestrator) restartUnit(unit string) string {
-	if _, err := os.Stat("/bin/systemctl"); err != nil {
-		return unit + ": no systemd"
+	ok, msg := platform.Restart(unit)
+	if !ok {
+		return fmt.Sprintf("%s: %s", unit, msg)
 	}
-	cmd := exec.Command("systemctl", "restart", unit)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Sprintf("%s: %s", unit, strings.TrimSpace(string(out)))
-	}
-	return unit + ": restarted"
+	return msg
 }
 
 func (o *Orchestrator) saveBundle(payload map[string]any) error {
@@ -313,27 +302,5 @@ func joinMsgs(msgs []string) string {
 }
 
 func ServiceStatus() map[string]any {
-	units := map[string]string{
-		"agent":    config.ServiceAgent,
-		"sing-box": config.ServiceSingbox,
-		"routing":  config.ServiceRouting,
-		"mosdns":   config.ServiceMosDNS,
-		"web":      config.ServiceWeb,
-		"network":  config.ServiceNetwork,
-	}
-	result := map[string]any{}
-	for name, unit := range units {
-		active, sub := systemdActive(unit)
-		result[name] = map[string]any{"unit": unit, "active": active, "sub": sub}
-	}
-	return result
-}
-
-func systemdActive(unit string) (string, string) {
-	cmd := exec.Command("systemctl", "is-active", unit)
-	out, _ := cmd.Output()
-	active := strings.TrimSpace(string(out))
-	cmd2 := exec.Command("systemctl", "show", unit, "--property=SubState", "--value")
-	out2, _ := cmd2.Output()
-	return active, strings.TrimSpace(string(out2))
+	return platform.ServiceStatus()
 }
