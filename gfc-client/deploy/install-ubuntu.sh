@@ -16,7 +16,13 @@ fi
 
 echo "==> Packages"
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq
+if ! apt-get update -qq 2>/dev/null; then
+  echo "    WARN: apt update failed — repairing package lists..."
+  rm -f /var/lib/apt/lists/partial/* 2>/dev/null || true
+  find /var/lib/apt/lists -maxdepth 1 -type f -name '*Translation*' -delete 2>/dev/null || true
+  apt-get clean
+  apt-get update -qq
+fi
 apt-get install -y -qq curl rsync nftables iproute2 dnsmasq netplan.io \
   git ca-certificates unzip xz-utils openssh-client autossh
 
