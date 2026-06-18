@@ -4,6 +4,9 @@ const Layout = () => import('@/layout/index.vue')
 const Placeholder = () => import('@/views/shared/SectionPlaceholder.vue')
 const DashboardPage = () => import('@/views/overview/dashboard/index.vue')
 const NetworkSummaryPage = () => import('@/views/network/summary/index.vue')
+const NetworkWanPage = () => import('@/views/network/wan/index.vue')
+const NetworkLanPage = () => import('@/views/network/lan/index.vue')
+const NetworkDhcpPage = () => import('@/views/network/dhcp/index.vue')
 const NetworkInterfacesPage = () => import('@/views/network/interfaces/index.vue')
 const PolicySummaryPage = () => import('@/views/policy/summary/index.vue')
 const PolicyDnsListsPage = () => import('@/views/policy/dns-lists/index.vue')
@@ -50,9 +53,9 @@ export const asyncRoutes: AppRouteRecord[] = [
     meta: { title: '网络', icon: 'network', rank: 2 },
     children: [
       { path: 'summary', name: 'NetworkSummary', component: NetworkSummaryPage, meta: { title: '网络总览', auths: ['network:read'] } },
-      { path: 'wan', name: 'NetworkWan', component: NetworkSummaryPage, meta: { title: 'WAN 配置', auths: ['network:wan:read'] } },
-      { path: 'lan', name: 'NetworkLan', component: NetworkSummaryPage, meta: { title: 'LAN / 桥接', auths: ['network:lan:read'] } },
-      { path: 'dhcp', name: 'NetworkDhcp', component: NetworkSummaryPage, meta: { title: 'DHCP 服务', auths: ['network:dhcp:read'] } },
+      { path: 'wan', name: 'NetworkWan', component: NetworkWanPage, meta: { title: 'WAN 配置', auths: ['network:wan:read'] } },
+      { path: 'lan', name: 'NetworkLan', component: NetworkLanPage, meta: { title: 'LAN / 桥接', auths: ['network:lan:read'] } },
+      { path: 'dhcp', name: 'NetworkDhcp', component: NetworkDhcpPage, meta: { title: 'DHCP 服务', auths: ['network:dhcp:read'] } },
       { path: 'dns-upstream', name: 'NetworkDnsUpstream', component: NetworkSummaryPage, meta: { title: 'DNS 上游', auths: ['network:dns:read'] } },
       { path: 'routes', name: 'NetworkRoutes', component: NetworkSummaryPage, meta: { title: '静态路由', auths: ['network:routes:read'] } },
       { path: 'vlan', name: 'NetworkVlan', component: NetworkSummaryPage, meta: { title: 'VLAN', auths: ['network:vlan:read'] } },
