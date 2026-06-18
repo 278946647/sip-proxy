@@ -2,8 +2,10 @@ package api
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -64,6 +66,7 @@ func (s *Server) Router() *gin.Engine {
 		v1.GET("/status", s.getStatus)
 		v1.GET("/health", s.getHealth)
 		v1.GET("/metrics", s.getMetrics)
+		v1.GET("/alerts", s.getAlerts)
 
 		v1.POST("/activation/flash", s.flashActivation)
 		v1.GET("/activation", s.getActivation)
@@ -101,6 +104,16 @@ func (s *Server) Router() *gin.Engine {
 		v1.GET("/network/interfaces", s.getInterfaces)
 		v1.GET("/network/bridge", s.getBridge)
 		v1.PUT("/network/bridge", s.putBridge)
+		v1.GET("/network/wan", s.getWAN)
+		v1.PUT("/network/wan", s.putWAN)
+		v1.GET("/network/dhcp", s.getDHCP)
+		v1.PUT("/network/dhcp", s.putDHCP)
+		v1.GET("/network/routes", s.getRoutes)
+		v1.PUT("/network/routes", s.putRoutes)
+		v1.GET("/network/vlan", s.getVLAN)
+		v1.PUT("/network/vlan", s.putVLAN)
+		v1.GET("/policy/firewall", s.getFirewall)
+		v1.POST("/diagnostics/:type", s.runDiagnostic)
 
 		v1.GET("/logs", s.getLogs)
 		v1.GET("/settings", s.getSettings)
@@ -184,6 +197,44 @@ func (s *Server) getHealth(c *gin.Context) {
 
 func (s *Server) getMetrics(c *gin.Context) {
 	s.ok(c, readJSONFile(s.cfg.Paths.StatusFile))
+}
+
+func (s *Server) getAlerts(c *gin.Context) {
+	var alerts []map[string]any
+	health := dataplane.ServiceStatus()
+	for name, raw := range health {
+		info, _ := raw.(map[string]any)
+		active := strings.TrimSpace(toString(info["active"]))
+		if active != "" && active != "active" {
+			alerts = append(alerts, map[string]any{
+				"severity": "critical",
+				"source":   "service",
+				"title":    name + " 服务异常",
+				"message":  "systemd active=" + active,
+			})
+		}
+	}
+	dns := stats.DNSProbe("127.0.0.1", config.DefaultMosDNS)
+	if ok, _ := dns["ok"].(bool); !ok {
+		alerts = append(alerts, map[string]any{
+			"severity": "warning",
+			"source":   "dns",
+			"title":    "DNS 探测失败",
+			"message":  toString(dns["error"]),
+		})
+	}
+	s.ok(c, map[string]any{"alerts": alerts, "count": len(alerts)})
+}
+
+func toString(v any) string {
+	if v == nil {
+		return ""
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	b, _ := json.Marshal(v)
+	return string(b)
 }
 
 func (s *Server) flashActivation(c *gin.Context) {
@@ -408,6 +459,122 @@ func (s *Server) putBridge(c *gin.Context) {
 		return
 	}
 	s.ok(c, result)
+}
+
+func (s *Server) getWAN(c *gin.Context) {
+	s.ok(c, s.network.LoadWAN())
+}
+
+func (s *Server) putWAN(c *gin.Context) {
+	var body map[string]any
+	if err := c.BindJSON(&body); err != nil {
+		s.fail(c, 400, err.Error())
+		return
+	}
+	result, err := s.network.ApplyWAN(body)
+	if err != nil {
+		s.fail(c, 500, err.Error())
+		return
+	}
+	s.ok(c, result)
+}
+
+func (s *Server) getDHCP(c *gin.Context) {
+	s.ok(c, s.network.LoadDHCP())
+}
+
+func (s *Server) putDHCP(c *gin.Context) {
+	var body map[string]any
+	if err := c.BindJSON(&body); err != nil {
+		s.fail(c, 400, err.Error())
+		return
+	}
+	result, err := s.network.ApplyDHCP(body)
+	if err != nil {
+		s.fail(c, 500, err.Error())
+		return
+	}
+	s.ok(c, result)
+}
+
+func (s *Server) getRoutes(c *gin.Context) {
+	s.ok(c, s.network.LoadRoutes())
+}
+
+func (s *Server) putRoutes(c *gin.Context) {
+	var body map[string]any
+	if err := c.BindJSON(&body); err != nil {
+		s.fail(c, 400, err.Error())
+		return
+	}
+	result, err := s.network.ApplyRoutes(body)
+	if err != nil {
+		s.fail(c, 500, err.Error())
+		return
+	}
+	s.ok(c, result)
+}
+
+func (s *Server) getVLAN(c *gin.Context) {
+	s.ok(c, s.network.LoadVLAN())
+}
+
+func (s *Server) putVLAN(c *gin.Context) {
+	var body map[string]any
+	if err := c.BindJSON(&body); err != nil {
+		s.fail(c, 400, err.Error())
+		return
+	}
+	result, err := s.network.ApplyVLAN(body)
+	if err != nil {
+		s.fail(c, 500, err.Error())
+		return
+	}
+	s.ok(c, result)
+}
+
+func (s *Server) getFirewall(c *gin.Context) {
+	boot := map[string]any{"path": s.cfg.Paths.NFTBoot, "exists": fileExists(s.cfg.Paths.NFTBoot)}
+	dns := map[string]any{"path": s.cfg.Paths.NFTDNS, "exists": fileExists(s.cfg.Paths.NFTDNS)}
+	s.ok(c, map[string]any{"nftables": []map[string]any{boot, dns}})
+}
+
+func (s *Server) runDiagnostic(c *gin.Context) {
+	kind := c.Param("type")
+	var body map[string]any
+	_ = c.BindJSON(&body)
+	switch kind {
+	case "dns":
+		host := strings.TrimSpace(toString(body["host"]))
+		if host == "" {
+			host = "www.google.com"
+		}
+		ips, err := net.LookupHost(host)
+		s.ok(c, map[string]any{"host": host, "ips": ips, "ok": err == nil, "error": errString(err)})
+	case "ping":
+		host := strings.TrimSpace(toString(body["host"]))
+		if host == "" {
+			host = "1.1.1.1"
+		}
+		out, err := exec.Command("ping", "-c", "3", "-W", "2", host).CombinedOutput()
+		s.ok(c, map[string]any{"host": host, "output": string(out), "ok": err == nil, "error": errString(err)})
+	case "tun":
+		s.ok(c, stats.TunStatus(config.TunInterface))
+	default:
+		s.fail(c, 400, "unsupported diagnostic type")
+	}
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func errString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 func (s *Server) getLogs(c *gin.Context) {

@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import JsonBlock from '@/components/common/JsonBlock.vue'
+import DataTable from '@/components/common/DataTable.vue'
 import StatCard from '@/components/common/StatCard.vue'
 import { overviewApi } from '@/api/overview'
 import { connectivityApi } from '@/api/connectivity'
 import { maintenanceApi } from '@/api/maintenance'
-import { asRecord, textValue } from '@/utils/data'
+import { asArray, asRecord, textValue } from '@/utils/data'
 
 const loading = ref(false)
 const error = ref('')
@@ -14,6 +15,7 @@ const health = ref<Record<string, unknown>>({})
 const metrics = ref<Record<string, unknown>>({})
 const dnsStats = ref<Record<string, unknown>>({})
 const forwardStats = ref<Record<string, unknown>>({})
+const alerts = ref<Record<string, unknown>>({})
 
 const device = computed(() => asRecord(status.value.device))
 const system = computed(() => asRecord(status.value.system))
@@ -21,18 +23,21 @@ const network = computed(() => asRecord(status.value.network))
 const tun = computed(() => asRecord(status.value.tun))
 const dns = computed(() => asRecord(status.value.dns))
 const agent = computed(() => asRecord(status.value.agent))
+const serviceRows = computed(() => Object.entries(health.value).map(([name, value]) => ({ name, ...asRecord(value) })))
+const alertRows = computed(() => asArray(alerts.value.alerts).map(asRecord))
 
 async function load() {
   loading.value = true
   error.value = ''
   try {
-    const [statusRes, healthRes, metricsRes, dnsStatsRes, forwardStatsRes, agentRes] = await Promise.all([
+    const [statusRes, healthRes, metricsRes, dnsStatsRes, forwardStatsRes, agentRes, alertsRes] = await Promise.all([
       overviewApi.status(),
       overviewApi.health(),
       overviewApi.metrics(),
       maintenanceApi.dnsStats(),
       maintenanceApi.singboxStats(),
       connectivityApi.agent(),
+      overviewApi.alerts(),
     ])
     if (statusRes.ok) status.value = statusRes.data
     if (healthRes.ok) health.value = healthRes.data
@@ -40,6 +45,7 @@ async function load() {
     if (dnsStatsRes.ok) dnsStats.value = dnsStatsRes.data
     if (forwardStatsRes.ok) forwardStats.value = forwardStatsRes.data
     if (agentRes.ok) status.value = { ...status.value, agent: agentRes.data }
+    if (alertsRes.ok) alerts.value = alertsRes.data
   } catch (err) {
     error.value = String(err)
   } finally {
@@ -73,12 +79,34 @@ onMounted(load)
       <StatCard label="Agent" :value="textValue(agent.status || agent.state)" />
     </div>
 
+    <div class="main-grid">
+      <section class="panel">
+        <h3>服务健康</h3>
+        <DataTable :columns="[
+          { key: 'name', title: '服务' },
+          { key: 'unit', title: 'Unit' },
+          { key: 'active', title: 'Active' },
+          { key: 'sub', title: 'SubState' },
+        ]" :rows="serviceRows" />
+      </section>
+      <section class="panel">
+        <h3>告警</h3>
+        <DataTable :columns="[
+          { key: 'severity', title: '级别' },
+          { key: 'source', title: '来源' },
+          { key: 'title', title: '标题' },
+          { key: 'message', title: '说明' },
+        ]" :rows="alertRows" empty-text="当前没有告警" />
+      </section>
+    </div>
+
     <div class="grid">
       <JsonBlock title="状态详情 /status" :data="status" />
       <JsonBlock title="服务健康 /health" :data="health" />
       <JsonBlock title="指标快照 /metrics" :data="metrics" />
       <JsonBlock title="DNS 统计 /dns/stats" :data="dnsStats" />
       <JsonBlock title="转发统计 /singbox/stats" :data="forwardStats" />
+      <JsonBlock title="告警调试 /alerts" :data="alerts" />
     </div>
   </section>
 </template>
@@ -125,6 +153,22 @@ button {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: 12px;
+}
+
+.main-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: 12px;
+}
+
+.panel {
+  display: grid;
+  gap: 8px;
+}
+
+.panel h3 {
+  margin: 0;
+  font-size: 15px;
 }
 
 .error {

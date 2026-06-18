@@ -12,4 +12,5 @@ export const policyApi = {
   updateRules: () => post<Record<string, unknown>>('/rules/update'),
   routing: () => get<Record<string, unknown>>('/routing'),
   updateRouting: (mode: string) => put<Record<string, unknown>>('/routing', { mode }),
+  firewall: () => get<Record<string, unknown>>('/policy/firewall'),
 }

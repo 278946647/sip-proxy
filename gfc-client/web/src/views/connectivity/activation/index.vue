@@ -1,7 +1,10 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import DataTable from '@/components/common/DataTable.vue'
 import JsonBlock from '@/components/common/JsonBlock.vue'
+import StatCard from '@/components/common/StatCard.vue'
 import { connectivityApi } from '@/api/connectivity'
+import { asArray, asRecord, textValue } from '@/utils/data'
 
 const loading = ref(false)
 const flashing = ref(false)
@@ -13,6 +16,9 @@ const resetState = ref(false)
 const activation = ref<Record<string, unknown>>({})
 const nodes = ref<Record<string, unknown>>({})
 const agent = ref<Record<string, unknown>>({})
+
+const activationPayload = computed(() => asRecord(activation.value.payload))
+const nodeRows = computed(() => asArray(nodes.value.nodes).map(asRecord))
 
 async function load() {
   loading.value = true
@@ -95,6 +101,24 @@ onMounted(load)
       <p v-if="error" class="error">{{ error }}</p>
     </div>
 
+    <div class="cards">
+      <StatCard label="线路码" :value="activation.value.code_present ? '已写入' : '未写入'" :tone="activation.value.code_present ? 'ok' : 'warn'" />
+      <StatCard label="控制面" :value="textValue(activationPayload.controlPlaneUrl || activationPayload.control_plane_url || activationPayload.control)" />
+      <StatCard label="节点数量" :value="String(nodeRows.length)" />
+      <StatCard label="Agent" :value="textValue(agent.status || agent.state)" />
+    </div>
+
+    <section class="panel">
+      <h3>节点列表</h3>
+      <DataTable :columns="[
+        { key: 'name', title: '名称' },
+        { key: 'region', title: '区域' },
+        { key: 'host', title: '地址' },
+        { key: 'port', title: '端口' },
+        { key: 'status', title: '状态' },
+      ]" :rows="nodeRows" empty-text="暂无节点" />
+    </section>
+
     <div class="grid">
       <JsonBlock title="激活状态 /activation" :data="activation" />
       <JsonBlock title="节点列表 /nodes" :data="nodes" />
@@ -173,6 +197,22 @@ button {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
   gap: 12px;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+}
+
+.panel {
+  display: grid;
+  gap: 8px;
+}
+
+.panel h3 {
+  margin: 0;
+  font-size: 15px;
 }
 
 .error {

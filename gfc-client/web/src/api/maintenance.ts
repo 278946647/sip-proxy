@@ -14,4 +14,5 @@ export const maintenanceApi = {
   settings: () => get<Record<string, unknown>>('/settings'),
   updateSettings: (payload: Record<string, unknown>) => put<Record<string, unknown>>('/settings', payload),
   updateSingboxLogging: (level: string) => put<Record<string, unknown>>('/settings/singbox/logging', { level }),
+  diagnostic: (type: 'dns' | 'ping' | 'tun', payload: Record<string, unknown> = {}) => post<Record<string, unknown>>(`/diagnostics/${type}`, payload),
 }

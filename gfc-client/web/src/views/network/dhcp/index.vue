@@ -10,6 +10,7 @@ const saving = ref(false)
 const message = ref('')
 const error = ref('')
 const bridge = ref<Record<string, unknown>>({})
+const dhcp = ref<Record<string, unknown>>({})
 
 const form = ref({
   enabled: true,
@@ -25,13 +26,19 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const res = await networkApi.bridge()
-    if (res.ok) {
-      bridge.value = res.data
-      form.value.enabled = Boolean(res.data.dhcpEnabled ?? res.data.dhcp_enabled ?? form.value.enabled)
-      form.value.gateway = textValue(res.data.lanAddress || res.data.lan_address, form.value.gateway)
-      form.value.start = textValue(res.data.dhcpStart || res.data.dhcp_start, form.value.start)
-      form.value.end = textValue(res.data.dhcpEnd || res.data.dhcp_end, form.value.end)
+    const [bridgeRes, dhcpRes] = await Promise.all([networkApi.bridge(), networkApi.dhcp()])
+    if (bridgeRes.ok) {
+      bridge.value = bridgeRes.data
+    }
+    if (dhcpRes.ok) {
+      dhcp.value = dhcpRes.data
+      form.value.enabled = Boolean(dhcpRes.data.enabled ?? form.value.enabled)
+      form.value.gateway = textValue(dhcpRes.data.gateway, form.value.gateway)
+      form.value.start = textValue(dhcpRes.data.start, form.value.start)
+      form.value.end = textValue(dhcpRes.data.end, form.value.end)
+      form.value.leaseTime = textValue(dhcpRes.data.leaseTime || dhcpRes.data.lease_time, form.value.leaseTime)
+      form.value.dns = textValue(dhcpRes.data.dns, form.value.dns)
+      form.value.domain = textValue(dhcpRes.data.domain, form.value.domain)
     }
   } catch (err) {
     error.value = String(err)
@@ -44,24 +51,7 @@ async function save() {
   saving.value = true
   message.value = ''
   try {
-    const payload = {
-      ...bridge.value,
-      lanAddress: form.value.gateway,
-      lan_address: form.value.gateway,
-      dhcpEnabled: form.value.enabled,
-      dhcp_enabled: form.value.enabled,
-      dhcpStart: form.value.start,
-      dhcp_start: form.value.start,
-      dhcpEnd: form.value.end,
-      dhcp_end: form.value.end,
-      dhcpLeaseTime: form.value.leaseTime,
-      dhcp_lease_time: form.value.leaseTime,
-      dhcpDns: form.value.dns,
-      dhcp_dns: form.value.dns,
-      dhcpDomain: form.value.domain,
-      dhcp_domain: form.value.domain,
-    }
-    const res = await networkApi.updateBridge(payload)
+    const res = await networkApi.updateDhcp({ ...form.value, lease_time: form.value.leaseTime })
     message.value = res.ok ? 'DHCP 参数已提交到网络配置。' : (res.error?.message ?? '保存失败')
     await load()
   } catch (err) {
@@ -96,7 +86,8 @@ onMounted(load)
     <div class="actions">
       <button :disabled="saving" @click="save">{{ saving ? '保存中...' : '保存 DHCP 配置' }}</button>
     </div>
-    <JsonBlock title="当前 DHCP/桥接原始配置" :data="bridge" />
+    <JsonBlock title="当前 DHCP 配置 /network/dhcp" :data="dhcp" />
+    <JsonBlock title="桥接配置 /network/bridge" :data="bridge" />
   </section>
 </template>
 

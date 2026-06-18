@@ -1,7 +1,10 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import DataTable from '@/components/common/DataTable.vue'
 import JsonBlock from '@/components/common/JsonBlock.vue'
+import StatCard from '@/components/common/StatCard.vue'
 import { policyApi } from '@/api/policy'
+import { asArray, asRecord, textValue } from '@/utils/data'
 
 const loading = ref(false)
 const actionLoading = ref(false)
@@ -11,6 +14,11 @@ const groups = ref<Record<string, unknown>>({})
 const dnsLists = ref<Record<string, unknown>>({})
 const rules = ref<Record<string, unknown>>({})
 const routing = ref<Record<string, unknown>>({})
+
+const dnsListMap = computed(() => asRecord(dnsLists.value.lists || dnsLists.value))
+const dnsRows = computed(() => Object.entries(dnsListMap.value).map(([name, value]) => ({ name, ...asRecord(value) })))
+const groupRows = computed(() => asArray(groups.value.groups).map(asRecord))
+const ruleRows = computed(() => asArray(rules.value.rules).map(asRecord))
 
 async function load() {
   loading.value = true
@@ -64,7 +72,33 @@ onMounted(load)
     </header>
     <div v-if="error" class="error">{{ error }}</div>
     <div v-if="message" class="message">{{ message }}</div>
-    <div class="grid">
+    <div class="cards">
+      <StatCard label="DNS 列表" :value="String(dnsRows.length)" />
+      <StatCard label="策略组" :value="String(groupRows.length)" />
+      <StatCard label="规则集" :value="String(ruleRows.length)" />
+      <StatCard label="路由模式" :value="textValue(routing.mode)" />
+    </div>
+
+    <div class="main-grid">
+      <section class="panel">
+        <h3>DNS 列表</h3>
+        <DataTable :columns="[
+          { key: 'name', title: '列表' },
+          { key: 'count', title: '数量' },
+          { key: 'path', title: '路径' },
+        ]" :rows="dnsRows" />
+      </section>
+      <section class="panel">
+        <h3>代理策略组</h3>
+        <DataTable :columns="[
+          { key: 'id', title: 'ID' },
+          { key: 'name', title: '名称' },
+          { key: 'selected', title: '当前出站' },
+        ]" :rows="groupRows" />
+      </section>
+    </div>
+
+    <div class="grid debug-grid">
       <JsonBlock title="代理策略组 /policy/groups" :data="groups" />
       <JsonBlock title="DNS 列表 /dns/lists" :data="dnsLists" />
       <JsonBlock title="规则集 /rules" :data="rules" />
@@ -114,6 +148,28 @@ button {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
   gap: 12px;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+}
+
+.main-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: 12px;
+}
+
+.panel {
+  display: grid;
+  gap: 8px;
+}
+
+.panel h3 {
+  margin: 0;
+  font-size: 15px;
 }
 
 .error {

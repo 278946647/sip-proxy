@@ -1,34 +1,40 @@
 <script setup lang="ts">
 import { jsonText } from '@/utils/data'
 
-defineProps<{
+withDefaults(defineProps<{
   title?: string
   data: unknown
-}>()
+  open?: boolean
+}>(), {
+  title: '调试数据',
+  open: false,
+})
 </script>
 
 <template>
-  <section class="json-block">
-    <h3 v-if="title">{{ title }}</h3>
+  <details class="json-block" :open="open">
+    <summary>{{ title }}</summary>
     <pre>{{ jsonText(data) }}</pre>
-  </section>
+  </details>
 </template>
 
 <style scoped>
 .json-block {
   border: 1px solid var(--border);
-  border-radius: 10px;
-  background: #0f172a;
-  color: #dbeafe;
+  border-radius: 4px;
+  background: #fff;
+  color: var(--text);
   overflow: hidden;
 }
 
-h3 {
-  margin: 0;
-  padding: 8px 10px;
+summary {
+  cursor: pointer;
+  padding: 9px 10px;
   font-size: 13px;
-  color: #e5e7eb;
-  border-bottom: 1px solid #1f2937;
+  font-weight: 600;
+  color: #334155;
+  background: #f8fafc;
+  border-bottom: 1px solid var(--border);
 }
 
 pre {
@@ -38,5 +44,7 @@ pre {
   max-height: 340px;
   font-size: 12px;
   line-height: 1.5;
+  color: #dbeafe;
+  background: #0f172a;
 }
 </style>
