@@ -65,6 +65,8 @@ check "resolved stopped" "! systemctl is-active --quiet systemd-resolved"
 check "mosdns listens :53" "grep -qE 'addr: \"0\\.0\\.0\\.0:53\"' /etc/gfc-client/mosdns/easymosdns/config.yaml"
 check "nftables dns hijack" "test -f /etc/gfc-client/nftables-dns.conf"
 check "nft excludes mosdns uid" "grep -q 'meta skuid != 65353' /etc/gfc-client/nftables-dns.conf"
+SSH_PORT="${GFC_SSH_PORT:-212}"
+check "nft ssh admin ports" "grep -qE 'tcp dport \\{ 22, ${SSH_PORT} \\}|tcp dport \\{ ${SSH_PORT}, 22 \\}' /etc/gfc-client/nftables.conf"
 
 if [[ -f /etc/gfc-client/activation.b32 ]]; then
   echo "INFO activation file present"

@@ -208,6 +208,9 @@ import os, sys
 from pathlib import Path
 nft_boot, wan, lan, enable_masq, tun = sys.argv[1:6]
 ssh_port = int(os.environ.get("GFC_SSH_PORT", "212"))
+# Fresh Ubuntu listens on 22; production boxes use GFC_SSH_PORT (212). Allow both on all ifaces.
+admin_tcp = sorted({22, ssh_port})
+admin_tcp_set = ", ".join(str(p) for p in admin_tcp)
 masq = ""
 if wan and enable_masq == "1":
     masq = f"""
@@ -220,7 +223,7 @@ table ip gfc_client_nat {{
 forward = ""
 input_rules = f"""    ct state established,related accept
     iif lo accept
-    tcp dport {ssh_port} accept"""
+    tcp dport {{ {admin_tcp_set} }} accept"""
 if wan and lan:
     forward = f"""
     iifname "{lan}" oifname "{tun}" accept
