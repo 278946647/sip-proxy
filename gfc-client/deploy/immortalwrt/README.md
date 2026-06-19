@@ -110,12 +110,17 @@ The first LuCI app version lives in `deploy/immortalwrt/luci-app-gfc` and adds:
 - Overview
 - Activation
 - Services
+- DNS
+- Diagnostics
 - Logs
 
 For manual testing after uploading `deploy` to the device:
 
 ```sh
 /usr/lib/gfc-client/deploy/immortalwrt/install-luci-app.sh
+rm -rf /tmp/luci-indexcache /tmp/luci-modulecache
+/etc/init.d/rpcd restart
+/etc/init.d/uhttpd restart
 ```
 
 Then open:

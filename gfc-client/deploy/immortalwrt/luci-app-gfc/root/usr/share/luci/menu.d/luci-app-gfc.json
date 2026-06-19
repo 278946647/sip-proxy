@@ -3,7 +3,8 @@
     "title": "GFC 客户端",
     "order": 30,
     "action": {
-      "type": "firstchild"
+      "type": "view",
+      "path": "gfc/overview"
     },
     "depends": {
       "acl": [ "luci-app-gfc" ]
@@ -33,9 +34,25 @@
       "path": "gfc/services"
     }
   },
+  "admin/gfc/dns": {
+    "title": "DNS",
+    "order": 40,
+    "action": {
+      "type": "view",
+      "path": "gfc/dns"
+    }
+  },
+  "admin/gfc/diagnostics": {
+    "title": "诊断",
+    "order": 50,
+    "action": {
+      "type": "view",
+      "path": "gfc/diagnostics"
+    }
+  },
   "admin/gfc/logs": {
     "title": "日志",
-    "order": 40,
+    "order": 60,
     "action": {
       "type": "view",
       "path": "gfc/logs"

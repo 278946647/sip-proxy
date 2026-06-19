@@ -5,6 +5,8 @@
       "file": {
         "/usr/bin/wget": [ "exec" ],
         "/bin/busybox": [ "exec" ],
+        "/bin/netstat": [ "exec" ],
+        "/sbin/uci": [ "exec" ],
         "/etc/init.d/gfc-api": [ "exec" ],
         "/etc/init.d/gfc-agent": [ "exec" ],
         "/etc/init.d/gfc-mosdns": [ "exec" ],
