@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/278946647/sip-proxy/gfc-client/internal/config"
+	"github.com/278946647/sip-proxy/gfc-client/internal/platform"
 )
 
 const easyConfigURL = "https://raw.githubusercontent.com/pmkol/easymosdns/main/config.yaml"
@@ -32,6 +33,16 @@ func (r *Renderer) EnsureTree(tryDownload bool) error {
 	base := r.cfg.Paths.EasyMosdnsDir
 	bundle := filepath.Join(r.cfg.Paths.Root, "share", "easymosdns")
 	tmpl := r.cfg.Paths.MosdnsConfig
+	openwrtTemplate := filepath.Join(bundle, "config-openwrt.yaml")
+
+	if platform.IsOpenWrt() && fileExists(openwrtTemplate) && !validMosDNSV5Config(tmpl) {
+		if err := os.MkdirAll(base, 0o755); err != nil {
+			return err
+		}
+		if err := copyFile(openwrtTemplate, tmpl); err == nil && validMosDNSV5Config(tmpl) {
+			return nil
+		}
+	}
 
 	if validEasyConfig(tmpl) {
 		return nil
@@ -84,6 +95,14 @@ func (r *Renderer) syncFromBundle(base, bundle string) error {
 	if err := copyBundledTree(bundle, base); err != nil {
 		return err
 	}
+	if platform.IsOpenWrt() && fileExists(filepath.Join(base, "config-openwrt.yaml")) {
+		if err := copyFile(filepath.Join(base, "config-openwrt.yaml"), r.cfg.Paths.MosdnsConfig); err != nil {
+			return err
+		}
+		if validMosDNSV5Config(r.cfg.Paths.MosdnsConfig) {
+			return nil
+		}
+	}
 	if !validEasyConfig(r.cfg.Paths.MosdnsConfig) {
 		return fmt.Errorf("bundled easymosdns config invalid")
 	}
@@ -97,6 +116,22 @@ func validEasyConfig(path string) bool {
 	}
 	s := string(data)
 	return strings.Contains(s, "main_sequence") && strings.Contains(s, "data_providers:")
+}
+
+func validMosDNSV5Config(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	s := string(data)
+	return strings.Contains(s, "main_sequence") &&
+		strings.Contains(s, "type: sequence") &&
+		(strings.Contains(s, "type: udp_server") || strings.Contains(s, "type: tcp_server"))
+}
+
+func fileExists(path string) bool {
+	st, err := os.Stat(path)
+	return err == nil && !st.IsDir()
 }
 
 // Render applies only path and listen-port fixes to the easymosdns config.
@@ -201,6 +236,26 @@ func findBinary(name string) string {
 
 func copyBundledTree(src, dst string) error {
 	return exec.Command("cp", "-a", src+"/.", dst).Run()
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	return out.Close()
 }
 
 func downloadURL(url, dst string) error {

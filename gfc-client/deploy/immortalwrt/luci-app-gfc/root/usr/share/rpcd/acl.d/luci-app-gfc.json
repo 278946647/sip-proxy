@@ -1,0 +1,27 @@
+{
+  "luci-app-gfc": {
+    "description": "Grant access to GFC local API helpers",
+    "read": {
+      "file": {
+        "/usr/bin/wget": [ "exec" ],
+        "/bin/busybox": [ "exec" ],
+        "/etc/init.d/gfc-api": [ "exec" ],
+        "/etc/init.d/gfc-agent": [ "exec" ],
+        "/etc/init.d/gfc-mosdns": [ "exec" ],
+        "/etc/init.d/gfc-sing-box": [ "exec" ],
+        "/etc/init.d/gfc-routing": [ "exec" ],
+        "/usr/bin/logread": [ "exec" ]
+      }
+    },
+    "write": {
+      "file": {
+        "/usr/bin/wget": [ "exec" ],
+        "/etc/init.d/gfc-api": [ "exec" ],
+        "/etc/init.d/gfc-agent": [ "exec" ],
+        "/etc/init.d/gfc-mosdns": [ "exec" ],
+        "/etc/init.d/gfc-sing-box": [ "exec" ],
+        "/etc/init.d/gfc-routing": [ "exec" ]
+      }
+    }
+  }
+}

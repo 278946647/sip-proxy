@@ -1,0 +1,44 @@
+{
+  "admin/gfc": {
+    "title": "GFC 客户端",
+    "order": 30,
+    "action": {
+      "type": "firstchild"
+    },
+    "depends": {
+      "acl": [ "luci-app-gfc" ]
+    }
+  },
+  "admin/gfc/overview": {
+    "title": "概览",
+    "order": 10,
+    "action": {
+      "type": "view",
+      "path": "gfc/overview"
+    }
+  },
+  "admin/gfc/activation": {
+    "title": "设备激活",
+    "order": 20,
+    "action": {
+      "type": "view",
+      "path": "gfc/activation"
+    }
+  },
+  "admin/gfc/services": {
+    "title": "服务",
+    "order": 30,
+    "action": {
+      "type": "view",
+      "path": "gfc/services"
+    }
+  },
+  "admin/gfc/logs": {
+    "title": "日志",
+    "order": 40,
+    "action": {
+      "type": "view",
+      "path": "gfc/logs"
+    }
+  }
+}
