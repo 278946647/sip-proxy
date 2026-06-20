@@ -1,7 +1,7 @@
 # MosDNS v5 config for ImmortalWrt/OpenWrt.
 # dnsmasq keeps LAN :53 and forwards to this instance on 127.0.0.1:1053.
 # Rules are loaded from /etc/gfc-client/mosdns/easymosdns/rules after rendering.
-# gfc_openwrt_mosdns_v3
+# gfc_openwrt_mosdns_v4
 # Keep this marker for the renderer's legacy template check.
 # data_providers:
 log:
@@ -61,7 +61,6 @@ plugins:
     args:
       size: 8192
       lazy_cache_ttl: 86400
-      cache_everything: true
 
   - tag: forward_local
     type: forward

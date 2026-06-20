@@ -135,7 +135,7 @@ func validOpenWrtMosDNSConfig(path string) bool {
 		return false
 	}
 	s := string(data)
-	return validMosDNSV5Config(path) && strings.Contains(s, "gfc_openwrt_mosdns_v3")
+	return validMosDNSV5Config(path) && strings.Contains(s, "gfc_openwrt_mosdns_v4")
 }
 
 func fileExists(path string) bool {
@@ -185,13 +185,13 @@ func stripFileLog(raw string) string {
 	return strings.Join(out, "\n")
 }
 
-// stripUnsupportedUpstreamKeys removes upstream fields mosdns-x does not accept.
+// stripUnsupportedUpstreamKeys removes fields that common OpenWrt mosdns builds do not accept.
 func stripUnsupportedUpstreamKeys(raw string) string {
 	lines := strings.Split(raw, "\n")
 	out := make([]string, 0, len(lines))
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if trimmed == "enable_http3: false" || trimmed == "enable_http3: true" {
+		if trimmed == "enable_http3: false" || trimmed == "enable_http3: true" || trimmed == "cache_everything: true" || trimmed == "cache_everything: false" {
 			continue
 		}
 		out = append(out, line)
