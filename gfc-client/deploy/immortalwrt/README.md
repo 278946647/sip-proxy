@@ -139,6 +139,32 @@ uci set dhcp.@dnsmasq[0].cachesize='0'
 uci commit dhcp
 ```
 
+GFC routing additionally installs a DNS hijack nft table so LAN clients using
+external DNS servers are redirected back to the router's `dnsmasq:53`, then to
+`mosdns:1053`.
+
+## Dataplane Split
+
+The ImmortalWrt dataplane uses independent nft tables and coexists with fw4:
+
+```text
+LAN traffic -> nft gfc_client_mangle
+  CN/private/DNS/DHCP -> direct
+  non-CN -> fwmark 0x2023 -> table 2022 -> gfctun -> sing-box
+```
+
+The CN IP set is loaded from:
+
+```text
+/etc/gfc-client/mosdns/easymosdns/rules/china_ip_list.txt
+```
+
+falling back to:
+
+```text
+/usr/lib/gfc-client/share/easymosdns/rules/china_ip_list.txt
+```
+
 ## LuCI App Testing
 
 The first LuCI app version lives in `deploy/immortalwrt/luci-app-gfc` and adds:

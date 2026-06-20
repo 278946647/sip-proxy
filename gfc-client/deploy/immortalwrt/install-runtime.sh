@@ -71,6 +71,8 @@ fi
 /etc/init.d/gfc-api enable
 /etc/init.d/gfc-agent enable
 /etc/init.d/gfc-mosdns enable
+/etc/init.d/gfc-sing-box enable
+/etc/init.d/gfc-routing enable
 
 service_restart() {
 	local svc="$1"
