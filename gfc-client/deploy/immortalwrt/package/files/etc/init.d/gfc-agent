@@ -21,5 +21,6 @@ start_service() {
 }
 
 reload_service() {
-	restart
+	stop
+	start
 }

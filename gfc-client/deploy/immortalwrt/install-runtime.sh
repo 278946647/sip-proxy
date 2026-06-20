@@ -74,9 +74,16 @@ fi
 /etc/init.d/gfc-agent enable
 /etc/init.d/gfc-mosdns enable
 
-/etc/init.d/gfc-api restart
-/etc/init.d/gfc-mosdns restart || true
+service_restart() {
+	local svc="$1"
+	"/etc/init.d/$svc" stop 2>/dev/null || true
+	sleep 1
+	"/etc/init.d/$svc" start
+}
+
+service_restart gfc-api
+service_restart gfc-mosdns || true
 /etc/init.d/dnsmasq restart || true
-/etc/init.d/gfc-agent restart
+service_restart gfc-agent
 
 echo "GFC runtime installed. API: http://127.0.0.1:${GFC_WEB_PORT}/api/v1/status"
