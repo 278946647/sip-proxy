@@ -42,9 +42,25 @@
       "path": "gfc/policy"
     }
   },
+  "admin/gfc/dataplane": {
+    "title": "数据面",
+    "order": 50,
+    "action": {
+      "type": "view",
+      "path": "gfc/dataplane"
+    }
+  },
+  "admin/gfc/settings": {
+    "title": "设置",
+    "order": 60,
+    "action": {
+      "type": "view",
+      "path": "gfc/settings"
+    }
+  },
   "admin/gfc/services": {
     "title": "服务",
-    "order": 50,
+    "order": 70,
     "action": {
       "type": "view",
       "path": "gfc/services"
@@ -52,7 +68,7 @@
   },
   "admin/gfc/dns": {
     "title": "DNS",
-    "order": 60,
+    "order": 80,
     "action": {
       "type": "view",
       "path": "gfc/dns"
@@ -60,7 +76,7 @@
   },
   "admin/gfc/diagnostics": {
     "title": "诊断",
-    "order": 70,
+    "order": 90,
     "action": {
       "type": "view",
       "path": "gfc/diagnostics"
@@ -68,7 +84,7 @@
   },
   "admin/gfc/logs": {
     "title": "日志",
-    "order": 80,
+    "order": 100,
     "action": {
       "type": "view",
       "path": "gfc/logs"

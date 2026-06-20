@@ -290,7 +290,7 @@ func memoryStats() map[string]any {
 func diskStats(mount string) map[string]any {
 	out, err := exec.Command("df", "-B1", mount).Output()
 	if err != nil {
-		return map[string]any{"mount": mount, "error": err.Error()}
+		return diskStatsKiB(mount, err.Error())
 	}
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
 	if len(lines) < 2 {
@@ -306,6 +306,28 @@ func diskStats(mount string) map[string]any {
 	pct, _ := strconv.ParseFloat(pctStr, 64)
 	return map[string]any{
 		"mount": mount, "total_bytes": total, "used_bytes": used, "used_percent": pct,
+	}
+}
+
+func diskStatsKiB(mount string, fallbackErr string) map[string]any {
+	out, err := exec.Command("df", "-k", mount).Output()
+	if err != nil {
+		return map[string]any{"mount": mount, "error": fallbackErr}
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) < 2 {
+		return map[string]any{"mount": mount}
+	}
+	fields := strings.Fields(lines[1])
+	if len(fields) < 5 {
+		return map[string]any{"mount": mount}
+	}
+	totalKiB, _ := strconv.ParseUint(fields[1], 10, 64)
+	usedKiB, _ := strconv.ParseUint(fields[2], 10, 64)
+	pctStr := strings.TrimSuffix(fields[4], "%")
+	pct, _ := strconv.ParseFloat(pctStr, 64)
+	return map[string]any{
+		"mount": mount, "total_bytes": totalKiB * 1024, "used_bytes": usedKiB * 1024, "used_percent": pct,
 	}
 }
 
