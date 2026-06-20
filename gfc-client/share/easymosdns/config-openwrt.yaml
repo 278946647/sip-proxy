@@ -1,11 +1,61 @@
 # MosDNS v5 config for ImmortalWrt/OpenWrt.
 # dnsmasq keeps LAN :53 and forwards to this instance on 127.0.0.1:1053.
+# Rules are loaded from /etc/gfc-client/mosdns/easymosdns/rules after rendering.
+# gfc_openwrt_mosdns_v2
 # Keep this marker for the renderer's legacy template check.
 # data_providers:
 log:
   level: error
 
 plugins:
+  - tag: china_domain
+    type: domain_set
+    args:
+      files:
+        - ./rules/china_domain_list.txt
+
+  - tag: gfw_domain
+    type: domain_set
+    args:
+      files:
+        - ./rules/gfw_domain_list.txt
+
+  - tag: cdn_domain
+    type: domain_set
+    args:
+      files:
+        - ./rules/cdn_domain_list.txt
+
+  - tag: ad_domain
+    type: domain_set
+    args:
+      files:
+        - ./rules/ad_domain_list.txt
+
+  - tag: ecs_cn_domain
+    type: domain_set
+    args:
+      files:
+        - ./ecs_cn_domain.txt
+
+  - tag: ecs_noncn_domain
+    type: domain_set
+    args:
+      files:
+        - ./ecs_noncn_domain.txt
+
+  - tag: china_ip
+    type: ip_set
+    args:
+      files:
+        - ./rules/china_ip_list.txt
+
+  - tag: gfw_ip
+    type: ip_set
+    args:
+      files:
+        - ./rules/gfw_ip_list.txt
+
   - tag: cache
     type: cache
     args:
@@ -21,10 +71,35 @@ plugins:
         - addr: 119.29.29.29
         - addr: 114.114.114.114
 
+  - tag: forward_remote
+    type: forward
+    args:
+      upstreams:
+        - addr: 1.1.1.1
+        - addr: 8.8.8.8
+
   - tag: main_sequence
     type: sequence
     args:
       - exec: $cache
+      - matches:
+          - qname $ad_domain
+        exec: reject 3
+      - matches:
+          - qname $gfw_domain
+        exec: $forward_remote
+      - matches:
+          - qname $ecs_noncn_domain
+        exec: $forward_remote
+      - matches:
+          - qname $china_domain
+        exec: $forward_local
+      - matches:
+          - qname $cdn_domain
+        exec: $forward_local
+      - matches:
+          - qname $ecs_cn_domain
+        exec: $forward_local
       - exec: $forward_local
 
   - tag: udp_server

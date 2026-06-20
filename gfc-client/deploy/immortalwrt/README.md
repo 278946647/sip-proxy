@@ -165,6 +165,20 @@ falling back to:
 /usr/lib/gfc-client/share/easymosdns/rules/china_ip_list.txt
 ```
 
+For audit and troubleshooting, `gfc-routing.sh` writes:
+
+```text
+/etc/gfc-client/nftables-cn-ip.set
+/etc/gfc-client/nftables-cn-ip-load.nft
+```
+
+Check dataplane state with:
+
+```sh
+/usr/lib/gfc-client/deploy/immortalwrt/gfc-routing.sh status
+nft list set inet gfc_client_mangle cn_ip
+```
+
 ## LuCI App Testing
 
 The first LuCI app version lives in `deploy/immortalwrt/luci-app-gfc` and adds:

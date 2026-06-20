@@ -35,11 +35,11 @@ func (r *Renderer) EnsureTree(tryDownload bool) error {
 	tmpl := r.cfg.Paths.MosdnsConfig
 	openwrtTemplate := filepath.Join(bundle, "config-openwrt.yaml")
 
-	if platform.IsOpenWrt() && fileExists(openwrtTemplate) && !validMosDNSV5Config(tmpl) {
+	if platform.IsOpenWrt() && fileExists(openwrtTemplate) && !validOpenWrtMosDNSConfig(tmpl) {
 		if err := os.MkdirAll(base, 0o755); err != nil {
 			return err
 		}
-		if err := copyFile(openwrtTemplate, tmpl); err == nil && validMosDNSV5Config(tmpl) {
+		if err := copyFile(openwrtTemplate, tmpl); err == nil && validOpenWrtMosDNSConfig(tmpl) {
 			return nil
 		}
 	}
@@ -99,7 +99,7 @@ func (r *Renderer) syncFromBundle(base, bundle string) error {
 		if err := copyFile(filepath.Join(base, "config-openwrt.yaml"), r.cfg.Paths.MosdnsConfig); err != nil {
 			return err
 		}
-		if validMosDNSV5Config(r.cfg.Paths.MosdnsConfig) {
+		if validOpenWrtMosDNSConfig(r.cfg.Paths.MosdnsConfig) {
 			return nil
 		}
 	}
@@ -127,6 +127,15 @@ func validMosDNSV5Config(path string) bool {
 	return strings.Contains(s, "main_sequence") &&
 		strings.Contains(s, "type: sequence") &&
 		(strings.Contains(s, "type: udp_server") || strings.Contains(s, "type: tcp_server"))
+}
+
+func validOpenWrtMosDNSConfig(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	s := string(data)
+	return validMosDNSV5Config(path) && strings.Contains(s, "gfc_openwrt_mosdns_v2")
 }
 
 func fileExists(path string) bool {

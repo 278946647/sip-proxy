@@ -14,6 +14,8 @@ DNS_PORT="${GFC_DNSMASQ_PORT:-53}"
 LAN_IFACE="${GFC_LAN_IFACE:-$(uci -q get network.lan.device 2>/dev/null || true)}"
 LAN_ADDR="${GFC_LAN_ADDRESS:-$(uci -q get network.lan.ipaddr 2>/dev/null || true)}"
 LAN_MASK="$(uci -q get network.lan.netmask 2>/dev/null || echo 255.255.255.0)"
+CN_AUDIT="${GFC_ETC}/nftables-cn-ip.set"
+CN_LOAD="${GFC_ETC}/nftables-cn-ip-load.nft"
 
 [ -n "$LAN_IFACE" ] || LAN_IFACE="br-lan"
 [ -n "$LAN_ADDR" ] || LAN_ADDR="192.168.1.1"
@@ -59,6 +61,8 @@ stop_rules() {
 }
 
 apply_dns_hijack() {
+	# LAN clients may point DNS at 8.8.8.8 or other resolvers. Redirect them
+	# back to dnsmasq:53; dnsmasq then forwards to mosdns:1053 via UCI.
 	nft -f - <<EOF
 table inet gfc_dns_hijack {
   chain prerouting {
@@ -103,6 +107,8 @@ load_cn_set() {
 		echo "WARN: CN IP list missing: $CN_LIST" >&2
 		return 0
 	}
+	mkdir -p "$GFC_ETC"
+	awk '/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\/[0-9]+/ { print $1 }' "$CN_LIST" > "$CN_AUDIT"
 	awk 'BEGIN{n=0; started=0}
 		/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\/[0-9]+/ {
 			if (!started) { printf "add element inet gfc_client_mangle cn_ip { "; started=1; }
@@ -111,7 +117,9 @@ load_cn_set() {
 			n++;
 			if (n == 200) { print " }"; n=0; started=0; }
 		}
-		END{ if (started) print " }"; }' "$CN_LIST" | nft -f - 2>/dev/null || true
+		END{ if (started) print " }"; }' "$CN_LIST" > "$CN_LOAD"
+	nft -f "$CN_LOAD" 2>/dev/null || true
+	echo "cn ip set: $(wc -l < "$CN_AUDIT" 2>/dev/null || echo 0) prefixes ($CN_AUDIT)"
 }
 
 wait_tun() {
@@ -142,5 +150,15 @@ case "$ACTION" in
 	start) start_rules ;;
 	stop) stop_rules ;;
 	restart) stop_rules; start_rules ;;
-	*) echo "usage: $0 {start|stop|restart}" >&2; exit 2 ;;
+	status)
+		echo "lan=$LAN_IFACE cidr=$LAN_CIDR tun=$TUN_IFACE mark=$MARK table=$TABLE"
+		echo "dns_hijack=$(nft list table inet gfc_dns_hijack >/dev/null 2>&1 && echo yes || echo no)"
+		echo "policy=$(nft list table inet gfc_client_mangle >/dev/null 2>&1 && echo yes || echo no)"
+		echo "cn_list=$CN_LIST"
+		echo "cn_audit=$CN_AUDIT"
+		[ -f "$CN_AUDIT" ] && wc -l "$CN_AUDIT" || true
+		ip -4 rule list | grep "$TABLE" || true
+		ip -4 route show table "$TABLE" 2>/dev/null || true
+		;;
+	*) echo "usage: $0 {start|stop|restart|status}" >&2; exit 2 ;;
 esac
