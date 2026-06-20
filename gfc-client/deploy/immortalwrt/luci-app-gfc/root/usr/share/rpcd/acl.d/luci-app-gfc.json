@@ -7,6 +7,8 @@
         "/bin/busybox": [ "exec" ],
         "/bin/netstat": [ "exec" ],
         "/sbin/uci": [ "exec" ],
+        "/sbin/ip": [ "exec" ],
+        "/usr/sbin/nft": [ "exec" ],
         "/etc/init.d/gfc-api": [ "exec" ],
         "/etc/init.d/gfc-agent": [ "exec" ],
         "/etc/init.d/gfc-mosdns": [ "exec" ],

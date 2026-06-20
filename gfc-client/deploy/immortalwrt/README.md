@@ -119,6 +119,7 @@ The first LuCI app version lives in `deploy/immortalwrt/luci-app-gfc` and adds:
 - Nodes
 - Policy
 - Dataplane
+- Integration
 - Settings
 - Network
 - Services
