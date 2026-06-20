@@ -1,116 +1,314 @@
-# MosDNS v5 config for ImmortalWrt/OpenWrt.
+# EasyMosDNS full policy adapted for GFC on ImmortalWrt/OpenWrt.
 # dnsmasq keeps LAN :53 and forwards to this instance on 127.0.0.1:1053.
-# Rules are loaded from /etc/gfc-client/mosdns/easymosdns/rules after rendering.
-# gfc_openwrt_mosdns_v4
-# Keep this marker for the renderer's legacy template check.
-# data_providers:
+# Rules are rendered to /etc/gfc-client/mosdns/easymosdns.
+# gfc_openwrt_mosdns_v5
 log:
-  level: error
+    level: error
+
+data_providers:
+  - tag: chinalist
+    file: ./rules/china_domain_list.txt
+    auto_reload: true
+  - tag: gfwlist
+    file: ./rules/gfw_domain_list.txt
+    auto_reload: true
+  - tag: cdncn
+    file: ./rules/cdn_domain_list.txt
+    auto_reload: true
+  - tag: chinaip
+    file: ./rules/china_ip_list.txt
+    auto_reload: true
+  - tag: gfwip
+    file: ./rules/gfw_ip_list.txt
+    auto_reload: true
+  - tag: adlist
+    file: ./rules/ad_domain_list.txt
+    auto_reload: true
+  - tag: ecscn
+    file: ./ecs_cn_domain.txt
+    auto_reload: true
+  - tag: ecsnoncn
+    file: ./ecs_noncn_domain.txt
+    auto_reload: true
+  - tag: hosts
+    file: ./hosts.txt
+    auto_reload: true
 
 plugins:
-  - tag: china_domain
-    type: domain_set
-    args:
-      files:
-        - ./rules/china_domain_list.txt
-
-  - tag: gfw_domain
-    type: domain_set
-    args:
-      files:
-        - ./rules/gfw_domain_list.txt
-
-  - tag: cdn_domain
-    type: domain_set
-    args:
-      files:
-        - ./rules/cdn_domain_list.txt
-
-  - tag: ad_domain
-    type: domain_set
-    args:
-      files:
-        - ./rules/ad_domain_list.txt
-
-  - tag: ecs_cn_domain
-    type: domain_set
-    args:
-      files:
-        - ./ecs_cn_domain.txt
-
-  - tag: ecs_noncn_domain
-    type: domain_set
-    args:
-      files:
-        - ./ecs_noncn_domain.txt
-
-  - tag: china_ip
-    type: ip_set
-    args:
-      files:
-        - ./rules/china_ip_list.txt
-
-  - tag: gfw_ip
-    type: ip_set
-    args:
-      files:
-        - ./rules/gfw_ip_list.txt
-
-  - tag: cache
+  - tag: cache_lan
     type: cache
     args:
       size: 8192
       lazy_cache_ttl: 86400
+      lazy_cache_reply_ttl: 1
+  - tag: cache_wan
+    type: cache
+    args:
+      size: 131072
+      lazy_cache_ttl: 86400
+      lazy_cache_reply_ttl: 5
+
+  - tag: hosts
+    type: hosts
+    args:
+      hosts:
+        - "provider:hosts"
+
+  - tag: ecs_auto
+    type: ecs
+    args:
+      auto: true
+      force_overwrite: false
+
+  - tag: ecs_local
+    type: ecs
+    args:
+      auto: false
+      ipv4: "101.6.6.0"
+      ipv6: "2001:da8::"
+      force_overwrite: false
+  - tag: ecs_global
+    type: ecs
+    args:
+      auto: false
+      ipv4: "168.95.1.0"
+      ipv6: "2001:b000:168::"
+      force_overwrite: true
+
+  - tag: ecs_is_local
+    type: query_matcher
+    args:
+      ecs:
+        - "101.6.6.0/24"
+        - "2001:da8::/48"
+  - tag: ecs_is_lan
+    type: query_matcher
+    args:
+      ecs:
+        - "0.0.0.0/8"
+        - "10.0.0.0/8"
+        - "100.64.0.0/10"
+        - "127.0.0.0/8"
+        - "169.254.0.0/16"
+        - "172.16.0.0/12"
+        - "192.0.0.0/24"
+        - "192.0.2.0/24"
+        - "198.18.0.0/15"
+        - "192.88.99.0/24"
+        - "192.168.0.0/16"
+        - "198.51.100.0/24"
+        - "203.0.113.0/24"
+        - "224.0.0.0/3"
+        - "::1/128"
+        - "fc00::/7"
+        - "fe80::/10"
+  - tag: ecs_is_cn
+    type: query_matcher
+    args:
+      ecs:
+        - "provider:chinaip"
+
+  - tag: ttl_1m
+    type: ttl
+    args:
+      minimal_ttl: 60
+      maximum_ttl: 3600
+  - tag: ttl_5m
+    type: ttl
+    args:
+      minimal_ttl: 300
+      maximum_ttl: 86400
+  - tag: ttl_1h
+    type: ttl
+    args:
+      minimal_ttl: 3600
+      maximum_ttl: 86400
+
+  - tag: qtype12
+    type: query_matcher
+    args:
+      qtype: [12]
+  - tag: qtype65
+    type: query_matcher
+    args:
+      qtype: [65]
+  - tag: qtype255
+    type: query_matcher
+    args:
+      qtype: [255]
+
+  - tag: response_server_failed
+    type: response_matcher
+    args:
+      rcode: [2]
+
+  - tag: black_hole
+    type: blackhole
+    args:
+      rcode: 0
+      ipv4: "0.0.0.0"
+      ipv6: "::"
+
+  - tag: query_is_non_domain
+    type: query_matcher
+    args:
+      domain:
+        - "keyword::"
+  - tag: query_is_local_domain
+    type: query_matcher
+    args:
+      domain:
+        - "provider:chinalist"
+  - tag: query_is_non_local_domain
+    type: query_matcher
+    args:
+      domain:
+        - "provider:gfwlist"
+  - tag: query_is_cdn_cn_domain
+    type: query_matcher
+    args:
+      domain:
+        - "provider:cdncn"
+  - tag: query_is_ad_domain
+    type: query_matcher
+    args:
+      domain:
+        - "provider:adlist"
+  - tag: query_is_cn_domain
+    type: query_matcher
+    args:
+      domain:
+        - "provider:ecscn"
+  - tag: query_is_noncn_domain
+    type: query_matcher
+    args:
+      domain:
+        - "provider:ecsnoncn"
+
+  - tag: response_has_local_ip
+    type: response_matcher
+    args:
+      ip:
+        - "provider:chinaip"
+  - tag: response_has_gfw_ip
+    type: response_matcher
+    args:
+      ip:
+        - "provider:gfwip"
 
   - tag: forward_local
-    type: forward
+    type: fast_forward
     args:
-      upstreams:
-        - addr: 223.5.5.5
-        - addr: 119.29.29.29
-        - addr: 114.114.114.114
+      upstream:
+        - addr: "223.5.5.5"
+        - addr: "119.29.29.29"
 
   - tag: forward_remote
-    type: forward
+    type: fast_forward
     args:
-      upstreams:
+      upstream:
         - addr: "https://1.1.1.1/dns-query"
           dial_addr: "1.1.1.1:443"
         - addr: "https://8.8.8.8/dns-query"
           dial_addr: "8.8.8.8:443"
 
+  - tag: forward_easymosdns
+    type: fast_forward
+    args:
+      upstream:
+        - addr: "https://mosdns.apad.pro/api-query"
+          bootstrap: "223.6.6.6"
+
   - tag: main_sequence
     type: sequence
     args:
-      - exec: $cache
-      - matches:
-          - qname $ad_domain
-        exec: reject 3
-      - matches:
-          - qname $gfw_domain
-        exec: $forward_remote
-      - matches:
-          - qname $ecs_noncn_domain
-        exec: $forward_remote
-      - matches:
-          - qname $china_domain
-        exec: $forward_local
-      - matches:
-          - qname $cdn_domain
-        exec: $forward_local
-      - matches:
-          - qname $ecs_cn_domain
-        exec: $forward_local
-      - exec: $forward_local
+      exec:
+        - hosts
+        - if: "[qtype65] || (query_is_non_domain)"
+          exec:
+            - _new_nxdomain_response
+            - _return
+        - if: "[qtype12] || [qtype255]"
+          exec:
+            - _no_ecs
+            - forward_local
+            - ttl_1h
+            - _return
+        - ecs_auto
+        - _edns0_filter_ecs_only
+        - if: ecs_is_lan
+          exec:
+            - cache_lan
+            - _no_ecs
+          else_exec:
+            - cache_wan
+        - if: query_is_cn_domain
+          exec:
+            - forward_local
+            - ttl_5m
+            - _return
+        - if: query_is_noncn_domain
+          exec:
+            - _prefer_ipv4
+            - ecs_global
+            - primary:
+                - forward_easymosdns
+              secondary:
+                - forward_remote
+              fast_fallback: 2500
+              always_standby: false
+            - ttl_5m
+            - _return
+        - if: query_is_ad_domain
+          exec:
+            - black_hole
+            - ttl_1h
+            - _return
+        - if: "(query_is_local_domain) || (query_is_cdn_cn_domain)"
+          exec:
+            - forward_local
+            - ttl_1m
+            - if: response_has_gfw_ip
+              exec:
+                - ecs_local
+                - forward_easymosdns
+            - _return
+        - if: query_is_non_local_domain
+          exec:
+            - _prefer_ipv4
+            - ecs_global
+            - primary:
+                - forward_easymosdns
+              secondary:
+                - forward_remote
+              fast_fallback: 2500
+              always_standby: false
+            - ttl_5m
+            - _return
+        - _prefer_ipv4
+        - primary:
+            - ecs_local
+            - forward_easymosdns
+            - if: "(ecs_is_local) && (response_has_local_ip) || [response_server_failed]"
+              exec:
+                - _no_ecs
+                - forward_local
+                - _return
+          secondary:
+            - forward_remote
+            - if: response_has_local_ip
+              exec:
+                - forward_local
+                - _return
+          fast_fallback: 2500
+          always_standby: false
+        - ttl_5m
 
-  - tag: udp_server
-    type: udp_server
-    args:
-      entry: main_sequence
-      listen: 127.0.0.1:1053
-
-  - tag: tcp_server
-    type: tcp_server
-    args:
-      entry: main_sequence
-      listen: 127.0.0.1:1053
+servers:
+  - exec: main_sequence
+    timeout: 6
+    listeners:
+      - protocol: udp
+        addr: "127.0.0.1:1053"
+      - protocol: tcp
+        addr: "127.0.0.1:1053"
