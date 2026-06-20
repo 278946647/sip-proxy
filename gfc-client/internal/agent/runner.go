@@ -38,10 +38,10 @@ func NewRunner(cfg *config.Config, st *store.Store) *Runner {
 }
 
 func (r *Runner) Run() {
-	if ok, msg := r.engine.BootstrapIdle(); !ok {
-		fmt.Printf("bootstrap idle failed: %s\n", msg)
+	if ok, msg := r.engine.ReapplyLocal(true); !ok {
+		fmt.Printf("bootstrap dataplane failed: %s\n", msg)
 	} else {
-		fmt.Printf("bootstrap idle: %s\n", msg)
+		fmt.Printf("bootstrap dataplane: %s\n", msg)
 	}
 	ticker := time.NewTicker(time.Duration(r.cfg.PollSeconds) * time.Second)
 	defer ticker.Stop()
@@ -173,7 +173,50 @@ func (r *Runner) configMatches(payload map[string]any) bool {
 	if old == nil {
 		return false
 	}
-	return fmt.Sprint(old["proxyMode"]) == fmt.Sprint(payload["proxyMode"])
+	if fmt.Sprint(old["proxyMode"]) != fmt.Sprint(payload["proxyMode"]) {
+		return false
+	}
+	return r.currentSingboxMatches(payload)
+}
+
+func (r *Runner) currentSingboxMatches(payload map[string]any) bool {
+	node, _ := payload["node"].(map[string]any)
+	if node == nil {
+		return false
+	}
+	wantServer := strings.TrimSpace(fmt.Sprint(node["address"]))
+	if wantServer == "" {
+		return false
+	}
+	data, err := os.ReadFile(r.cfg.Paths.SingboxConfig)
+	if err != nil {
+		return false
+	}
+	var cfg map[string]any
+	if json.Unmarshal(data, &cfg) != nil {
+		return false
+	}
+	hasTun := false
+	if inbounds, ok := cfg["inbounds"].([]any); ok {
+		for _, item := range inbounds {
+			m, _ := item.(map[string]any)
+			if fmt.Sprint(m["type"]) == "tun" {
+				hasTun = true
+				break
+			}
+		}
+	}
+	hasNode := false
+	if outbounds, ok := cfg["outbounds"].([]any); ok {
+		for _, item := range outbounds {
+			m, _ := item.(map[string]any)
+			if fmt.Sprint(m["type"]) == "vless" && strings.TrimSpace(fmt.Sprint(m["server"])) == wantServer {
+				hasNode = true
+				break
+			}
+		}
+	}
+	return hasTun && hasNode
 }
 
 func (r *Runner) saveState(st *controlplane.ClientState) error {

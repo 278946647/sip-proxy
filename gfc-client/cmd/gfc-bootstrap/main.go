@@ -42,7 +42,7 @@ func main() {
 		return
 	}
 
-	ok, msg := engine.BootstrapIdle()
+	ok, msg := engine.ReapplyLocal(false)
 	if !ok {
 		fmt.Fprintf(os.Stderr, "bootstrap failed: %s\n", msg)
 		os.Exit(1)

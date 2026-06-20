@@ -45,12 +45,15 @@ if [ -d "$INIT_SRC" ]; then
 fi
 
 if [ -x /usr/bin/gfc-bootstrap ]; then
-	GFC_PLATFORM=immortalwrt \
-	GFC_ROOT="$GFC_ROOT" \
-	GFC_ETC="$GFC_ETC" \
-	GFC_LIB="$GFC_LIB" \
-	GFC_LOG_DIR="$GFC_LOG_DIR" \
-	gfc-bootstrap || true
+	run_bootstrap() {
+		GFC_PLATFORM=immortalwrt \
+		GFC_ROOT="$GFC_ROOT" \
+		GFC_ETC="$GFC_ETC" \
+		GFC_LIB="$GFC_LIB" \
+		GFC_LOG_DIR="$GFC_LOG_DIR" \
+		gfc-bootstrap "$@"
+	}
+	run_bootstrap --reapply || run_bootstrap || true
 fi
 
 if [ -x /usr/lib/gfc-client/deploy/immortalwrt/install-luci-app.sh ]; then
