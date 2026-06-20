@@ -1,7 +1,7 @@
 # MosDNS v5 config for ImmortalWrt/OpenWrt.
 # dnsmasq keeps LAN :53 and forwards to this instance on 127.0.0.1:1053.
 # Rules are loaded from /etc/gfc-client/mosdns/easymosdns/rules after rendering.
-# gfc_openwrt_mosdns_v2
+# gfc_openwrt_mosdns_v3
 # Keep this marker for the renderer's legacy template check.
 # data_providers:
 log:
@@ -75,8 +75,10 @@ plugins:
     type: forward
     args:
       upstreams:
-        - addr: 1.1.1.1
-        - addr: 8.8.8.8
+        - addr: "https://1.1.1.1/dns-query"
+          dial_addr: "1.1.1.1:443"
+        - addr: "https://8.8.8.8/dns-query"
+          dial_addr: "8.8.8.8:443"
 
   - tag: main_sequence
     type: sequence

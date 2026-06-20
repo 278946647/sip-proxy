@@ -135,7 +135,7 @@ func validOpenWrtMosDNSConfig(path string) bool {
 		return false
 	}
 	s := string(data)
-	return validMosDNSV5Config(path) && strings.Contains(s, "gfc_openwrt_mosdns_v2")
+	return validMosDNSV5Config(path) && strings.Contains(s, "gfc_openwrt_mosdns_v3")
 }
 
 func fileExists(path string) bool {
