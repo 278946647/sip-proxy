@@ -58,9 +58,17 @@
       "path": "gfc/settings"
     }
   },
+  "admin/gfc/network": {
+    "title": "网络",
+    "order": 70,
+    "action": {
+      "type": "view",
+      "path": "gfc/network"
+    }
+  },
   "admin/gfc/services": {
     "title": "服务",
-    "order": 70,
+    "order": 80,
     "action": {
       "type": "view",
       "path": "gfc/services"
@@ -68,7 +76,7 @@
   },
   "admin/gfc/dns": {
     "title": "DNS",
-    "order": 80,
+    "order": 90,
     "action": {
       "type": "view",
       "path": "gfc/dns"
@@ -76,7 +84,7 @@
   },
   "admin/gfc/diagnostics": {
     "title": "诊断",
-    "order": 90,
+    "order": 100,
     "action": {
       "type": "view",
       "path": "gfc/diagnostics"
@@ -84,7 +92,7 @@
   },
   "admin/gfc/logs": {
     "title": "日志",
-    "order": 100,
+    "order": 110,
     "action": {
       "type": "view",
       "path": "gfc/logs"
