@@ -66,6 +66,13 @@ GFC_PLATFORM=immortalwrt gfc-bootstrap --apply-network
 Network changes should be tested with a rollback plan on the target hardware,
 especially when changing LAN bridge members or VLANs.
 
+By default, GFC preserves the current ImmortalWrt LAN/DHCP configuration from
+UCI, for example the stock `192.168.1.1/24` LAN and `192.168.1.0/24` DHCP pool.
+It does not switch LAN to `192.168.68.1/24` unless a GFC network config is
+explicitly saved and applied. Even when `gfc-bootstrap --apply-network` runs,
+GFC will not write `network.lan` or `dhcp.lan` unless `GFC_MANAGE_LAN=1` is set
+or the saved network config contains `manageLan: true`.
+
 ## Manual Runtime Install
 
 For early device testing, compile on Ubuntu/VM and upload binaries plus `deploy`

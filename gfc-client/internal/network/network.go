@@ -25,6 +25,8 @@ func New(cfg *config.Config) *Manager {
 func (m *Manager) Status() map[string]any {
 	wan := m.cfg.WanIface
 	lan := m.cfg.LanIface
+	lanAddress := m.cfg.LanAddress
+	lanNetwork := m.cfg.LanCIDR
 	if roles := m.loadRoles(); roles != nil {
 		if v, ok := roles["wan"].(string); ok && v != "" {
 			wan = v
@@ -33,13 +35,21 @@ func (m *Manager) Status() map[string]any {
 			lan = v
 		}
 	}
+	if platform.IsOpenWrt() {
+		info := openWrtLANInfo(m.cfg)
+		lanAddress = info.address
+		lanNetwork = info.cidr
+		if lan == "" {
+			lan = info.device
+		}
+	}
 	return map[string]any{
 		"wan":         wan,
 		"lan":         lan,
 		"interfaces":  ListInterfaces(),
-		"lanAddress":  m.cfg.LanAddress,
-		"lanNetwork":  m.cfg.LanCIDR,
-		"gateway":     m.cfg.LanAddress,
+		"lanAddress":  lanAddress,
+		"lanNetwork":  lanNetwork,
+		"gateway":     lanAddress,
 		"dhcp":        map[string]any{"enabled": lan != "", "interface": lan},
 		"bridge":      m.loadBridge(),
 		"wanConfig":   m.LoadWAN(),
@@ -102,12 +112,19 @@ func defaultBridge(cfg *config.Config) map[string]any {
 		wan = ifaces[0]
 	}
 	bridgeName := "bridge_lan"
+	lanAddress := cfg.LanAddress
+	dhcpStart := "192.168.68.100"
+	dhcpEnd := "192.168.68.250"
 	if platform.IsOpenWrt() {
-		bridgeName = "br-lan"
+		info := openWrtLANInfo(cfg)
+		bridgeName = info.device
+		lanAddress = info.address
+		dhcpStart = info.dhcpStart
+		dhcpEnd = info.dhcpEnd
 	}
 	return map[string]any{
 		"mode": "bridge", "bridgeName": bridgeName, "wan": wan,
-		"lanAddress": cfg.LanAddress, "dhcpStart": "192.168.68.100", "dhcpEnd": "192.168.68.250",
+		"lanAddress": lanAddress, "dhcpStart": dhcpStart, "dhcpEnd": dhcpEnd,
 	}
 }
 
@@ -126,9 +143,18 @@ func defaultWAN(cfg *config.Config) map[string]any {
 }
 
 func defaultDHCP(cfg *config.Config) map[string]any {
+	lanAddress := cfg.LanAddress
+	start := "192.168.68.100"
+	end := "192.168.68.199"
+	if platform.IsOpenWrt() {
+		info := openWrtLANInfo(cfg)
+		lanAddress = info.address
+		start = info.dhcpStart
+		end = info.dhcpEnd
+	}
 	return map[string]any{
-		"enabled": true, "gateway": cfg.LanAddress, "start": "192.168.68.100",
-		"end": "192.168.68.199", "dns": cfg.LanAddress, "leaseTime": "12h", "domain": "lan",
+		"enabled": true, "gateway": lanAddress, "start": start,
+		"end": end, "dns": lanAddress, "leaseTime": "12h", "domain": "lan",
 	}
 }
 
@@ -326,6 +352,9 @@ func (m *Manager) applyOpenWrt() (map[string]any, error) {
 }
 
 func (m *Manager) applyOpenWrtLAN(cfg map[string]any) error {
+	if !manageOpenWrtLAN(cfg) {
+		return nil
+	}
 	bridgeName := strings.TrimSpace(text(cfg["bridgeName"]))
 	if bridgeName == "" {
 		bridgeName = "br-lan"
@@ -401,6 +430,9 @@ func (m *Manager) applyOpenWrtWAN(cfg map[string]any) error {
 }
 
 func (m *Manager) applyOpenWrtDHCP(cfg map[string]any) error {
+	if !manageOpenWrtLAN(cfg) {
+		return nil
+	}
 	enabled := boolValue(cfg["enabled"], true)
 	_, _ = uci("set", "dhcp.lan=dhcp")
 	_, _ = uci("set", "dhcp.lan.interface=lan")
@@ -472,6 +504,89 @@ func initd(service, action string) (string, error) {
 	path := filepath.Join("/etc/init.d", service)
 	out, err := exec.Command(path, action).CombinedOutput()
 	return string(out), err
+}
+
+type openWrtLAN struct {
+	device    string
+	address   string
+	netmask   string
+	cidr      string
+	prefix    int
+	dhcpStart string
+	dhcpEnd   string
+}
+
+func openWrtLANInfo(cfg *config.Config) openWrtLAN {
+	address := uciGet("network.lan.ipaddr", "")
+	if address == "" {
+		address = cfg.LanAddress
+	}
+	netmask := uciGet("network.lan.netmask", "255.255.255.0")
+	prefix := netmaskPrefix(netmask, 24)
+	device := uciGet("network.lan.device", "")
+	if device == "" {
+		device = uciGet("network.lan.ifname", "br-lan")
+	}
+	if device == "" {
+		device = "br-lan"
+	}
+	startOffset := uciGetInt("dhcp.lan.start", 100)
+	limit := uciGetInt("dhcp.lan.limit", 150)
+	if limit <= 0 {
+		limit = 150
+	}
+	endOffset := startOffset + limit - 1
+	if endOffset > 254 {
+		endOffset = 254
+	}
+	cidr := networkCIDR(address, prefix)
+	return openWrtLAN{
+		device:    device,
+		address:   address,
+		netmask:   netmask,
+		cidr:      cidr,
+		prefix:    prefix,
+		dhcpStart: ipWithLastOctet(address, startOffset),
+		dhcpEnd:   ipWithLastOctet(address, endOffset),
+	}
+}
+
+func uciGet(key, def string) string {
+	if _, err := exec.LookPath("uci"); err != nil {
+		return def
+	}
+	out, err := exec.Command("uci", "-q", "get", key).Output()
+	if err != nil {
+		return def
+	}
+	if s := strings.TrimSpace(string(out)); s != "" {
+		return s
+	}
+	return def
+}
+
+func uciGetInt(key string, def int) int {
+	v := strings.TrimSpace(uciGet(key, ""))
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return def
+	}
+	return n
+}
+
+func manageOpenWrtLAN(cfg map[string]any) bool {
+	if boolValue(cfg["manageLan"], false) {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("GFC_MANAGE_LAN"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func text(v any) string {
@@ -566,6 +681,43 @@ func prefixToNetmask(prefix int) string {
 	}
 	mask := net.CIDRMask(prefix, 32)
 	return net.IP(mask).String()
+}
+
+func netmaskPrefix(mask string, def int) int {
+	ip := net.ParseIP(strings.TrimSpace(mask)).To4()
+	if ip == nil {
+		return def
+	}
+	ones, bits := net.IPMask(ip).Size()
+	if bits != 32 || ones < 0 {
+		return def
+	}
+	return ones
+}
+
+func networkCIDR(address string, prefix int) string {
+	ip := net.ParseIP(strings.TrimSpace(address)).To4()
+	if ip == nil {
+		return address
+	}
+	mask := net.CIDRMask(prefix, 32)
+	network := ip.Mask(mask)
+	return fmt.Sprintf("%s/%d", network.String(), prefix)
+}
+
+func ipWithLastOctet(address string, octet int) string {
+	ip := net.ParseIP(strings.TrimSpace(address)).To4()
+	if ip == nil {
+		return address
+	}
+	if octet < 1 {
+		octet = 1
+	}
+	if octet > 254 {
+		octet = 254
+	}
+	ip[3] = byte(octet)
+	return ip.String()
 }
 
 func dhcpRange(startIP, endIP string) (int, int) {
