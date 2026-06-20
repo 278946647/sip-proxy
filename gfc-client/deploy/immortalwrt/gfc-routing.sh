@@ -114,10 +114,19 @@ load_cn_set() {
 		END{ if (started) print " }"; }' "$CN_LIST" | nft -f - 2>/dev/null || true
 }
 
+wait_tun() {
+	local i
+	for i in $(seq 1 30); do
+		ip link show "$TUN_IFACE" >/dev/null 2>&1 && return 0
+		sleep 1
+	done
+	return 1
+}
+
 start_rules() {
 	stop_rules
 	apply_dns_hijack
-	ip link show "$TUN_IFACE" >/dev/null 2>&1 || {
+	wait_tun || {
 		echo "WARN: $TUN_IFACE not up; DNS hijack applied, policy route deferred" >&2
 		exit 0
 	}

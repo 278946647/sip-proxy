@@ -85,5 +85,6 @@ service_restart gfc-api
 service_restart gfc-mosdns || true
 /etc/init.d/dnsmasq restart || true
 service_restart gfc-agent
+/etc/init.d/gfc-routing start 2>/dev/null || true
 
 echo "GFC runtime installed. API: http://127.0.0.1:${GFC_WEB_PORT}/api/v1/status"

@@ -38,5 +38,6 @@ rm -rf /tmp/luci-indexcache /tmp/luci-modulecache
 
 start_service gfc-api
 start_service gfc-agent
+start_service gfc-routing
 
 echo "GFC runtime upgraded"
