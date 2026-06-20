@@ -134,12 +134,12 @@ wait_tun() {
 start_rules() {
 	stop_rules
 	apply_dns_hijack
-	wait_tun || {
-		echo "WARN: $TUN_IFACE not up; DNS hijack applied, policy route deferred" >&2
-		exit 0
-	}
 	apply_policy_table
 	load_cn_set
+	wait_tun || {
+		echo "WARN: $TUN_IFACE not up; DNS hijack and CN policy set applied, policy route deferred" >&2
+		exit 0
+	}
 	ip -4 rule add pref 100 fwmark "$MARK" lookup "$TABLE" 2>/dev/null || \
 		ip -4 rule add fwmark "$MARK" table "$TABLE" 2>/dev/null || true
 	ip -4 route replace default dev "$TUN_IFACE" table "$TABLE"
