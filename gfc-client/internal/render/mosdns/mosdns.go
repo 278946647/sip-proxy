@@ -135,12 +135,9 @@ func validOpenWrtMosDNSConfig(path string) bool {
 		return false
 	}
 	s := string(data)
-	if !strings.Contains(s, "gfc_openwrt_mosdns_v5") || !strings.Contains(s, "main_sequence") {
-		return false
-	}
-	return strings.Contains(s, "data_providers:") &&
-		strings.Contains(s, "servers:") &&
-		strings.Contains(s, `addr: "127.0.0.1:1053"`)
+	return strings.Contains(s, "gfc_openwrt_mosdns_v6") &&
+		validMosDNSV5Config(path) &&
+		strings.Contains(s, `listen: 127.0.0.1:1053`)
 }
 
 func fileExists(path string) bool {
