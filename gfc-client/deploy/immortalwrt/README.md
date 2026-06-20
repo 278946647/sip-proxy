@@ -91,6 +91,35 @@ chmod +x /usr/lib/gfc-client/deploy/immortalwrt/*.sh
 /usr/lib/gfc-client/deploy/immortalwrt/install-runtime.sh
 ```
 
+## Runtime Tarball
+
+For repeatable field testing without the SDK, build a runtime tarball on
+Ubuntu/VM:
+
+```sh
+cd gfc-client
+# x86_64
+GOARCH=amd64 bash deploy/immortalwrt/pack-runtime.sh
+
+# aarch64
+GOARCH=arm64 bash deploy/immortalwrt/pack-runtime.sh
+```
+
+Upload and install on the device:
+
+```sh
+scp dist/gfc-immortalwrt-runtime-*.tar.gz root@192.168.1.1:/tmp/
+ssh root@192.168.1.1
+cd /tmp
+tar xzf gfc-immortalwrt-runtime-*.tar.gz
+cd gfc-immortalwrt-runtime-*
+./install.sh
+```
+
+This runtime tarball intentionally does not include `sing-box` or `mosdns`
+binaries; install or upload them separately to `/usr/bin/sing-box` and
+`/usr/bin/mosdns`.
+
 ## DNS Ownership
 
 The safe default is to keep `dnsmasq` on port 53 for DHCP/LAN compatibility and
