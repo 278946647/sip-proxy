@@ -88,6 +88,20 @@ env_set GFC_MOSDNS_UID "$GFC_MOSDNS_UID"
 env_set GFC_SINGBOX_USER "$GFC_SINGBOX_USER"
 env_set GFC_SINGBOX_UID "$GFC_SINGBOX_UID"
 
+ensure_singbox_caps() {
+	if [ -e /dev/net/tun ]; then
+		chmod 666 /dev/net/tun 2>/dev/null || true
+	fi
+	if command -v setcap >/dev/null 2>&1; then
+		setcap cap_net_admin,cap_net_raw,cap_net_bind_service+ep /usr/bin/sing-box 2>/dev/null || \
+			echo "WARN: failed to set sing-box capabilities" >&2
+	else
+		echo "WARN: setcap not found; install libcap-bin or sing-box cannot run as non-root with TUN" >&2
+	fi
+}
+
+ensure_singbox_caps
+
 if [ -d "$INIT_SRC" ]; then
 	for svc in gfc-api gfc-agent gfc-mosdns gfc-sing-box gfc-routing; do
 		cp "$INIT_SRC/$svc" "/etc/init.d/$svc"

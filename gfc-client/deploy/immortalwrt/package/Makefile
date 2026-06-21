@@ -12,7 +12,7 @@ define Package/gfc-client
   SECTION:=net
   CATEGORY:=Network
   TITLE:=GFC client box management agent
-  DEPENDS:=+ca-bundle +ip-full +nftables +dnsmasq-full +sing-box +mosdns +sqlite3-cli +autossh
+  DEPENDS:=+ca-bundle +ip-full +nftables +dnsmasq-full +sing-box +mosdns +libcap-bin +sqlite3-cli +autossh
 endef
 
 define Package/gfc-client/description

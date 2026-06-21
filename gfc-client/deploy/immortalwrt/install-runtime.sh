@@ -58,6 +58,20 @@ ensure_user "$GFC_MOSDNS_USER" "$GFC_MOSDNS_UID" "$GFC_MOSDNS_USER"
 ensure_group "$GFC_SINGBOX_USER" "$GFC_SINGBOX_UID"
 ensure_user "$GFC_SINGBOX_USER" "$GFC_SINGBOX_UID" "$GFC_SINGBOX_USER"
 
+ensure_singbox_caps() {
+	if [ -e /dev/net/tun ]; then
+		chmod 666 /dev/net/tun 2>/dev/null || true
+	fi
+	if command -v setcap >/dev/null 2>&1; then
+		setcap cap_net_admin,cap_net_raw,cap_net_bind_service+ep /usr/bin/sing-box 2>/dev/null || \
+			echo "WARN: failed to set sing-box capabilities" >&2
+	else
+		echo "WARN: setcap not found; install libcap-bin or sing-box cannot run as non-root with TUN" >&2
+	fi
+}
+
+ensure_singbox_caps
+
 cat >"$GFC_ETC/gfc.env" <<EOF
 GFC_PLATFORM=immortalwrt
 GFC_ROOT=$GFC_ROOT
