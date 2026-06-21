@@ -7,6 +7,8 @@ GFC_LIB="${GFC_LIB:-/var/lib/gfc-client}"
 GFC_LOG_DIR="${GFC_LOG_DIR:-/var/log/gfc-client}"
 GFC_MOSDNS_USER="${GFC_MOSDNS_USER:-mosdns}"
 GFC_MOSDNS_UID="${GFC_MOSDNS_UID:-65353}"
+GFC_SINGBOX_USER="${GFC_SINGBOX_USER:-singbox}"
+GFC_SINGBOX_UID="${GFC_SINGBOX_UID:-65354}"
 INIT_SRC="${GFC_ROOT}/deploy/immortalwrt/package/files/etc/init.d"
 
 stop_service() {
@@ -78,9 +80,13 @@ chmod +x /usr/lib/gfc-client/deploy/immortalwrt/*.sh 2>/dev/null || true
 
 ensure_group "$GFC_MOSDNS_USER" "$GFC_MOSDNS_UID"
 ensure_user "$GFC_MOSDNS_USER" "$GFC_MOSDNS_UID" "$GFC_MOSDNS_USER"
+ensure_group "$GFC_SINGBOX_USER" "$GFC_SINGBOX_UID"
+ensure_user "$GFC_SINGBOX_USER" "$GFC_SINGBOX_UID" "$GFC_SINGBOX_USER"
 env_set GFC_ENABLE_OUTPUT_POLICY 1
 env_set GFC_MOSDNS_USER "$GFC_MOSDNS_USER"
 env_set GFC_MOSDNS_UID "$GFC_MOSDNS_UID"
+env_set GFC_SINGBOX_USER "$GFC_SINGBOX_USER"
+env_set GFC_SINGBOX_UID "$GFC_SINGBOX_UID"
 
 if [ -d "$INIT_SRC" ]; then
 	for svc in gfc-api gfc-agent gfc-mosdns gfc-sing-box gfc-routing; do

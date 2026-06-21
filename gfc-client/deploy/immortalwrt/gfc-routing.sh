@@ -12,6 +12,8 @@ NFT_PRIORITY="${GFC_NFT_PRIORITY:-200}"
 OUTPUT_POLICY="${GFC_ENABLE_OUTPUT_POLICY:-1}"
 MOSDNS_USER="${GFC_MOSDNS_USER:-mosdns}"
 MOSDNS_UID="${GFC_MOSDNS_UID:-65353}"
+SINGBOX_USER="${GFC_SINGBOX_USER:-singbox}"
+SINGBOX_UID="${GFC_SINGBOX_UID:-65354}"
 GFC_ROOT="${GFC_ROOT:-/usr/lib/gfc-client}"
 GFC_ETC="${GFC_ETC:-/etc/gfc-client}"
 DNS_PORT="${GFC_DNSMASQ_PORT:-53}"
@@ -29,6 +31,9 @@ BUNDLE="${GFC_LIB:-/var/lib/gfc-client}/state/config_bundle.json"
 
 if id -u "$MOSDNS_USER" >/dev/null 2>&1; then
 	MOSDNS_UID="$(id -u "$MOSDNS_USER" 2>/dev/null || echo "$MOSDNS_UID")"
+fi
+if id -u "$SINGBOX_USER" >/dev/null 2>&1; then
+	SINGBOX_UID="$(id -u "$SINGBOX_USER" 2>/dev/null || echo "$SINGBOX_UID")"
 fi
 
 mask_prefix() {
@@ -122,19 +127,18 @@ EOF
 apply_output_policy() {
 	[ "$OUTPUT_POLICY" = "1" ] || return 0
 
-	# Router-originated traffic is not part of LAN policy routing. Only mosdns
-	# DoH (tcp/443) is marked into gfctun; root-owned traffic includes sing-box
-	# outbound handshakes and management SSH, so it must return.
+	# Match the tested gateway policy: sing-box owns VLESS handshakes and must
+	# be exempt; MosDNS DoH is marked into gfctun; other router-originated
+	# traffic falls through classify for consistent split behavior.
 	nft -f - <<EOF || true
 add chain inet gfc_client_mangle output { type route hook output priority $NFT_PRIORITY; policy accept; }
 add rule inet gfc_client_mangle output oif "lo" return
 add rule inet gfc_client_mangle output oifname "$TUN_IFACE" return
 add rule inet gfc_client_mangle output iifname "$TUN_IFACE" return
-add rule inet gfc_client_mangle output tcp dport 53 return
-add rule inet gfc_client_mangle output udp dport 53 return
-add rule inet gfc_client_mangle output ip daddr @bypass_ip return
+add rule inet gfc_client_mangle output meta skuid $SINGBOX_UID return
+add rule inet gfc_client_mangle output meta skuid $MOSDNS_UID ip daddr { 1.0.0.1, 1.1.1.1, 8.8.4.4, 8.8.8.8 } meta mark set $MARK
 add rule inet gfc_client_mangle output meta skuid $MOSDNS_UID tcp dport 443 meta mark set $MARK
-add rule inet gfc_client_mangle output meta skuid 0 return
+add rule inet gfc_client_mangle output jump classify
 EOF
 }
 
@@ -252,7 +256,7 @@ start_rules() {
 	ip -4 rule add pref 100 fwmark "$MARK" lookup "$TABLE" 2>/dev/null || \
 		ip -4 rule add fwmark "$MARK" table "$TABLE" 2>/dev/null || true
 	ip -4 route replace default dev "$TUN_IFACE" table "$TABLE"
-	echo "gfc routing: lan=$LAN_IFACE cidr=$LAN_CIDR mark=$MARK table=$TABLE priority=$NFT_PRIORITY output=$OUTPUT_POLICY mosdns_uid=$MOSDNS_UID cn=$CN_LIST bypass=$BYPASS_AUDIT"
+	echo "gfc routing: lan=$LAN_IFACE cidr=$LAN_CIDR mark=$MARK table=$TABLE priority=$NFT_PRIORITY output=$OUTPUT_POLICY mosdns_uid=$MOSDNS_UID singbox_uid=$SINGBOX_UID cn=$CN_LIST bypass=$BYPASS_AUDIT"
 }
 
 case "$ACTION" in
@@ -268,6 +272,7 @@ case "$ACTION" in
 		echo "bypass_audit=$BYPASS_AUDIT"
 		echo "output_policy=$OUTPUT_POLICY"
 		echo "mosdns_user=$MOSDNS_USER uid=$MOSDNS_UID"
+		echo "singbox_user=$SINGBOX_USER uid=$SINGBOX_UID"
 		[ -f "$CN_AUDIT" ] && wc -l "$CN_AUDIT" || true
 		[ -f "$BYPASS_AUDIT" ] && cat "$BYPASS_AUDIT" || true
 		ip -4 rule list | grep "$TABLE" || true
