@@ -76,17 +76,21 @@ type Config struct {
 }
 
 func Load() *Config {
+	envFile := env("GFC_ENV_FILE", filepath.Join(env("GFC_ETC", DefaultEtc), "gfc.env"))
+	loadEnvFile(envFile)
+
 	etc := env("GFC_ETC", DefaultEtc)
 	root := env("GFC_ROOT", DefaultRoot)
 	lib := env("GFC_LIB", DefaultLib)
 	logDir := env("GFC_LOG_DIR", DefaultLog)
+	envFile = env("GFC_ENV_FILE", filepath.Join(etc, "gfc.env"))
 
 	paths := Paths{
 		Root:            root,
 		Etc:             etc,
 		Lib:             lib,
 		Log:             logDir,
-		EnvFile:         filepath.Join(etc, "gfc.env"),
+		EnvFile:         envFile,
 		ActivationFile:  filepath.Join(etc, "activation.b32"),
 		PlatformFile:    filepath.Join(etc, "platform.b32"),
 		ConfigBundle:    filepath.Join(lib, "state", "config_bundle.json"),
@@ -107,8 +111,6 @@ func Load() *Config {
 		BackupsDir:      filepath.Join(lib, "backups"),
 		WebRoot:         filepath.Join(root, "web"),
 	}
-
-	loadEnvFile(paths.EnvFile)
 
 	return &Config{
 		Paths:       paths,

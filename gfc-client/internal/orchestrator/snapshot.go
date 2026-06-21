@@ -22,6 +22,9 @@ func Save(backupsDir string, id string, files map[string]string) error {
 		id = time.Now().UTC().Format("20060102-150405")
 	}
 	dest := filepath.Join(backupsDir, id)
+	if err := os.RemoveAll(dest); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(dest, 0o755); err != nil {
 		return err
 	}
