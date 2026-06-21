@@ -193,7 +193,7 @@ func stripUnsupportedUpstreamKeys(raw string) string {
 	out := make([]string, 0, len(lines))
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if trimmed == "enable_http3: false" || trimmed == "enable_http3: true" || trimmed == "cache_everything: true" || trimmed == "cache_everything: false" {
+		if trimmed == "enable_http3: false" || trimmed == "enable_http3: true" {
 			continue
 		}
 		out = append(out, line)

@@ -1,9 +1,10 @@
-# EasyMosDNS policy translated to mosdns v5 plugin syntax for GFC on ImmortalWrt/OpenWrt.
+log:
+  level: error
+
+# EasyMosDNS equivalent policy for GFC on ImmortalWrt/OpenWrt.
 # dnsmasq keeps LAN :53 and forwards to this instance on 127.0.0.1:1053.
 # Rules are rendered to /etc/gfc-client/mosdns/easymosdns.
 # gfc_openwrt_mosdns_v6
-log:
-  level: error
 
 plugins:
   - tag: china_domain
@@ -30,18 +31,6 @@ plugins:
       files:
         - ./rules/ad_domain_list.txt
 
-  - tag: ecs_cn_domain
-    type: domain_set
-    args:
-      files:
-        - ./ecs_cn_domain.txt
-
-  - tag: ecs_noncn_domain
-    type: domain_set
-    args:
-      files:
-        - ./ecs_noncn_domain.txt
-
   - tag: china_ip
     type: ip_set
     args:
@@ -54,17 +43,40 @@ plugins:
       files:
         - ./rules/gfw_ip_list.txt
 
+  - tag: ecs_auto
+    type: ecs
+    args:
+      auto: true
+
+  - tag: ecs_local
+    type: ecs
+    args:
+      auto: false
+      ipv4: "101.6.6.0"
+      ipv6: "2001:da8::"
+      force_overwrite: false
+
+  - tag: ecs_global
+    type: ecs
+    args:
+      auto: false
+      ipv4: "1.1.1.1"
+      ipv6: "2001:4860:4860::8888"
+      force_overwrite: true
+
   - tag: cache_lan
     type: cache
     args:
       size: 8192
       lazy_cache_ttl: 86400
+      cache_everything: true
 
   - tag: cache_wan
     type: cache
     args:
       size: 131072
       lazy_cache_ttl: 86400
+      cache_everything: true
 
   - tag: forward_local
     type: forward
@@ -82,46 +94,68 @@ plugins:
         - addr: "https://8.8.8.8/dns-query"
           dial_addr: "8.8.8.8:443"
 
-  - tag: forward_easymosdns
+  - tag: forward_backup
     type: forward
     args:
       upstreams:
         - addr: "https://mosdns.apad.pro/api-query"
-          bootstrap: "223.6.6.6"
+          bootstrap: "223.5.5.5"
+
+  - tag: fix_gfw_ip
+    type: sequence
+    args:
+      - matches:
+          - resp_ip $gfw_ip
+        exec:
+          - ecs_local
+          - forward_backup
 
   - tag: main_sequence
     type: sequence
     args:
       - exec: $cache_lan
 
-      # EasyMosDNS adlist: block known ad domains.
       - matches:
           - qname $ad_domain
-        exec: reject 3
+        exec:
+          - blackhole
+          - _return
 
-      # EasyMosDNS ecscn/chinalist/cdncn: force local resolvers.
-      - matches:
-          - qname $ecs_cn_domain
-        exec: $forward_local
       - matches:
           - qname $china_domain
-        exec: $forward_local
+        exec:
+          - $forward_local
+          - _return
+
       - matches:
           - qname $cdn_domain
-        exec: $forward_local
+        exec:
+          - ecs_auto
+          - $forward_local
+          - _return
 
-      # EasyMosDNS ecsnoncn/gfwlist: force remote DoH. Kernel routing sends
-      # 1.1.1.1:443 and 8.8.8.8:443 through gfctun.
-      - matches:
-          - qname $ecs_noncn_domain
-        exec: $forward_remote
       - matches:
           - qname $gfw_domain
-        exec: $forward_remote
+        exec:
+          - ecs_global
+          - $forward_remote
+          - _return
 
-      # Unknown domains follow the original "remote first" business goal.
-      # nft CN-IP policy still keeps ordinary China IP traffic direct.
-      - exec: $forward_remote
+      - exec:
+          - ecs_auto
+
+      - primary:
+          - ecs_local
+          - $forward_local
+        secondary:
+          - ecs_global
+          - $forward_remote
+        fast_fallback: 2000
+        always_standby: false
+
+      - exec: fix_gfw_ip
+
+      - exec: $cache_wan
 
   - tag: udp_server
     type: udp_server

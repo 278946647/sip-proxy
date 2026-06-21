@@ -113,7 +113,8 @@ def resolve_bypass_ips() -> list[str]:
     bundle = Path("/var/lib/gfc-client/state/config_bundle.json")
     if bundle.is_file():
         try:
-            payload = json.loads(bundle.read_text()).get("payload") or {}
+            data = json.loads(bundle.read_text())
+            payload = data.get("payload") if isinstance(data.get("payload"), dict) else data
         except (OSError, json.JSONDecodeError):
             payload = {}
         node = payload.get("node") or {}
