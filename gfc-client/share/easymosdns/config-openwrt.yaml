@@ -83,8 +83,7 @@ plugins:
     args:
       - matches:
           - resp_ip $gfw_ip
-        exec:
-          - $forward_backup
+        exec: $forward_backup
 
   - tag: main_sequence
     type: sequence
