@@ -1,9 +1,8 @@
 log:
   level: error
 
-# EasyMosDNS-compatible policy for common ImmortalWrt/OpenWrt mosdns v5 builds.
+# Minimal mosdns v5 policy verified against common ImmortalWrt/OpenWrt builds.
 # dnsmasq keeps LAN :53 and forwards to this instance on 127.0.0.1:1053.
-# Rules are rendered to /etc/gfc-client/mosdns/easymosdns.
 # gfc_openwrt_mosdns_v6
 
 plugins:
@@ -37,22 +36,10 @@ plugins:
       files:
         - ./rules/china_ip_list.txt
 
-  - tag: gfw_ip
-    type: ip_set
-    args:
-      files:
-        - ./rules/gfw_ip_list.txt
-
-  - tag: cache_lan
+  - tag: cache
     type: cache
     args:
-      size: 8192
-      lazy_cache_ttl: 86400
-
-  - tag: cache_wan
-    type: cache
-    args:
-      size: 131072
+      size: 65536
       lazy_cache_ttl: 86400
 
   - tag: forward_local
@@ -71,24 +58,10 @@ plugins:
         - addr: "https://8.8.8.8/dns-query"
           dial_addr: "8.8.8.8:443"
 
-  - tag: forward_backup
-    type: forward
-    args:
-      upstreams:
-        - addr: "https://mosdns.apad.pro/api-query"
-          bootstrap: "223.5.5.5"
-
-  - tag: fix_gfw_ip
-    type: sequence
-    args:
-      - matches:
-          - resp_ip $gfw_ip
-        exec: $forward_backup
-
   - tag: main_sequence
     type: sequence
     args:
-      - exec: $cache_lan
+      - exec: $cache
 
       - matches:
           - qname $ad_domain
@@ -107,8 +80,6 @@ plugins:
         exec: $forward_remote
 
       - exec: $forward_remote
-      - exec: fix_gfw_ip
-      - exec: $cache_wan
 
   - tag: udp_server
     type: udp_server
