@@ -16,6 +16,11 @@ start_service() {
 	chmod 640 /etc/gfc-client/sing-box.json 2>/dev/null || true
 	[ -e /dev/net/tun ] && chmod 666 /dev/net/tun 2>/dev/null || true
 	ip link del "${GFC_TUN_INTERFACE:-gfctun}" 2>/dev/null || true
+	if ! command -v setcap >/dev/null 2>&1 && command -v opkg >/dev/null 2>&1; then
+		echo "WARN: setcap not found; installing libcap-bin..." >&2
+		opkg update >/dev/null 2>&1 || true
+		opkg install libcap-bin >/dev/null 2>&1 || true
+	fi
 	if command -v setcap >/dev/null 2>&1; then
 		setcap cap_net_admin,cap_net_raw,cap_net_bind_service+ep "$bin" 2>/dev/null || true
 		if command -v getcap >/dev/null 2>&1 && ! getcap "$bin" 2>/dev/null | grep -q 'cap_net_admin'; then

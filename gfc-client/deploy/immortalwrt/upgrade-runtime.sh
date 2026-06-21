@@ -96,6 +96,11 @@ ensure_singbox_caps() {
 	if [ -e /dev/net/tun ]; then
 		chmod 666 /dev/net/tun 2>/dev/null || true
 	fi
+	if ! command -v setcap >/dev/null 2>&1 && command -v opkg >/dev/null 2>&1; then
+		echo "WARN: setcap not found; installing libcap-bin..." >&2
+		opkg update >/dev/null 2>&1 || true
+		opkg install libcap-bin >/dev/null 2>&1 || true
+	fi
 	if command -v setcap >/dev/null 2>&1; then
 		setcap cap_net_admin,cap_net_raw,cap_net_bind_service+ep "$bin" 2>/dev/null || \
 			echo "WARN: failed to set sing-box capabilities" >&2
