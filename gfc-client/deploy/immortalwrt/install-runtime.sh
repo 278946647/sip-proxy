@@ -7,6 +7,8 @@ GFC_LIB="${GFC_LIB:-/var/lib/gfc-client}"
 GFC_LOG_DIR="${GFC_LOG_DIR:-/var/log/gfc-client}"
 GFC_WEB_PORT="${GFC_CLIENT_WEB_PORT:-8080}"
 GFC_MOSDNS_PORT="${GFC_MOSDNS_PORT:-1053}"
+GFC_MOSDNS_USER="${GFC_MOSDNS_USER:-mosdns}"
+GFC_MOSDNS_UID="${GFC_MOSDNS_UID:-65353}"
 INIT_SRC="${GFC_ROOT}/deploy/immortalwrt/package/files/etc/init.d"
 
 mkdir -p "$GFC_ROOT" "$GFC_ETC" "$GFC_LIB/state" "$GFC_LIB/rules" "$GFC_LIB/dns-lists" "$GFC_LOG_DIR"
@@ -23,6 +25,35 @@ for bin in gfc-api gfc-agent gfc-bootstrap; do
 	fi
 done
 
+ensure_group() {
+	local name="$1" gid="$2"
+	if grep -q "^${name}:" /etc/group 2>/dev/null; then
+		return 0
+	fi
+	if command -v addgroup >/dev/null 2>&1; then
+		addgroup -S -g "$gid" "$name" 2>/dev/null || addgroup "$name" 2>/dev/null || true
+	fi
+	if ! grep -q "^${name}:" /etc/group 2>/dev/null; then
+		echo "${name}:x:${gid}:" >> /etc/group
+	fi
+}
+
+ensure_user() {
+	local name="$1" uid="$2" group="$3"
+	if grep -q "^${name}:" /etc/passwd 2>/dev/null; then
+		return 0
+	fi
+	if command -v adduser >/dev/null 2>&1; then
+		adduser -S -D -H -u "$uid" -G "$group" -s /bin/false "$name" 2>/dev/null || true
+	fi
+	if ! grep -q "^${name}:" /etc/passwd 2>/dev/null; then
+		echo "${name}:x:${uid}:${uid}:GFC ${name}:/var/lib/gfc-client:/bin/false" >> /etc/passwd
+	fi
+}
+
+ensure_group "$GFC_MOSDNS_USER" "$GFC_MOSDNS_UID"
+ensure_user "$GFC_MOSDNS_USER" "$GFC_MOSDNS_UID" "$GFC_MOSDNS_USER"
+
 cat >"$GFC_ETC/gfc.env" <<EOF
 GFC_PLATFORM=immortalwrt
 GFC_ROOT=$GFC_ROOT
@@ -34,9 +65,11 @@ GFC_CLIENT_WEB_PORT=$GFC_WEB_PORT
 GFC_CLIENT_FLASH_PORT=18080
 GFC_PROXY_MODE=${GFC_PROXY_MODE:-gateway}
 GFC_ROUTING_SCHEME=${GFC_ROUTING_SCHEME:-kernel-split}
-GFC_ENABLE_OUTPUT_POLICY=${GFC_ENABLE_OUTPUT_POLICY:-0}
+GFC_ENABLE_OUTPUT_POLICY=${GFC_ENABLE_OUTPUT_POLICY:-1}
 GFC_POLICY_MARK=${GFC_POLICY_MARK:-0x2023}
 GFC_POLICY_TABLE=${GFC_POLICY_TABLE:-2022}
+GFC_MOSDNS_USER=$GFC_MOSDNS_USER
+GFC_MOSDNS_UID=${GFC_MOSDNS_UID}
 EOF
 chmod 600 "$GFC_ETC/gfc.env"
 

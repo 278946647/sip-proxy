@@ -9,9 +9,9 @@ TUN_IFACE="${GFC_TUN_INTERFACE:-gfctun}"
 MARK="${GFC_POLICY_MARK:-0x2023}"
 TABLE="${GFC_POLICY_TABLE:-2022}"
 NFT_PRIORITY="${GFC_NFT_PRIORITY:-200}"
-OUTPUT_POLICY="${GFC_ENABLE_OUTPUT_POLICY:-0}"
+OUTPUT_POLICY="${GFC_ENABLE_OUTPUT_POLICY:-1}"
+MOSDNS_USER="${GFC_MOSDNS_USER:-mosdns}"
 MOSDNS_UID="${GFC_MOSDNS_UID:-65353}"
-SINGBOX_UID="${GFC_SINGBOX_UID:-65354}"
 GFC_ROOT="${GFC_ROOT:-/usr/lib/gfc-client}"
 GFC_ETC="${GFC_ETC:-/etc/gfc-client}"
 DNS_PORT="${GFC_DNSMASQ_PORT:-53}"
@@ -26,6 +26,10 @@ BUNDLE="${GFC_LIB:-/var/lib/gfc-client}/state/config_bundle.json"
 
 [ -n "$LAN_IFACE" ] || LAN_IFACE="br-lan"
 [ -n "$LAN_ADDR" ] || LAN_ADDR="192.168.1.1"
+
+if id -u "$MOSDNS_USER" >/dev/null 2>&1; then
+	MOSDNS_UID="$(id -u "$MOSDNS_USER" 2>/dev/null || echo "$MOSDNS_UID")"
+fi
 
 mask_prefix() {
 	case "$1" in
@@ -118,18 +122,19 @@ EOF
 apply_output_policy() {
 	[ "$OUTPUT_POLICY" = "1" ] || return 0
 
-	# ImmortalWrt packages currently run mosdns/sing-box as root under procd.
-	# Do not classify all router-originated traffic: it can break management
-	# SSH/control-plane sessions. This optional chain only works when operators
-	# explicitly run services under stable UIDs and opt in through gfc.env.
+	# Router-originated traffic is not part of LAN policy routing. Only mosdns
+	# DoH (tcp/443) is marked into gfctun; root-owned traffic includes sing-box
+	# outbound handshakes and management SSH, so it must return.
 	nft -f - <<EOF || true
 add chain inet gfc_client_mangle output { type route hook output priority $NFT_PRIORITY; policy accept; }
 add rule inet gfc_client_mangle output oif "lo" return
 add rule inet gfc_client_mangle output oifname "$TUN_IFACE" return
 add rule inet gfc_client_mangle output iifname "$TUN_IFACE" return
-add rule inet gfc_client_mangle output meta skuid $SINGBOX_UID return
-add rule inet gfc_client_mangle output meta skuid $MOSDNS_UID ip daddr { 1.0.0.1, 1.1.1.1, 8.8.4.4, 8.8.8.8 } meta mark set $MARK
+add rule inet gfc_client_mangle output tcp dport 53 return
+add rule inet gfc_client_mangle output udp dport 53 return
+add rule inet gfc_client_mangle output ip daddr @bypass_ip return
 add rule inet gfc_client_mangle output meta skuid $MOSDNS_UID tcp dport 443 meta mark set $MARK
+add rule inet gfc_client_mangle output meta skuid 0 return
 EOF
 }
 
@@ -247,7 +252,7 @@ start_rules() {
 	ip -4 rule add pref 100 fwmark "$MARK" lookup "$TABLE" 2>/dev/null || \
 		ip -4 rule add fwmark "$MARK" table "$TABLE" 2>/dev/null || true
 	ip -4 route replace default dev "$TUN_IFACE" table "$TABLE"
-	echo "gfc routing: lan=$LAN_IFACE cidr=$LAN_CIDR mark=$MARK table=$TABLE priority=$NFT_PRIORITY output=$OUTPUT_POLICY cn=$CN_LIST bypass=$BYPASS_AUDIT"
+	echo "gfc routing: lan=$LAN_IFACE cidr=$LAN_CIDR mark=$MARK table=$TABLE priority=$NFT_PRIORITY output=$OUTPUT_POLICY mosdns_uid=$MOSDNS_UID cn=$CN_LIST bypass=$BYPASS_AUDIT"
 }
 
 case "$ACTION" in
@@ -262,6 +267,7 @@ case "$ACTION" in
 		echo "cn_audit=$CN_AUDIT"
 		echo "bypass_audit=$BYPASS_AUDIT"
 		echo "output_policy=$OUTPUT_POLICY"
+		echo "mosdns_user=$MOSDNS_USER uid=$MOSDNS_UID"
 		[ -f "$CN_AUDIT" ] && wc -l "$CN_AUDIT" || true
 		[ -f "$BYPASS_AUDIT" ] && cat "$BYPASS_AUDIT" || true
 		ip -4 rule list | grep "$TABLE" || true

@@ -1,7 +1,7 @@
 log:
   level: error
 
-# EasyMosDNS equivalent policy for GFC on ImmortalWrt/OpenWrt.
+# EasyMosDNS-compatible policy for common ImmortalWrt/OpenWrt mosdns v5 builds.
 # dnsmasq keeps LAN :53 and forwards to this instance on 127.0.0.1:1053.
 # Rules are rendered to /etc/gfc-client/mosdns/easymosdns.
 # gfc_openwrt_mosdns_v6
@@ -43,40 +43,17 @@ plugins:
       files:
         - ./rules/gfw_ip_list.txt
 
-  - tag: ecs_auto
-    type: ecs
-    args:
-      auto: true
-
-  - tag: ecs_local
-    type: ecs
-    args:
-      auto: false
-      ipv4: "101.6.6.0"
-      ipv6: "2001:da8::"
-      force_overwrite: false
-
-  - tag: ecs_global
-    type: ecs
-    args:
-      auto: false
-      ipv4: "1.1.1.1"
-      ipv6: "2001:4860:4860::8888"
-      force_overwrite: true
-
   - tag: cache_lan
     type: cache
     args:
       size: 8192
       lazy_cache_ttl: 86400
-      cache_everything: true
 
   - tag: cache_wan
     type: cache
     args:
       size: 131072
       lazy_cache_ttl: 86400
-      cache_everything: true
 
   - tag: forward_local
     type: forward
@@ -107,8 +84,7 @@ plugins:
       - matches:
           - resp_ip $gfw_ip
         exec:
-          - ecs_local
-          - forward_backup
+          - $forward_backup
 
   - tag: main_sequence
     type: sequence
@@ -117,44 +93,22 @@ plugins:
 
       - matches:
           - qname $ad_domain
-        exec:
-          - blackhole
-          - _return
+        exec: reject 3
 
       - matches:
           - qname $china_domain
-        exec:
-          - $forward_local
-          - _return
+        exec: $forward_local
 
       - matches:
           - qname $cdn_domain
-        exec:
-          - ecs_auto
-          - $forward_local
-          - _return
+        exec: $forward_local
 
       - matches:
           - qname $gfw_domain
-        exec:
-          - ecs_global
-          - $forward_remote
-          - _return
+        exec: $forward_remote
 
-      - exec:
-          - ecs_auto
-
-      - primary:
-          - ecs_local
-          - $forward_local
-        secondary:
-          - ecs_global
-          - $forward_remote
-        fast_fallback: 2000
-        always_standby: false
-
+      - exec: $forward_remote
       - exec: fix_gfw_ip
-
       - exec: $cache_wan
 
   - tag: udp_server
