@@ -59,12 +59,19 @@ ensure_group "$GFC_SINGBOX_USER" "$GFC_SINGBOX_UID"
 ensure_user "$GFC_SINGBOX_USER" "$GFC_SINGBOX_UID" "$GFC_SINGBOX_USER"
 
 ensure_singbox_caps() {
+	local bin="/usr/bin/sing-box"
+	if command -v readlink >/dev/null 2>&1; then
+		bin="$(readlink -f "$bin" 2>/dev/null || echo "$bin")"
+	fi
 	if [ -e /dev/net/tun ]; then
 		chmod 666 /dev/net/tun 2>/dev/null || true
 	fi
 	if command -v setcap >/dev/null 2>&1; then
-		setcap cap_net_admin,cap_net_raw,cap_net_bind_service+ep /usr/bin/sing-box 2>/dev/null || \
+		setcap cap_net_admin,cap_net_raw,cap_net_bind_service+ep "$bin" 2>/dev/null || \
 			echo "WARN: failed to set sing-box capabilities" >&2
+		if command -v getcap >/dev/null 2>&1 && ! getcap "$bin" 2>/dev/null | grep -q 'cap_net_admin'; then
+			echo "WARN: sing-box capabilities not active on $bin; non-root TUN may fail" >&2
+		fi
 	else
 		echo "WARN: setcap not found; install libcap-bin or sing-box cannot run as non-root with TUN" >&2
 	fi

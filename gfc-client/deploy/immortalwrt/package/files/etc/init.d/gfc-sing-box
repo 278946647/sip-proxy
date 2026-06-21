@@ -7,17 +7,27 @@ USE_PROCD=1
 start_service() {
 	[ -f /etc/gfc-client/gfc.env ] && . /etc/gfc-client/gfc.env
 	local user="${GFC_SINGBOX_USER:-singbox}"
+	local bin="/usr/bin/sing-box"
+	if command -v readlink >/dev/null 2>&1; then
+		bin="$(readlink -f "$bin" 2>/dev/null || echo "$bin")"
+	fi
 	[ -f /etc/gfc-client/sing-box.json ] || return 0
 	chown root:"$user" /etc/gfc-client/sing-box.json 2>/dev/null || true
 	chmod 640 /etc/gfc-client/sing-box.json 2>/dev/null || true
 	[ -e /dev/net/tun ] && chmod 666 /dev/net/tun 2>/dev/null || true
+	ip link del "${GFC_TUN_INTERFACE:-gfctun}" 2>/dev/null || true
 	if command -v setcap >/dev/null 2>&1; then
-		setcap cap_net_admin,cap_net_raw,cap_net_bind_service+ep /usr/bin/sing-box 2>/dev/null || true
+		setcap cap_net_admin,cap_net_raw,cap_net_bind_service+ep "$bin" 2>/dev/null || true
+		if command -v getcap >/dev/null 2>&1 && ! getcap "$bin" 2>/dev/null | grep -q 'cap_net_admin'; then
+			echo "ERROR: sing-box lacks cap_net_admin on $bin; cannot create TUN as $user" >&2
+			return 1
+		fi
 	else
-		echo "WARN: setcap not found; sing-box user may not create TUN" >&2
+		echo "ERROR: setcap not found; install libcap-bin before running sing-box as $user" >&2
+		return 1
 	fi
 	procd_open_instance
-	procd_set_param command /usr/bin/sing-box run -c /etc/gfc-client/sing-box.json
+	procd_set_param command "$bin" run -c /etc/gfc-client/sing-box.json
 	procd_set_param user "$user"
 	procd_set_param respawn 5 10 0
 	procd_set_param stdout 1
