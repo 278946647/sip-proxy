@@ -59,7 +59,11 @@ mkdir -p /etc/gfc-client /var/lib/gfc-client/state /var/lib/gfc-client/rules /va
 /etc/init.d/gfc-mosdns enable
 /etc/init.d/gfc-sing-box enable
 /etc/init.d/gfc-routing enable
-gfc-bootstrap >/tmp/gfc-bootstrap.log 2>&1 || true
+if [ -f /var/lib/gfc-client/state/config_bundle.json ]; then
+	gfc-bootstrap --reapply >/tmp/gfc-bootstrap.log 2>&1 || echo "gfc-bootstrap reapply failed; keeping existing config" >>/tmp/gfc-bootstrap.log
+else
+	gfc-bootstrap >/tmp/gfc-bootstrap.log 2>&1 || true
+fi
 exit 0
 endef
 

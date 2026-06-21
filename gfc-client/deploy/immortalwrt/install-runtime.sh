@@ -51,12 +51,19 @@ chmod +x "$GFC_ROOT"/deploy/immortalwrt/*.sh 2>/dev/null || true
 /etc/init.d/mosdns disable 2>/dev/null || true
 
 if [ -x /usr/bin/gfc-bootstrap ]; then
-	GFC_PLATFORM=immortalwrt \
-	GFC_ROOT="$GFC_ROOT" \
-	GFC_ETC="$GFC_ETC" \
-	GFC_LIB="$GFC_LIB" \
-	GFC_LOG_DIR="$GFC_LOG_DIR" \
-	gfc-bootstrap || true
+	run_bootstrap() {
+		GFC_PLATFORM=immortalwrt \
+		GFC_ROOT="$GFC_ROOT" \
+		GFC_ETC="$GFC_ETC" \
+		GFC_LIB="$GFC_LIB" \
+		GFC_LOG_DIR="$GFC_LOG_DIR" \
+		gfc-bootstrap "$@"
+	}
+	if [ -f "$GFC_LIB/state/config_bundle.json" ]; then
+		run_bootstrap --reapply || echo "WARN: active dataplane reapply failed; keeping existing config" >&2
+	else
+		run_bootstrap || true
+	fi
 fi
 
 if command -v uci >/dev/null 2>&1; then

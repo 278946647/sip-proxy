@@ -204,17 +204,26 @@ func (o *Orchestrator) postDataplaneRepair() []string {
 	root := o.cfg.Paths.Root
 	shell := "/bin/bash"
 	routingScript := filepath.Join(root, "deploy", "gfc-routing.sh")
-	if platform.IsOpenWrt() {
-		shell = "/bin/sh"
-		routingScript = filepath.Join(root, "deploy", "immortalwrt", "gfc-routing.sh")
-	}
-	for _, spec := range []struct {
+	specs := []struct {
 		label string
 		args  []string
 	}{
 		{"patch-singbox-wan", []string{filepath.Join(root, "deploy", "patch-singbox-wan.sh")}},
 		{"gfc-routing", []string{routingScript, "start"}},
-	} {
+	}
+	if platform.IsOpenWrt() {
+		shell = "/bin/sh"
+		routingScript = filepath.Join(root, "deploy", "immortalwrt", "gfc-routing.sh")
+		// The Go renderer already writes WAN binding for active configs. Keep
+		// ImmortalWrt post-apply free of bash/python helper dependencies.
+		specs = []struct {
+			label string
+			args  []string
+		}{
+			{"gfc-routing", []string{routingScript, "start"}},
+		}
+	}
+	for _, spec := range specs {
 		script := spec.args[0]
 		if _, err := os.Stat(script); err != nil {
 			continue

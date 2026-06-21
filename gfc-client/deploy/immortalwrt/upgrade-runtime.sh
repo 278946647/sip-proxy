@@ -53,7 +53,11 @@ if [ -x /usr/bin/gfc-bootstrap ]; then
 		GFC_LOG_DIR="$GFC_LOG_DIR" \
 		gfc-bootstrap "$@"
 	}
-	run_bootstrap --reapply || run_bootstrap || true
+	if [ -f "$GFC_LIB/state/config_bundle.json" ]; then
+		run_bootstrap --reapply || echo "WARN: active dataplane reapply failed; keeping existing config" >&2
+	else
+		run_bootstrap || true
+	fi
 fi
 
 if [ -x /usr/lib/gfc-client/deploy/immortalwrt/install-luci-app.sh ]; then
