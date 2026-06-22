@@ -368,9 +368,9 @@ table inet gfc_client_mangle {{
   chain redirect_tcp {{
     ip daddr {{ 127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 }} return
     ip daddr {lan_cidr} return{bypass_return}
-    ip daddr @ext redirect to :{redirect_port}
-    ip daddr @ext_const redirect to :{redirect_port}
-    ip daddr != @cn_ip redirect to :{redirect_port}
+    meta l4proto tcp ip daddr @ext redirect to :{redirect_port}
+    meta l4proto tcp ip daddr @ext_const redirect to :{redirect_port}
+    meta l4proto tcp ip daddr != @cn_ip redirect to :{redirect_port}
   }}
 
   chain prerouting_mangle {{

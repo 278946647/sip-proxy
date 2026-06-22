@@ -200,9 +200,9 @@ table inet gfc_client_mangle {
     ip daddr { 10.0.0.0/8, 127.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 } return
     ip daddr $LAN_CIDR return
     ip daddr @bypass_ip return
-    ip daddr @ext redirect to :$REDIRECT_PORT
-    ip daddr @ext_const redirect to :$REDIRECT_PORT
-    ip daddr != @cn_ip redirect to :$REDIRECT_PORT
+    meta l4proto tcp ip daddr @ext redirect to :$REDIRECT_PORT
+    meta l4proto tcp ip daddr @ext_const redirect to :$REDIRECT_PORT
+    meta l4proto tcp ip daddr != @cn_ip redirect to :$REDIRECT_PORT
   }
 
   chain prerouting_mangle {
