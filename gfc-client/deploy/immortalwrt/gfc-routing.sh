@@ -6,8 +6,13 @@ ENV_FILE="${GFC_ENV_FILE:-/etc/gfc-client/gfc.env}"
 [ -f "$ENV_FILE" ] && . "$ENV_FILE"
 
 TUN_IFACE="${GFC_TUN_INTERFACE:-gfctun}"
+WAN_IFACE="${GFC_WAN_IFACE:-eth0}"
 MARK="${GFC_POLICY_MARK:-0x2023}"
 TABLE="${GFC_POLICY_TABLE:-2022}"
+ROUTING_SCHEME="${GFC_ROUTING_SCHEME:-kernel-split}"
+REDIRECT_PORT="${GFC_REDIRECT_PORT:-11800}"
+SSH_PORT="${GFC_SSH_PORT:-212}"
+EXT_CONST_IPS="${GFC_EXT_CONST_IPS:-100.100.100.1,8.8.8.8,8.8.4.4}"
 NFT_PRIORITY="${GFC_NFT_PRIORITY:-200}"
 OUTPUT_POLICY="${GFC_ENABLE_OUTPUT_POLICY:-1}"
 MOSDNS_USER="${GFC_MOSDNS_USER:-mosdns}"
@@ -65,6 +70,15 @@ $ip
 EOF
 }
 
+is_ipv4() {
+	echo "$1" | awk -F. 'NF == 4 {
+		for (i = 1; i <= 4; i++) {
+			if ($i !~ /^[0-9]+$/ || $i < 0 || $i > 255) exit 1
+		}
+		exit 0
+	} { exit 1 }'
+}
+
 LAN_CIDR="${GFC_LAN_CIDR:-$(network_cidr "$LAN_ADDR" "$(mask_prefix "$LAN_MASK")")}"
 CN_LIST="${GFC_CN_IP_LIST:-$GFC_ETC/mosdns/easymosdns/rules/china_ip_list.txt}"
 [ -f "$CN_LIST" ] || CN_LIST="$GFC_ROOT/share/easymosdns/rules/china_ip_list.txt"
@@ -90,7 +104,20 @@ table inet gfc_dns_hijack {
 EOF
 }
 
-apply_policy_table() {
+fmt_ext_const_elements() {
+	local out="" token
+	for token in $(echo "$EXT_CONST_IPS" | tr ',' ' '); do
+		token="${token%%/*}"
+		[ -n "$token" ] || continue
+		is_ipv4 "$token" || continue
+		[ -n "$out" ] && out="$out, "
+		out="${out}${token}"
+	done
+	[ -n "$out" ] || out="8.8.8.8, 8.8.4.4"
+	echo "$out"
+}
+
+apply_policy_table_kernel_split() {
 	nft -f - <<EOF
 table inet gfc_client_mangle {
   set cn_ip {
@@ -124,7 +151,103 @@ table inet gfc_client_mangle {
 EOF
 }
 
-apply_output_policy() {
+apply_policy_table_byst_redirect() {
+	local ext_const
+	ext_const="$(fmt_ext_const_elements)"
+	nft -f - <<EOF
+table inet gfc_client_mangle {
+  set cn_ip {
+    type ipv4_addr
+    flags interval
+  }
+
+  set bypass_ip {
+    type ipv4_addr
+    flags interval
+  }
+
+  set ext {
+    type ipv4_addr
+    flags timeout
+    timeout 7200s
+    size 262144
+  }
+
+  set ext_const {
+    type ipv4_addr
+    elements = { $ext_const }
+  }
+
+  chain mark_proxy {
+    meta mark set $MARK
+    ct mark set meta mark
+    accept
+  }
+
+  chain classify_non_tcp {
+    ct mark != 0x00000000 meta mark set ct mark return
+    meta mark $MARK return
+    ip daddr { 10.0.0.0/8, 127.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 } return
+    ip daddr $LAN_CIDR return
+    udp dport { 53, 67, 68, 123 } return
+    ip daddr @bypass_ip return
+    ip daddr @ext_const jump mark_proxy
+    ip daddr != @cn_ip jump mark_proxy
+    ip daddr @ext jump mark_proxy
+  }
+
+  chain redirect_tcp {
+    ip daddr { 10.0.0.0/8, 127.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 } return
+    ip daddr $LAN_CIDR return
+    ip daddr @bypass_ip return
+    ip daddr @ext redirect to :$REDIRECT_PORT
+    ip daddr @ext_const redirect to :$REDIRECT_PORT
+    ip daddr != @cn_ip redirect to :$REDIRECT_PORT
+  }
+
+  chain prerouting_mangle {
+    type filter hook prerouting priority mangle; policy accept;
+    iifname "$LAN_IFACE" meta l4proto != tcp jump classify_non_tcp
+  }
+
+  chain output_mangle {
+    type route hook output priority mangle; policy accept;
+    meta mark != 0x00000000 return
+    oif "lo" return
+    oifname "$TUN_IFACE" return
+    iifname "$TUN_IFACE" return
+    meta skuid $SINGBOX_UID return
+    meta l4proto tcp tcp sport $SSH_PORT return
+    oifname "$WAN_IFACE" meta skuid $MOSDNS_UID udp dport 123 return
+    oifname "$WAN_IFACE" meta l4proto != tcp jump classify_non_tcp
+  }
+
+  chain prerouting_nat {
+    type nat hook prerouting priority dstnat; policy accept;
+    iifname "$LAN_IFACE" meta l4proto tcp jump redirect_tcp
+  }
+
+  chain output_nat {
+    type nat hook output priority dstnat; policy accept;
+    meta mark != 0x00000000 return
+    oif "lo" return
+    oifname "$TUN_IFACE" return
+    meta skuid $SINGBOX_UID return
+    meta l4proto tcp tcp sport $SSH_PORT return
+    oifname "$WAN_IFACE" meta l4proto tcp jump redirect_tcp
+  }
+}
+EOF
+}
+
+apply_policy_table() {
+	case "$ROUTING_SCHEME" in
+		byst-redirect) apply_policy_table_byst_redirect ;;
+		*) apply_policy_table_kernel_split ;;
+	esac
+}
+
+apply_output_policy_kernel_split() {
 	[ "$OUTPUT_POLICY" = "1" ] || return 0
 
 	# Match the tested gateway policy: sing-box owns VLESS handshakes and must
@@ -136,19 +259,18 @@ add rule inet gfc_client_mangle output oif "lo" return
 add rule inet gfc_client_mangle output oifname "$TUN_IFACE" return
 add rule inet gfc_client_mangle output iifname "$TUN_IFACE" return
 add rule inet gfc_client_mangle output meta skuid $SINGBOX_UID return
+add rule inet gfc_client_mangle output meta l4proto tcp tcp sport $SSH_PORT return
 add rule inet gfc_client_mangle output meta skuid $MOSDNS_UID ip daddr { 1.0.0.1, 1.1.1.1, 8.8.4.4, 8.8.8.8 } meta mark set $MARK
 add rule inet gfc_client_mangle output meta skuid $MOSDNS_UID tcp dport 443 meta mark set $MARK
 add rule inet gfc_client_mangle output jump classify
 EOF
 }
 
-is_ipv4() {
-	echo "$1" | awk -F. 'NF == 4 {
-		for (i = 1; i <= 4; i++) {
-			if ($i !~ /^[0-9]+$/ || $i < 0 || $i > 255) exit 1
-		}
-		exit 0
-	} { exit 1 }'
+apply_output_policy() {
+	case "$ROUTING_SCHEME" in
+		byst-redirect) return 0 ;;
+		*) apply_output_policy_kernel_split ;;
+	esac
 }
 
 append_bypass_ip() {
@@ -256,7 +378,7 @@ start_rules() {
 	ip -4 rule add pref 100 fwmark "$MARK" lookup "$TABLE" 2>/dev/null || \
 		ip -4 rule add fwmark "$MARK" table "$TABLE" 2>/dev/null || true
 	ip -4 route replace default dev "$TUN_IFACE" table "$TABLE"
-	echo "gfc routing: lan=$LAN_IFACE cidr=$LAN_CIDR mark=$MARK table=$TABLE priority=$NFT_PRIORITY output=$OUTPUT_POLICY mosdns_uid=$MOSDNS_UID singbox_uid=$SINGBOX_UID cn=$CN_LIST bypass=$BYPASS_AUDIT"
+	echo "gfc routing: scheme=$ROUTING_SCHEME lan=$LAN_IFACE wan=$WAN_IFACE cidr=$LAN_CIDR mark=$MARK table=$TABLE redirect=$REDIRECT_PORT ssh=$SSH_PORT priority=$NFT_PRIORITY output=$OUTPUT_POLICY mosdns_uid=$MOSDNS_UID singbox_uid=$SINGBOX_UID cn=$CN_LIST bypass=$BYPASS_AUDIT"
 }
 
 case "$ACTION" in
@@ -264,7 +386,7 @@ case "$ACTION" in
 	stop) stop_rules ;;
 	restart) stop_rules; start_rules ;;
 	status)
-		echo "lan=$LAN_IFACE cidr=$LAN_CIDR tun=$TUN_IFACE mark=$MARK table=$TABLE"
+		echo "scheme=$ROUTING_SCHEME lan=$LAN_IFACE wan=$WAN_IFACE cidr=$LAN_CIDR tun=$TUN_IFACE mark=$MARK table=$TABLE redirect=$REDIRECT_PORT ssh=$SSH_PORT"
 		echo "dns_hijack=$(nft list table inet gfc_dns_hijack >/dev/null 2>&1 && echo yes || echo no)"
 		echo "policy=$(nft list table inet gfc_client_mangle >/dev/null 2>&1 && echo yes || echo no)"
 		echo "cn_list=$CN_LIST"

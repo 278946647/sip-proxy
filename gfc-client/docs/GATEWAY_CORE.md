@@ -41,7 +41,7 @@ MosDNS 国际上游 (1.1.1.1/8.8.8.8:443 DoH) → uid 65353 + :443 打标 → TU
 
 sing-box（scheme B）：**无 geo rule_set**，route 仅 `final: proxy`
 
-回退方案 A：`GFC_ROUTING_SCHEME=tun-all` + `apply-network.sh`
+回退标签：`kernel-split`。验证其他方案后，设置 `GFC_ROUTING_SCHEME=kernel-split` 并重新执行 `apply-network.sh` 即可回到当前默认数据面。
 
 ---
 
@@ -67,6 +67,36 @@ Relay node
 ```
 
 本机发出的流量（非 sing-box / 非 :53）走 **output mangle** 同样打标，盒子本机与 LAN PC 路径一致。
+
+---
+
+## 方案 C 数据流（BYST 复刻验证）
+
+启用：`GFC_ROUTING_SCHEME=byst-redirect`
+
+```
+LAN TCP 非 CN / ext / ext_const
+  → nft prerouting nat redirect :11800
+  → sing-box redirect inbound tcp-in
+  → VLESS Reality
+
+LAN 非 TCP 非 CN / ext / ext_const
+  → nft prerouting mangle mark
+  → ip rule table 2022
+  → gfctun
+  → sing-box TUN inbound
+  → VLESS Reality
+```
+
+该方案用于复刻成熟设备的 `redirect :11800 + TUN` 双 inbound 模式。WAN 由 `GFC_WAN_IFACE` 或运行时网络角色解析，默认 TUN 设备仍为 `gfctun`。
+
+关键差异：
+
+- TCP 不再走 `fwmark -> gfctun`，而是 redirect 到 sing-box `11800`。
+- UDP / ICMP 等非 TCP 仍走 `fwmark -> table 2022 -> gfctun`。
+- `ext` 是 nft timeout set，预留给后续动态 DNS/IP 注入。
+- `ext_const` 默认包含 `100.100.100.1,8.8.8.8,8.8.4.4`，可通过 `GFC_EXT_CONST_IPS` 覆盖。
+- `kernel-split` 保留为回退标签，不删除。
 
 **OUTPUT 分类顺序**（数字越小越先执行；nat hook 不可用 `-200`，该槽位留给 conntrack）：
 

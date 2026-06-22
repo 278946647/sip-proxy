@@ -82,7 +82,15 @@ ensure_group "$GFC_MOSDNS_USER" "$GFC_MOSDNS_UID"
 ensure_user "$GFC_MOSDNS_USER" "$GFC_MOSDNS_UID" "$GFC_MOSDNS_USER"
 ensure_group "$GFC_SINGBOX_USER" "$GFC_SINGBOX_UID"
 ensure_user "$GFC_SINGBOX_USER" "$GFC_SINGBOX_UID" "$GFC_SINGBOX_USER"
+env_set GFC_ROUTING_SCHEME "${GFC_ROUTING_SCHEME:-kernel-split}"
 env_set GFC_ENABLE_OUTPUT_POLICY 1
+env_set GFC_POLICY_MARK "${GFC_POLICY_MARK:-0x2023}"
+env_set GFC_POLICY_TABLE "${GFC_POLICY_TABLE:-2022}"
+env_set GFC_WAN_IFACE "${GFC_WAN_IFACE:-eth0}"
+env_set GFC_TUN_INTERFACE "${GFC_TUN_INTERFACE:-gfctun}"
+env_set GFC_REDIRECT_PORT "${GFC_REDIRECT_PORT:-11800}"
+env_set GFC_EXT_CONST_IPS "${GFC_EXT_CONST_IPS:-100.100.100.1,8.8.8.8,8.8.4.4}"
+env_set GFC_SSH_PORT "${GFC_SSH_PORT:-212}"
 env_set GFC_MOSDNS_USER "$GFC_MOSDNS_USER"
 env_set GFC_MOSDNS_UID "$GFC_MOSDNS_UID"
 env_set GFC_SINGBOX_USER "$GFC_SINGBOX_USER"
@@ -121,7 +129,9 @@ if [ -d "$INIT_SRC" ]; then
 	done
 fi
 
-if [ -x /usr/bin/gfc-bootstrap ]; then
+if [ "${GFC_SAFE_INSTALL:-0}" = "1" ]; then
+	echo "safe install: bootstrap reapply skipped"
+elif [ -x /usr/bin/gfc-bootstrap ]; then
 	run_bootstrap() {
 		GFC_PLATFORM=immortalwrt \
 		GFC_ROOT="$GFC_ROOT" \
@@ -147,6 +157,10 @@ start_service gfc-api
 start_service gfc-mosdns
 /etc/init.d/dnsmasq restart 2>/dev/null || true
 start_service gfc-agent
+if [ "${GFC_SAFE_INSTALL:-0}" = "1" ]; then
+	echo "GFC runtime upgraded (safe install: sing-box/routing not restarted)"
+	exit 0
+fi
 start_service gfc-sing-box
 start_service gfc-routing
 

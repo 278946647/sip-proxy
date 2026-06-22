@@ -110,6 +110,7 @@ func (r *Renderer) RenderActive(payload map[string]any, ruleSets []map[string]an
 	if proxyMode == "" {
 		proxyMode = r.cfg.ProxyMode
 	}
+	scheme := r.RoutingScheme()
 
 	wan := r.resolveWanIface()
 	if wan == "" {
@@ -119,7 +120,10 @@ func (r *Renderer) RenderActive(payload map[string]any, ruleSets []map[string]an
 	direct := map[string]any{"type": "direct", "tag": "direct", "bind_interface": wan}
 
 	nodeTag := "proxy"
-	outbounds := []any{directLocal, direct}
+	var outbounds []any
+	if scheme != "byst-redirect" {
+		outbounds = append(outbounds, directLocal, direct)
+	}
 	proxyOutbound := nodeTag
 
 	// optional extra nodes from payload
@@ -157,12 +161,14 @@ func (r *Renderer) RenderActive(payload map[string]any, ruleSets []map[string]an
 	}
 
 	inbounds := r.buildInbounds(proxyMode)
-	scheme := r.RoutingScheme()
 	routingMode := r.RoutingMode()
 
 	var routeRules []map[string]any
 	var activeRuleSets []map[string]any
-	if scheme == "kernel-split" {
+	if scheme == "byst-redirect" {
+		// BYST-compatible dataplane: nft decides split/redirect, sing-box only carries traffic out.
+		routeRules = []map[string]any{}
+	} else if scheme == "kernel-split" {
 		// CN/intl split is done in kernel nft (cn_ip + fwmark). TUN traffic → VLESS only.
 		// Relay node must use direct+WAN bind (not loop back through TUN/VLESS).
 		routeRules = []map[string]any{}
@@ -190,7 +196,9 @@ func (r *Renderer) RenderActive(payload map[string]any, ruleSets []map[string]an
 		"auto_detect_interface": false,
 		"default_interface":     wan,
 		"final":                 proxyOutbound,
-		"rules":                 routeRules,
+	}
+	if len(routeRules) > 0 {
+		route["rules"] = routeRules
 	}
 	if len(activeRuleSets) > 0 {
 		route["rule_set"] = activeRuleSets
@@ -201,19 +209,22 @@ func (r *Renderer) RenderActive(payload map[string]any, ruleSets []map[string]an
 		logBlock["timestamp"] = true
 	}
 
-	return map[string]any{
+	rendered := map[string]any{
 		"log":       logBlock,
 		"inbounds":  inbounds,
 		"outbounds": outbounds,
 		"route":     route,
-		"experimental": map[string]any{
+	}
+	if scheme != "byst-redirect" {
+		rendered["experimental"] = map[string]any{
 			"cache_file": map[string]any{"enabled": false},
 			"clash_api": map[string]any{
 				"external_controller": "127.0.0.1:9090",
 				"secret":              "",
 			},
-		},
-	}, nil
+		}
+	}
+	return rendered, nil
 }
 
 func (r *Renderer) resolveWanIface() string {
@@ -320,7 +331,21 @@ func (r *Renderer) buildInbounds(proxyMode string) []any {
 		"strict_route":   false,
 		"stack":          "gvisor",
 	}
-	return []any{tun}
+	if r.RoutingScheme() != "byst-redirect" {
+		return []any{tun}
+	}
+	redirectPort := 11800
+	if p, err := strconv.Atoi(strings.TrimSpace(os.Getenv("GFC_REDIRECT_PORT"))); err == nil && p > 0 && p <= 65535 {
+		redirectPort = p
+	}
+	redirect := map[string]any{
+		"type":        "redirect",
+		"tag":         "tcp-in",
+		"listen":      "0.0.0.0",
+		"listen_port": redirectPort,
+		"sniff":       false,
+	}
+	return []any{redirect, tun}
 }
 
 func (r *Renderer) dnsRouteRules(nodeAddr string, payload map[string]any, proxyTag string) []map[string]any {

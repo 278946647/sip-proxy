@@ -201,6 +201,9 @@ func (o *Orchestrator) ReapplyLocal(restart bool) (bool, string) {
 
 func (o *Orchestrator) postDataplaneRepair() []string {
 	var msgs []string
+	if strings.TrimSpace(os.Getenv("GFC_SKIP_DATAPLANE_REPAIR")) == "1" {
+		return append(msgs, "dataplane repair skipped")
+	}
 	root := o.cfg.Paths.Root
 	shell := "/bin/bash"
 	routingScript := filepath.Join(root, "deploy", "gfc-routing.sh")

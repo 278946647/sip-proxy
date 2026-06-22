@@ -85,6 +85,7 @@ write_gfc_nft_policy_conf() {
 
   export LAN="$lan"
   export LAN_CIDR="$lan_cidr"
+  export WAN="${WAN:-${GFC_WAN_IFACE:-}}"
   export GFC_ROUTING_SCHEME="${GFC_ROUTING_SCHEME:-kernel-split}"
   if [[ -n "$bypass_ips" ]]; then
     export GFC_POLICY_BYPASS_IPS="$bypass_ips"

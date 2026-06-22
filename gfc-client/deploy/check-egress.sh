@@ -62,10 +62,10 @@ echo
 
 echo "--- policy nft ---"
 if [[ -f /etc/gfc-client/nftables-policy.conf ]]; then
-  echo "  scheme: $(grep -oE 'Scheme [AB]|kernel-split|tun-all' /etc/gfc-client/nftables-policy.conf | head -1 || echo kernel-split)"
+  echo "  scheme: $(grep -oE 'Scheme [ABC]|kernel-split|byst-redirect|tun-all' /etc/gfc-client/nftables-policy.conf | head -1 || echo kernel-split)"
   echo "  cn_ip audit lines: $(grep -vc '^#' /etc/gfc-client/nftables-cn-ip.set 2>/dev/null || echo 0)"
   echo "  cn_ip load batches: $(grep -c 'add element inet gfc_client_mangle cn_ip' /etc/gfc-client/nftables-cn-ip-load.nft 2>/dev/null || echo 0)"
-  grep -E 'classify|cn_ip|skuid 6535' /etc/gfc-client/nftables-policy.conf | head -8
+  grep -E 'classify|redirect|cn_ip|skuid 6535' /etc/gfc-client/nftables-policy.conf | head -8
 else
   echo "  WARN: no nftables-policy.conf"
 fi
