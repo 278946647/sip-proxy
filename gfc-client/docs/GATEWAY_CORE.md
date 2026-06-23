@@ -95,7 +95,7 @@ LAN 非 TCP 非 CN / ext / ext_const
 - TCP 不再走 `fwmark -> gfctun`，而是 redirect 到 sing-box `11800`。
 - UDP / ICMP 等非 TCP 仍走 `fwmark -> table 2022 -> gfctun`。
 - `ext` 是 nft timeout set，预留给后续动态 DNS/IP 注入。
-- `ext_const` 默认包含 `100.100.100.1,8.8.8.8,8.8.4.4`，可通过 `GFC_EXT_CONST_IPS` 覆盖。
+- `ext_const` 默认包含 `8.8.4.4,8.8.8.8,1.1.1.1,1.0.0.1`，可通过 `GFC_EXT_CONST_IPS` 覆盖。
 - `kernel-split` 保留为回退标签，不删除。
 
 **OUTPUT 分类顺序**（数字越小越先执行；nat hook 不可用 `-200`，该槽位留给 conntrack）：

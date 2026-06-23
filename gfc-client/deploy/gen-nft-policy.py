@@ -336,6 +336,8 @@ table inet gfc_client_mangle {{
     flags interval
   }}
 
+  {bypass_set}
+
   set ext {{
     type ipv4_addr
     flags timeout
@@ -346,7 +348,7 @@ table inet gfc_client_mangle {{
   set ext_const {{
     type ipv4_addr
     elements = {{ {ext_const} }}
-  }}{bypass_set}
+  }}
 
   chain mark_proxy {{
     meta mark set {mark}
@@ -355,14 +357,16 @@ table inet gfc_client_mangle {{
   }}
 
   chain classify_non_tcp {{
-    ct mark != 0x00000000 meta mark set ct mark return
-    meta mark {mark} return
+    meta mark set ct mark
+    meta mark {mark} accept
     ip daddr {{ 127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 }} return
     ip daddr {lan_cidr} return
     udp dport {{ 53, 67, 68, 123 }} return{bypass_return}
     ip daddr @ext_const jump mark_proxy
-    ip daddr != @cn_ip jump mark_proxy
     ip daddr @ext jump mark_proxy
+    ip daddr != @cn_ip jump mark_proxy
+    ct mark set meta mark
+    accept
   }}
 
   chain redirect_tcp {{
@@ -380,28 +384,30 @@ table inet gfc_client_mangle {{
 
   chain output_mangle {{
     type route hook output priority mangle; policy accept;
-    meta mark != 0x00000000 return
+    meta mark != 0x00000000 accept
     oif lo return
     oifname "{tun}" return
     iifname "{tun}" return
     meta skuid {singbox_uid} return
     meta l4proto tcp tcp sport {ssh_port} return
-    {wan_match}meta skuid {mosdns_uid} udp dport 123 return
+    udp dport 123 return
     {wan_match}meta l4proto != tcp jump classify_non_tcp
   }}
 
   chain prerouting_nat {{
     type nat hook prerouting priority dstnat; policy accept;
+    iifname "{lan}" meta l4proto tcp ip daddr != @cn_ip redirect to :{redirect_port}
     iifname "{lan}" meta l4proto tcp jump redirect_tcp
   }}
 
   chain output_nat {{
     type nat hook output priority dstnat; policy accept;
-    meta mark != 0x00000000 return
+    meta mark != 0x00000000 accept
     oif lo return
     oifname "{tun}" return
     meta skuid {singbox_uid} return
     meta l4proto tcp tcp sport {ssh_port} return
+    iifname "{wan}" meta l4proto tcp ip daddr != @cn_ip redirect to :{redirect_port}
     {wan_match}meta l4proto tcp jump redirect_tcp
   }}
 }}
@@ -435,7 +441,7 @@ def main() -> int:
         "singbox_uid": env("GFC_SINGBOX_UID", "65354"),
         "ssh_port": env("GFC_SSH_PORT", "212"),
         "redirect_port": env("GFC_REDIRECT_PORT", "11800"),
-        "ext_const_ips": env("GFC_EXT_CONST_IPS", "100.100.100.1,8.8.8.8,8.8.4.4").split(","),
+        "ext_const_ips": env("GFC_EXT_CONST_IPS", "8.8.4.4,8.8.8.8,1.1.1.1,1.0.0.1").split(","),
         "bypass_ips": bypass_ips,
         "cn_count": len(cn_cidrs),
         "cn_load_path": str(cn_load),

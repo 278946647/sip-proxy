@@ -12,7 +12,7 @@ TABLE="${GFC_POLICY_TABLE:-2022}"
 ROUTING_SCHEME="${GFC_ROUTING_SCHEME:-kernel-split}"
 REDIRECT_PORT="${GFC_REDIRECT_PORT:-11800}"
 SSH_PORT="${GFC_SSH_PORT:-212}"
-EXT_CONST_IPS="${GFC_EXT_CONST_IPS:-100.100.100.1,8.8.8.8,8.8.4.4}"
+EXT_CONST_IPS="${GFC_EXT_CONST_IPS:-8.8.4.4,8.8.8.8,1.1.1.1,1.0.0.1}"
 NFT_PRIORITY="${GFC_NFT_PRIORITY:-200}"
 OUTPUT_POLICY="${GFC_ENABLE_OUTPUT_POLICY:-1}"
 MOSDNS_USER="${GFC_MOSDNS_USER:-mosdns}"
@@ -113,7 +113,7 @@ fmt_ext_const_elements() {
 		[ -n "$out" ] && out="$out, "
 		out="${out}${token}"
 	done
-	[ -n "$out" ] || out="8.8.8.8, 8.8.4.4"
+	[ -n "$out" ] || out="8.8.4.4, 8.8.8.8, 1.1.1.1, 1.0.0.1"
 	echo "$out"
 }
 
@@ -185,15 +185,17 @@ table inet gfc_client_mangle {
   }
 
   chain classify_non_tcp {
-    ct mark != 0x00000000 meta mark set ct mark return
-    meta mark $MARK return
+    meta mark set ct mark
+    meta mark $MARK accept
     ip daddr { 10.0.0.0/8, 127.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 } return
     ip daddr $LAN_CIDR return
     udp dport { 53, 67, 68, 123 } return
     ip daddr @bypass_ip return
     ip daddr @ext_const jump mark_proxy
-    ip daddr != @cn_ip jump mark_proxy
     ip daddr @ext jump mark_proxy
+    ip daddr != @cn_ip jump mark_proxy
+    ct mark set meta mark
+    accept
   }
 
   chain redirect_tcp {
@@ -212,28 +214,30 @@ table inet gfc_client_mangle {
 
   chain output_mangle {
     type route hook output priority mangle; policy accept;
-    meta mark != 0x00000000 return
+    meta mark != 0x00000000 accept
     oif "lo" return
     oifname "$TUN_IFACE" return
     iifname "$TUN_IFACE" return
     meta skuid $SINGBOX_UID return
     meta l4proto tcp tcp sport $SSH_PORT return
-    oifname "$WAN_IFACE" meta skuid $MOSDNS_UID udp dport 123 return
+    udp dport 123 return
     oifname "$WAN_IFACE" meta l4proto != tcp jump classify_non_tcp
   }
 
   chain prerouting_nat {
     type nat hook prerouting priority dstnat; policy accept;
+    iifname "$LAN_IFACE" meta l4proto tcp ip daddr != @cn_ip redirect to :$REDIRECT_PORT
     iifname "$LAN_IFACE" meta l4proto tcp jump redirect_tcp
   }
 
   chain output_nat {
     type nat hook output priority dstnat; policy accept;
-    meta mark != 0x00000000 return
+    meta mark != 0x00000000 accept
     oif "lo" return
     oifname "$TUN_IFACE" return
     meta skuid $SINGBOX_UID return
     meta l4proto tcp tcp sport $SSH_PORT return
+    iifname "$WAN_IFACE" meta l4proto tcp ip daddr != @cn_ip redirect to :$REDIRECT_PORT
     oifname "$WAN_IFACE" meta l4proto tcp jump redirect_tcp
   }
 }
