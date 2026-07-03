@@ -101,7 +101,7 @@ func (r *Renderer) RenderActive(payload map[string]any, ruleSets []map[string]an
 	if uuid == "" {
 		return nil, fmt.Errorf("vless uuid missing")
 	}
-	port := 443
+	port := 8443
 	if p, ok := node["port"].(float64); ok {
 		port = int(p)
 	}
@@ -274,7 +274,7 @@ func buildVLESSFromPayload(address string, port int, vless map[string]any, tag, 
 	}
 	sni, _ := vless["serverName"].(string)
 	if sni == "" {
-		sni = "www.microsoft.com"
+		sni = "www.cloudflare.com"
 	}
 	pk, _ := vless["publicKey"].(string)
 	sid, _ := vless["shortId"].(string)
@@ -306,7 +306,7 @@ func buildVLESSOutbound(nm map[string]any, tag, wan string) map[string]any {
 		vless = nm
 	}
 	addr, _ := nm["server"].(string)
-	port := 443
+	port := 8443
 	if p, ok := nm["port"].(float64); ok {
 		port = int(p)
 	}
@@ -352,7 +352,7 @@ func (r *Renderer) dnsRouteRules(nodeAddr string, payload map[string]any, proxyT
 	rules := []map[string]any{
 		{"ip_cidr": domesticDNS, "port": []int{53}, "outbound": "direct"},
 		{"ip_cidr": intlDOH, "port": []int{443}, "outbound": proxyTag},
-		{"ip_cidr": []string{"127.0.0.1/32"}, "port": []int{config.DefaultMosDNS}, "outbound": "direct-local"},
+		{"ip_cidr": []string{"127.0.0.1/32"}, "port": []int{config.DefaultDNSPort}, "outbound": "direct-local"},
 	}
 	if dr := directIPRule(nodeAddr); dr != nil {
 		rules = append(rules, dr)

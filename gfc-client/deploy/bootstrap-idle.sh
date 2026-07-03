@@ -17,13 +17,13 @@ if [[ ! -x "$BIN" ]]; then
 fi
 
 SRC_ROOT="${GFC_SRC_ROOT:-/opt/sip-proxy/gfc-client}"
-if [[ -d "$SRC_ROOT/share/easymosdns" ]]; then
+if [[ -d "$SRC_ROOT/share/unbound" ]]; then
   mkdir -p "$GFC_ROOT/share"
-  rsync -a "$SRC_ROOT/share/easymosdns/" "$GFC_ROOT/share/easymosdns/"
+  rsync -a "$SRC_ROOT/share/unbound/" "$GFC_ROOT/share/unbound/"
 fi
 
 echo "    stop data plane (for clean render)..."
-systemctl stop gfc-sing-box gfc-mosdns 2>/dev/null || true
+systemctl stop gfc-sing-box gfc-unbound gfc-mosdns 2>/dev/null || true
 bash "$SCRIPT_DIR/singbox-nft-cleanup.sh" 2>/dev/null || true
 
 echo "==> Bootstrap idle dataplane"
@@ -33,7 +33,7 @@ if ! timeout 120 "$BIN"; then
   exit 1
 fi
 
-echo "    start MosDNS (router-only idle)..."
-bash "$SCRIPT_DIR/fix-mosdns-start.sh" || echo "    WARN: fix-mosdns-start failed"
+echo "    start Unbound (router-only idle)..."
+bash "$SCRIPT_DIR/fix-unbound-start.sh" || echo "    WARN: fix-unbound-start failed"
 
 echo "==> Bootstrap idle done"

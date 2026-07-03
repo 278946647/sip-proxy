@@ -58,18 +58,47 @@ def generate_reality_keypair() -> tuple[str, str]:
         )
 
 
+REALITY_DEFAULT_PORT = 8443
+REALITY_DEFAULT_SNI = "www.cloudflare.com"
+REALITY_DEFAULT_DEST = "www.cloudflare.com:443"
+
+_LEGACY_REALITY_SNIS = frozenset({"www.microsoft.com", "microsoft.com"})
+_LEGACY_REALITY_PORTS = frozenset({443})
+
+
 def default_reality_config() -> dict[str, Any]:
     private_key, public_key = generate_reality_keypair()
     short_id = secrets.token_hex(4)
     return {
         "enabled": True,
-        "listenPort": 443,
+        "listenPort": REALITY_DEFAULT_PORT,
         "privateKey": private_key,
         "publicKey": public_key,
         "shortIds": [short_id],
-        "serverNames": ["www.microsoft.com"],
-        "dest": "www.microsoft.com:443",
+        "serverNames": [REALITY_DEFAULT_SNI],
+        "dest": REALITY_DEFAULT_DEST,
     }
+
+
+def normalize_reality_config(cfg: dict[str, Any]) -> dict[str, Any]:
+    """Upgrade legacy Microsoft:443 REALITY settings to Cloudflare:8443."""
+    out = dict(cfg)
+    names = [str(s).strip() for s in (out.get("serverNames") or []) if str(s).strip()]
+    primary_sni = names[0] if names else ""
+    listen_port = int(out.get("listenPort") or REALITY_DEFAULT_PORT)
+    dest = str(out.get("dest") or "").strip().lower()
+
+    legacy_sni = primary_sni in _LEGACY_REALITY_SNIS or not primary_sni
+    legacy_dest = (
+        not dest
+        or dest.startswith("www.microsoft.com")
+        or dest.startswith("microsoft.com")
+    )
+    if legacy_sni or listen_port in _LEGACY_REALITY_PORTS or legacy_dest:
+        out["listenPort"] = REALITY_DEFAULT_PORT
+        out["serverNames"] = [REALITY_DEFAULT_SNI]
+        out["dest"] = REALITY_DEFAULT_DEST
+    return out
 
 
 def ensure_node_reality_config(node_reality_json: str | None) -> dict[str, Any]:
@@ -77,7 +106,7 @@ def ensure_node_reality_config(node_reality_json: str | None) -> dict[str, Any]:
         try:
             cfg = json.loads(node_reality_json)
             if isinstance(cfg, dict) and cfg.get("privateKey") and cfg.get("publicKey"):
-                return cfg
+                return normalize_reality_config(cfg)
         except json.JSONDecodeError:
             pass
     return default_reality_config()

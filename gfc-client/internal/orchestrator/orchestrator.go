@@ -12,7 +12,7 @@ import (
 	"github.com/278946647/sip-proxy/gfc-client/internal/config"
 	"github.com/278946647/sip-proxy/gfc-client/internal/dnslists"
 	"github.com/278946647/sip-proxy/gfc-client/internal/platform"
-	"github.com/278946647/sip-proxy/gfc-client/internal/render/mosdns"
+	"github.com/278946647/sip-proxy/gfc-client/internal/render/unbound"
 	"github.com/278946647/sip-proxy/gfc-client/internal/render/singbox"
 	"github.com/278946647/sip-proxy/gfc-client/internal/rules"
 )
@@ -22,7 +22,7 @@ const BackupGenerations = config.BackupGenerations
 type Orchestrator struct {
 	cfg      *config.Config
 	singbox  *singbox.Renderer
-	mosdns   *mosdns.Renderer
+	unbound  *unbound.Renderer
 	rules    *rules.Manager
 	dnsLists *dnslists.Manager
 }
@@ -31,7 +31,7 @@ func New(cfg *config.Config) *Orchestrator {
 	return &Orchestrator{
 		cfg:      cfg,
 		singbox:  singbox.NewRenderer(cfg),
-		mosdns:   mosdns.NewRenderer(cfg),
+		unbound:  unbound.NewRenderer(cfg),
 		rules:    rules.New(cfg),
 		dnsLists: dnslists.New(cfg),
 	}
@@ -40,7 +40,7 @@ func New(cfg *config.Config) *Orchestrator {
 func (o *Orchestrator) trackedFiles() map[string]string {
 	return map[string]string{
 		"sing-box.json":  o.cfg.Paths.SingboxConfig,
-		"mosdns.yaml":    o.cfg.Paths.MosdnsConfig,
+		"unbound.conf":  o.cfg.Paths.UnboundConfig,
 		"config_bundle":  o.cfg.Paths.ConfigBundle,
 	}
 }
@@ -61,13 +61,13 @@ func (o *Orchestrator) BootstrapIdle() (bool, string) {
 	if !ok {
 		msgs = append(msgs, "rules incomplete (using bundled if present)")
 	}
-	if err := o.mosdns.Render(); err != nil {
-		return false, "mosdns: " + err.Error()
+	if err := o.unbound.Render(nil); err != nil {
+		return false, "unbound: " + err.Error()
 	}
-	if err := mosdns.CheckConfig(o.cfg.Paths.MosdnsConfig); err != nil {
-		return false, "mosdns check: " + err.Error()
+	if err := unbound.CheckConfig(o.cfg.Paths.UnboundConfig); err != nil {
+		return false, "unbound check: " + err.Error()
 	}
-	msgs = append(msgs, "mosdns ok")
+	msgs = append(msgs, "unbound ok")
 
 	idle := o.singbox.IdleConfig()
 	if err := singbox.WriteConfig(o.cfg.Paths.SingboxConfig, idle); err != nil {
@@ -102,15 +102,15 @@ func (o *Orchestrator) applyPayload(payload map[string]any, version string, rest
 	_ = o.dnsLists.EnsureDefaults()
 	o.rules.EnsureLocal(true)
 
-	if err := o.mosdns.Render(); err != nil {
+	if err := o.unbound.Render(payload); err != nil {
 		o.rollbackQuiet()
-		return false, "mosdns: " + err.Error()
+		return false, "unbound: " + err.Error()
 	}
-	if err := mosdns.CheckConfig(o.cfg.Paths.MosdnsConfig); err != nil {
+	if err := unbound.CheckConfig(o.cfg.Paths.UnboundConfig); err != nil {
 		o.rollbackQuiet()
-		return false, "mosdns check: " + err.Error()
+		return false, "unbound check: " + err.Error()
 	}
-	msgs = append(msgs, "mosdns ok")
+	msgs = append(msgs, "unbound ok")
 
 	ruleSets := o.rules.Entries()
 	cfg, err := o.singbox.RenderActive(payload, ruleSets)
@@ -143,7 +143,7 @@ func (o *Orchestrator) applyPayload(payload map[string]any, version string, rest
 func (o *Orchestrator) Rollback() (bool, string) {
 	mapping := map[string]string{
 		"sing-box.json": o.cfg.Paths.SingboxConfig,
-		"mosdns.yaml":   o.cfg.Paths.MosdnsConfig,
+		"unbound.conf": o.cfg.Paths.UnboundConfig,
 		"config_bundle": o.cfg.Paths.ConfigBundle,
 	}
 	id, err := Restore(o.cfg.Paths.BackupsDir, mapping)
@@ -263,18 +263,18 @@ func (o *Orchestrator) ReloadDNS() (bool, string) {
 	if o.LoadBundle() == nil {
 		return o.BootstrapIdle()
 	}
-	if err := o.mosdns.Render(); err != nil {
+	if err := o.unbound.Render(o.LoadBundle()); err != nil {
 		return false, err.Error()
 	}
-	if err := mosdns.CheckConfig(o.cfg.Paths.MosdnsConfig); err != nil {
+	if err := unbound.CheckConfig(o.cfg.Paths.UnboundConfig); err != nil {
 		return false, err.Error()
 	}
-	return true, o.restartUnit(config.ServiceMosDNS)
+	return true, o.restartUnit(config.ServiceUnbound)
 }
 
 func (o *Orchestrator) RestartServices() []string {
 	return []string{
-		o.restartUnit(config.ServiceMosDNS),
+		o.restartUnit(config.ServiceUnbound),
 		o.restartUnit(config.ServiceSingbox),
 		o.restartUnit(config.ServiceRouting),
 	}

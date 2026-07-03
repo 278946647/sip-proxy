@@ -24,20 +24,20 @@ if ! apt-get update -qq 2>/dev/null; then
   apt-get update -qq
 fi
 apt-get install -y -qq curl rsync nftables iproute2 dnsmasq netplan.io \
-  git ca-certificates unzip xz-utils openssh-client autossh
+  git ca-certificates unzip xz-utils openssh-client autossh unbound
 
-# shellcheck source=lib-mosdns-nft.sh
-source "$SCRIPT_DIR/lib-mosdns-nft.sh"
+# shellcheck source=lib-unbound-nft.sh
+source "$SCRIPT_DIR/lib-unbound-nft.sh"
 # shellcheck source=lib-singbox-user.sh
 source "$SCRIPT_DIR/lib-singbox-user.sh"
-migrate_mosdns_user || ensure_mosdns_user
-echo "    system user ${GFC_MOSDNS_USER} uid=$(id -u "$GFC_MOSDNS_USER" 2>/dev/null || echo ?)"
+migrate_unbound_user || ensure_unbound_user
+echo "    system user ${GFC_UNBOUND_USER} uid=$(id -u "$GFC_UNBOUND_USER" 2>/dev/null || echo ?)"
 migrate_singbox_user || ensure_singbox_user
 echo "    system user ${GFC_SINGBOX_USER} uid=$(id -u "$GFC_SINGBOX_USER" 2>/dev/null || echo ?)"
 
 mkdir -p "$GFC_ROOT" /etc/gfc-client /var/log/gfc-client /var/lib/gfc-client/state \
   /var/lib/gfc-client/rules /var/lib/gfc-client/dns-lists /var/lib/gfc-client/backups \
-  /etc/gfc-client/mosdns /etc/gfc-client/policy
+  /etc/gfc-client/unbound /etc/gfc-client/policy
 
 echo "==> Sysctl BBR"
 cat >/etc/sysctl.d/99-gfc-client.conf <<'EOF'
@@ -70,20 +70,18 @@ install_sing_box() {
   rm -rf "$tmp"
 }
 
-install_mosdns() {
-  if [[ -x "$PKG_ROOT/bin/mosdns" ]]; then
-    install -m 755 "$PKG_ROOT/bin/mosdns" /usr/local/bin/mosdns
-    echo "    mosdns from offline bin/"
+install_unbound() {
+  if command -v unbound >/dev/null; then
+    echo "    unbound from apt"
     return
   fi
-  # shellcheck source=install-mosdns-bin.sh
-  source "$SCRIPT_DIR/install-mosdns-bin.sh"
-  install_mosdns_bin /usr/local/bin/mosdns
+  echo "ERROR: unbound package missing" >&2
+  exit 1
 }
 
-echo "==> sing-box + mosdns"
+echo "==> sing-box + unbound"
 install_sing_box
-install_mosdns
+install_unbound
 
 echo "==> Go toolchain"
 # shellcheck source=install-go.sh
@@ -140,6 +138,7 @@ gfc_env_set GFC_CLIENT_FLASH_PORT 80
 gfc_env_set GFC_POLICY_MARK 0x2023
 gfc_env_set GFC_POLICY_TABLE 2022
 gfc_env_set GFC_TUN_INTERFACE gfctun
+gfc_env_set GFC_UNBOUND_UID 65353
 gfc_env_set GFC_MOSDNS_UID 65353
 gfc_env_set GFC_SINGBOX_UID 65354
 gfc_env_set GFC_ROUTING_SCHEME kernel-split
@@ -160,7 +159,7 @@ cat >/etc/systemd/system/gfc-network.service <<EOF
 Description=GFC Client Network Bootstrap
 After=network-online.target systemd-networkd.service
 Wants=network-online.target
-Before=dnsmasq.service gfc-mosdns.service
+Before=dnsmasq.service gfc-unbound.service
 
 [Service]
 Type=oneshot
@@ -173,25 +172,24 @@ ExecStart=/bin/bash ${GFC_ROOT}/deploy/gfc-network.sh start
 WantedBy=multi-user.target
 EOF
 
-cat >/etc/systemd/system/gfc-mosdns.service <<'EOF'
+cat >/etc/systemd/system/gfc-unbound.service <<'EOF'
 [Unit]
-Description=GFC MosDNS (sole DNS :53)
+Description=GFC Unbound (sole DNS :53)
 After=gfc-network.service
 Wants=gfc-network.service
 Before=gfc-sing-box.service
 
 [Service]
 Type=simple
-User=mosdns
-Group=mosdns
+User=unbound
+Group=unbound
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
-WorkingDirectory=/etc/gfc-client/mosdns/easymosdns
-ExecStart=/usr/local/bin/mosdns start -c /etc/gfc-client/mosdns/easymosdns/config.yaml
+ExecStart=/usr/sbin/unbound -d -c /etc/unbound/unbound.conf
 Restart=on-failure
 RestartSec=3
-StandardOutput=append:/var/log/gfc-client/mosdns.log
-StandardError=append:/var/log/gfc-client/mosdns.log
+StandardOutput=append:/var/log/gfc-client/unbound.log
+StandardError=append:/var/log/gfc-client/unbound.log
 
 [Install]
 WantedBy=multi-user.target
@@ -202,7 +200,7 @@ bash "$SCRIPT_DIR/install-gfc-units.sh"
 cat >/etc/systemd/system/gfc-agent.service <<EOF
 [Unit]
 Description=GFC Client Agent
-After=gfc-network.service gfc-mosdns.service network-online.target
+After=gfc-network.service gfc-unbound.service network-online.target
 Wants=gfc-network.service network-online.target
 
 [Service]
@@ -238,7 +236,8 @@ WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemctl enable gfc-network gfc-mosdns gfc-sing-box gfc-routing gfc-agent gfc-web
+systemctl enable gfc-network gfc-unbound gfc-sing-box gfc-routing gfc-agent gfc-web
+systemctl disable --now gfc-mosdns.service 2>/dev/null || true
 
 systemctl enable dnsmasq 2>/dev/null || true
 
@@ -255,7 +254,7 @@ timeout 30 systemctl start gfc-network.service || echo "WARN: gfc-network unit s
 echo "==> Bootstrap dataplane (idle)"
 bash "$GFC_ROOT/deploy/bootstrap-idle.sh"
 
-fix_mosdns_tree_perms /etc/gfc-client
+fix_unbound_tree_perms /etc/gfc-client
 
 echo "==> Start services (ordered)"
 if [[ "${GFC_SKIP_NETPLAN_APPLY:-0}" == "1" ]]; then

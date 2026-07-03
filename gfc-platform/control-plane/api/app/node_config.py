@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import uuid
 from typing import Any
@@ -125,6 +126,44 @@ def _build_client_ingress(
     return {"users": users}
 
 
+def _collect_bypass_cidrs_for_node(
+    node: Node,
+    lines: list[Line],
+    socks_by_id: dict[int, SocksProfile],
+) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    public_ip = (node.public_ip or "").strip()
+    if public_ip:
+        try:
+            ipaddress.ip_address(public_ip)
+            cidr = f"{public_ip}/32"
+            seen.add(cidr)
+            out.append(cidr)
+        except ValueError:
+            pass
+    for line in lines:
+        if not line.is_enabled or line.status != "active":
+            continue
+        if line.socks_profile_id is None:
+            continue
+        sp = socks_by_id.get(line.socks_profile_id)
+        if not sp:
+            continue
+        host = (sp.host or "").strip()
+        if not host:
+            continue
+        try:
+            ipaddress.ip_address(host)
+            cidr = f"{host}/32"
+        except ValueError:
+            continue
+        if cidr not in seen:
+            seen.add(cidr)
+            out.append(cidr)
+    return out
+
+
 def build_node_payload(
     node: Node,
     lines: list[Line],
@@ -133,6 +172,7 @@ def build_node_payload(
     rules = _build_forward_rules(lines, socks_by_id)
     client_ingress = _build_client_ingress(lines, socks_by_id)
     reality = ensure_node_reality_config(node.reality_config_json)
+    bypass_cidrs = _collect_bypass_cidrs_for_node(node, lines, socks_by_id)
 
     connect_mode = node.connect_mode or "ethernet"
     vpn: dict[str, Any] | None = None
@@ -181,6 +221,7 @@ def build_node_payload(
             "tproxyPort": 12345,
             "defaultAction": "drop",
             "rules": rules,
+            "bypassCidrs": bypass_cidrs,
             "dnsFallbackEnabled": True,
             "dnsIntlServer": "1.1.1.1",
         },

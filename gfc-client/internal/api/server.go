@@ -18,7 +18,7 @@ import (
 	"github.com/278946647/sip-proxy/gfc-client/internal/envfile"
 	"github.com/278946647/sip-proxy/gfc-client/internal/logtail"
 	"github.com/278946647/sip-proxy/gfc-client/internal/network"
-	"github.com/278946647/sip-proxy/gfc-client/internal/render/mosdns"
+	"github.com/278946647/sip-proxy/gfc-client/internal/render/unbound"
 	"github.com/278946647/sip-proxy/gfc-client/internal/render/singbox"
 	"github.com/278946647/sip-proxy/gfc-client/internal/reversessh"
 	"github.com/278946647/sip-proxy/gfc-client/internal/rules"
@@ -366,7 +366,7 @@ func (s *Server) dnsImport(c *gin.Context) {
 }
 
 func (s *Server) easyUpdate(c *gin.Context) {
-	if err := mosdns.NewRenderer(s.cfg).Render(); err != nil {
+	if err := unbound.NewRenderer(s.cfg).Render(s.engine.LoadBundle()); err != nil {
 		s.fail(c, 500, err.Error())
 		return
 	}
@@ -594,8 +594,8 @@ func (s *Server) getSettings(c *gin.Context) {
 }
 
 func (s *Server) getDNSStats(c *gin.Context) {
-	logPath := filepath.Join(s.cfg.Paths.Log, "mosdns.log")
-	s.ok(c, stats.MosDNS(logPath, 800))
+	logPath := filepath.Join(s.cfg.Paths.Log, "unbound.log")
+	s.ok(c, stats.Unbound(logPath, 800))
 }
 
 func (s *Server) getSingboxStats(c *gin.Context) {

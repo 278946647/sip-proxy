@@ -1,0 +1,63 @@
+# ==========================================
+# Unbound 主配置文件
+# 功能：国内域名走 223.5.5.5/119.29.29.29，其他走 1.1.1.1/8.8.8.8 (DoT)
+# ==========================================
+
+server:
+    # --- 基本网络设置 ---
+    interface: 0.0.0.0
+    port: 53
+    # 若只需本机使用，改为 interface: 127.0.0.1
+
+    # --- 访问控制 ---
+    access-control: 127.0.0.0/8 allow
+    access-control: 192.168.0.0/16 allow
+    access-control: 10.0.0.0/8 allow
+
+    # --- 隐私与性能 ---
+    verbosity: 1
+    msg-cache-size: 128m
+    rrset-cache-size: 256m
+    prefetch: yes
+    prefetch-key: yes
+
+    # --- 安全设置 ---
+    val-log-level: 2
+    auto-trust-anchor-file: "/var/lib/unbound/root.key"
+    tls-cert-bundle: "/etc/ssl/certs/ca-certificates.crt"   
+ 
+    # 关闭 QNAME 最小化（避免国内CDN解析异常）
+    qname-minimisation: no
+
+    # --- 多线程优化 ---
+    num-threads: 4
+    so-rcvbuf: 1m
+    so-sndbuf: 1m
+    val-permissive-mode: yes   
+
+    # ==========================================
+    # 关键：将国内域名标记为 insecure
+    # 通过 include 引入域名列表
+    # ==========================================
+    include: "/etc/unbound/domains-insecure.conf"
+#    include: "/etc/unbound/forward-china.conf"
+    include: "/etc/unbound/conf.d/cn.unbound.conf"
+
+
+# ==========================================
+# 默认转发：DoT 到 1.1.1.1 和 8.8.8.8
+# ==========================================
+forward-zone:
+    name: "."
+    forward-tls-upstream: yes
+    forward-addr: 1.1.1.1@853#cloudflare-dns.com
+    forward-addr: 1.0.0.1@853#cloudflare-dns.com
+
+#     forward-addr: 1.1.1.1
+#    forward-addr: 8.8.8.8@853#dns.google
+#    forward-addr: 8.8.4.4@853#dns.google
+
+
+# ==========================================
+# 国内域名转发规则（从外部文件引入）
+# ==========================================

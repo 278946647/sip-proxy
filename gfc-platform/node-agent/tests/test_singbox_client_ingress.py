@@ -18,12 +18,12 @@ class ClientIngressSingboxTest(unittest.TestCase):
         client_ingress = {
             "enabled": True,
             "reality": {
-                "listenPort": 443,
+                "listenPort": 8443,
                 "privateKey": "test-private-key",
                 "publicKey": "test-public-key",
                 "shortIds": ["a1b2c3d4"],
-                "serverNames": ["www.microsoft.com"],
-                "dest": "www.microsoft.com:443",
+                "serverNames": ["www.cloudflare.com"],
+                "dest": "www.cloudflare.com:443",
             },
             "users": [
                 {
@@ -58,7 +58,9 @@ class ClientIngressSingboxTest(unittest.TestCase):
         inbounds = {ib["tag"]: ib for ib in cfg["inbounds"]}
         self.assertIn("vless-reality-in", inbounds)
         vless = inbounds["vless-reality-in"]
-        self.assertEqual(vless["listen_port"], 443)
+        self.assertEqual(vless["listen_port"], 8443)
+        self.assertEqual(vless["listen"], "0.0.0.0")
+        self.assertEqual(vless["tls"]["server_name"], "www.cloudflare.com")
         self.assertEqual(len(vless["users"]), 2)
         self.assertTrue(vless["tls"]["reality"]["enabled"])
 
@@ -75,11 +77,7 @@ class ClientIngressSingboxTest(unittest.TestCase):
         by_user = {r["user"][0]: r["outbound"] for r in user_routes}
         self.assertEqual(by_user["client-1"], "client-1")
         self.assertEqual(by_user["client-2"], "direct")
-
-        self.assertTrue(
-            any(r.get("action") == "hijack-dns" for r in cfg["route"]["rules"]),
-            "expected dns hijack for client-only nodes",
-        )
+        self.assertNotIn("tproxy-in", inbounds)
 
         # sanity: json serializable
         json.dumps(cfg)

@@ -70,7 +70,7 @@ func ServiceStatus() map[string]any {
 		"agent":    config.ServiceAgent,
 		"sing-box": config.ServiceSingbox,
 		"routing":  config.ServiceRouting,
-		"mosdns":   config.ServiceMosDNS,
+		"unbound":  config.ServiceUnbound,
 		"web":      config.ServiceWeb,
 		"network":  config.ServiceNetwork,
 	}
@@ -87,7 +87,7 @@ func LogicalService(name string) (string, bool) {
 		"agent":    config.ServiceAgent,
 		"sing-box": config.ServiceSingbox,
 		"routing":  config.ServiceRouting,
-		"mosdns":   config.ServiceMosDNS,
+		"unbound":  config.ServiceUnbound,
 		"api":      config.ServiceWeb,
 		"web":      config.ServiceWeb,
 		"dnsmasq":  config.ServiceDnsmasq,

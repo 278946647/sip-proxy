@@ -19,7 +19,8 @@ const (
 	DefaultAPIPort   = 8787
 	DefaultWebPort   = 8080
 	DefaultFlashPort = 80
-	DefaultMosDNS    = 53
+	DefaultDNSPort   = 53
+	DefaultUnboundUID = 65353
 	TunInterface     = "gfctun"
 
 	BackupGenerations = 5
@@ -27,10 +28,14 @@ const (
 	ServiceNetwork = "gfc-network.service"
 	ServiceAgent   = "gfc-agent.service"
 	ServiceWeb     = "gfc-web.service"
-	ServiceMosDNS  = "gfc-mosdns.service"
+	ServiceUnbound = "gfc-unbound.service"
 	ServiceSingbox = "gfc-sing-box.service"
 	ServiceRouting = "gfc-routing.service"
 	ServiceDnsmasq = "dnsmasq.service"
+
+	// Deprecated aliases kept for deploy script compatibility during migration.
+	ServiceMosDNS = ServiceUnbound
+	DefaultMosDNS = DefaultDNSPort
 )
 
 type Paths struct {
@@ -47,9 +52,13 @@ type Paths struct {
 	DBFile          string
 	RulesDir        string
 	DNSListsDir     string
-	SingboxConfig   string
-	MosdnsConfig    string
-	EasyMosdnsDir   string
+	SingboxConfig          string
+	UnboundConfig          string
+	UnboundDomainsInsecure string
+	UnboundConfD           string
+	// Deprecated — use Unbound* paths.
+	MosdnsConfig  string
+	EasyMosdnsDir string
 	DataplaneMode   string
 	RoutingModeFile string
 	PolicySelFile   string
@@ -99,9 +108,12 @@ func Load() *Config {
 		DBFile:          filepath.Join(lib, "gfc-client.db"),
 		RulesDir:        filepath.Join(lib, "rules"),
 		DNSListsDir:     filepath.Join(lib, "dns-lists"),
-		SingboxConfig:   filepath.Join(etc, "sing-box.json"),
-		MosdnsConfig:    filepath.Join(etc, "mosdns", "easymosdns", "config.yaml"),
-		EasyMosdnsDir:   filepath.Join(etc, "mosdns", "easymosdns"),
+		SingboxConfig:          filepath.Join(etc, "sing-box.json"),
+		UnboundConfig:          "/etc/unbound/unbound.conf",
+		UnboundDomainsInsecure: "/etc/unbound/domains-insecure.conf",
+		UnboundConfD:           "/etc/unbound/conf.d",
+		MosdnsConfig:           "/etc/unbound/unbound.conf",
+		EasyMosdnsDir:          "/etc/unbound",
 		DataplaneMode:   filepath.Join(etc, "dataplane-mode.json"),
 		RoutingModeFile: filepath.Join(etc, "routing-mode.json"),
 		PolicySelFile:   filepath.Join(etc, "policy", "selector.json"),
@@ -186,7 +198,7 @@ func (c *Config) EnsureDirs() error {
 		filepath.Join(c.Paths.Lib, "state"),
 		c.Paths.RulesDir,
 		c.Paths.DNSListsDir,
-		filepath.Join(c.Paths.Etc, "mosdns"),
+		filepath.Join(c.Paths.Etc, "unbound"),
 		filepath.Join(c.Paths.Etc, "policy"),
 		c.Paths.Log,
 		c.Paths.BackupsDir,

@@ -189,11 +189,12 @@ async def pull_config(
     socks = (await session.execute(select(SocksProfile))).scalars().all()
     socks_by_id = {s.id: s for s in socks}
     payload = build_node_payload(node, lines, socks_by_id)
-    if payload.get("clientIngress", {}).get("enabled") and not node.reality_config_json:
-        node.reality_config_json = json.dumps(
-            payload["clientIngress"]["reality"], ensure_ascii=False
-        )
-        session.add(node)
+    reality = payload.get("clientIngress", {}).get("reality") or {}
+    reality_json = json.dumps(reality, ensure_ascii=False, separators=(",", ":"))
+    if payload.get("clientIngress", {}).get("enabled"):
+        if node.reality_config_json != reality_json:
+            node.reality_config_json = reality_json
+            session.add(node)
     version = payload_version(payload)
 
     cached_ok = node.current_config_version == version

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start GFC services in dependency order (network → dns prep → mosdns → sing-box → agent → web).
+# Start GFC services in dependency order (network → dns prep → unbound → sing-box → agent → web).
 set -euo pipefail
 
 GFC_ROOT="${GFC_ROOT:-/opt/gfc-client}"
@@ -13,7 +13,7 @@ TUN_IFACE="${GFC_TUN_INTERFACE:-gfctun}"
 source "$SCRIPT_DIR/lib-gfc-mode.sh"
 
 reset_units() {
-  for u in gfc-network gfc-mosdns gfc-sing-box gfc-routing gfc-agent gfc-web; do
+  for u in gfc-network gfc-unbound gfc-sing-box gfc-routing gfc-agent gfc-web; do
     systemctl stop "${u}.service" 2>/dev/null || true
     systemctl reset-failed "${u}.service" 2>/dev/null || true
   done
@@ -33,7 +33,7 @@ start_one() {
 }
 
 ensure_idle_configs() {
-  if [[ -f /etc/gfc-client/sing-box.json && -f /etc/gfc-client/mosdns/easymosdns/config.yaml ]]; then
+  if [[ -f /etc/gfc-client/sing-box.json && -f /etc/unbound/unbound.conf ]]; then
     return 0
   fi
   echo "    idle configs missing — bootstrap..."
@@ -60,10 +60,10 @@ else
   fi
 fi
 
-# Layer 4: DNS prep then MosDNS (Layer 3 nft loaded by network script)
+# Layer 4: DNS prep then Unbound
 echo "    layer 4: dns"
 bash "$SCRIPT_DIR/ensure-dns.sh" || echo "    WARN: ensure-dns had issues"
-bash "$SCRIPT_DIR/fix-mosdns-start.sh" || echo "    WARN: fix-mosdns-start had issues"
+bash "$SCRIPT_DIR/fix-unbound-start.sh" || echo "    WARN: fix-unbound-start had issues"
 
 # Layer 5: sing-box + routing only after line code / TUN config
 if gfc_need_proxy_dataplane; then
@@ -89,4 +89,4 @@ start_one gfc-agent.service 30 || true
 start_one gfc-web.service 30 || true
 
 echo "==> start-services done"
-systemctl is-active gfc-network gfc-mosdns gfc-sing-box gfc-routing gfc-agent gfc-web 2>/dev/null || true
+systemctl is-active gfc-network gfc-unbound gfc-sing-box gfc-routing gfc-agent gfc-web 2>/dev/null || true

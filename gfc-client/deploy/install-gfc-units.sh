@@ -8,8 +8,8 @@ GFC_SINGBOX_USER="${GFC_SINGBOX_USER:-singbox}"
 cat >/etc/systemd/system/gfc-sing-box.service <<EOF
 [Unit]
 Description=GFC Sing-box TUN (gfctun outbound engine)
-After=gfc-mosdns.service
-Wants=gfc-mosdns.service
+After=gfc-unbound.service
+Wants=gfc-unbound.service
 Before=gfc-routing.service
 
 [Service]

@@ -26,8 +26,12 @@ func (e *Engine) ReapplyLocal(restart bool) (bool, string) {
 	return e.Orchestrator.ReapplyLocal(restart)
 }
 
-func (e *Engine) BootstrapIdle() (bool, string) {
-	return e.Orchestrator.BootstrapIdle()
+func (e *Engine) ReloadDNS() (bool, string) {
+	return e.Orchestrator.ReloadDNS()
+}
+
+func (e *Engine) LoadBundle() map[string]any {
+	return e.Orchestrator.LoadBundle()
 }
 
 func ServiceStatus() map[string]any {

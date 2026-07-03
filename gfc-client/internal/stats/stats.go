@@ -91,10 +91,18 @@ func Singbox(clashURL string) map[string]any {
 	return out
 }
 
-func MosDNS(logPath string, tailLines int) map[string]any {
+func Unbound(logPath string, tailLines int) map[string]any {
 	if logPath == "" {
-		logPath = "/var/log/gfc-client/mosdns.log"
+		logPath = "/var/log/gfc-client/unbound.log"
 	}
+	return dnsLogStats(logPath, tailLines)
+}
+
+func MosDNS(logPath string, tailLines int) map[string]any {
+	return Unbound(logPath, tailLines)
+}
+
+func dnsLogStats(logPath string, tailLines int) map[string]any {
 	if tailLines <= 0 {
 		tailLines = 500
 	}

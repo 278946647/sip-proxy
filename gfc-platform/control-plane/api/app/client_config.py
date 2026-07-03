@@ -7,7 +7,7 @@ from typing import Any
 
 from .line_code import encode_line_code
 from .models import ClientDevice, Line, Node, SocksProfile
-from .reality_util import ensure_node_reality_config
+from .reality_util import REALITY_DEFAULT_PORT, REALITY_DEFAULT_SNI, ensure_node_reality_config
 from .server_url_util import public_server_urls
 
 
@@ -86,12 +86,12 @@ def build_client_payload(
             "id": node.id,
             "name": node.name,
             "address": (node.public_ip or "").strip() or None,
-            "port": int(reality.get("listenPort") or 443),
+            "port": int(reality.get("listenPort") or REALITY_DEFAULT_PORT),
         },
         "vless": {
             "uuid": line.client_uuid,
             "flow": "xtls-rprx-vision",
-            "serverName": (reality.get("serverNames") or ["www.microsoft.com"])[0],
+            "serverName": (reality.get("serverNames") or [REALITY_DEFAULT_SNI])[0],
             "publicKey": reality.get("publicKey"),
             "shortId": (reality.get("shortIds") or [""])[0],
         },
