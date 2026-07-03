@@ -67,7 +67,11 @@ func (o *Orchestrator) BootstrapIdle() (bool, string) {
 	if err := unbound.CheckConfig(o.cfg.Paths.UnboundConfig); err != nil {
 		return false, "unbound check: " + err.Error()
 	}
-	msgs = append(msgs, "unbound ok")
+	if !unbound.BinaryInstalled() {
+		msgs = append(msgs, "unbound ok (config rendered; install unbound package to start DNS)")
+	} else {
+		msgs = append(msgs, "unbound ok")
+	}
 
 	idle := o.singbox.IdleConfig()
 	if err := singbox.WriteConfig(o.cfg.Paths.SingboxConfig, idle); err != nil {

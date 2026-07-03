@@ -47,6 +47,7 @@ install -m 755 "$ROOT/bin/gfc-bootstrap" "$STAGE/bin/gfc-bootstrap"
 cp -a "$ROOT/deploy" "$STAGE/usr/lib/gfc-client/"
 cp -a "$ROOT/share" "$STAGE/usr/lib/gfc-client/"
 chmod +x "$STAGE/usr/lib/gfc-client/deploy/immortalwrt/"*.sh 2>/dev/null || true
+find "$STAGE/usr/lib/gfc-client/deploy" -name '*.sh' -exec chmod +x {} \; 2>/dev/null || true
 
 cat >"$STAGE/install.sh" <<'EOF'
 #!/bin/sh
@@ -83,8 +84,10 @@ Install on device:
   cd ${PKG}
   ./install.sh
 
-This bundle does not include sing-box or mosdns binaries. Install or upload them
-separately to /usr/bin/sing-box and /usr/bin/mosdns before active dataplane tests.
+This bundle does not include sing-box binaries. Install or upload them
+separately to /usr/bin/sing-box before active dataplane tests.
+
+Unbound is installed via opkg during install.sh when available.
 EOF
 
 tar -czf "$OUT/${PKG}.tar.gz" -C "$WORK" "$PKG"

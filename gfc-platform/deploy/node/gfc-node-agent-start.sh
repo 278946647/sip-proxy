@@ -26,11 +26,22 @@ done
 
 # TPROXY reply path (lost on reboot; ensure before agent loop).
 if [[ -n "${GFC_TPROXY_IFACE:-}" ]] && command -v ip >/dev/null 2>&1; then
-  if ! ip rule show 2>/dev/null | grep -q 'fwmark 0x1.*lookup 100'; then
-    ip rule add fwmark 0x1 lookup 100 2>/dev/null || true
+  if ip rule show 2>/dev/null | grep -q 'fwmark 0x1.*lookup 100'; then
+    ip rule del fwmark 0x1 lookup 100 2>/dev/null || true
+  fi
+  if ! ip rule show 2>/dev/null | grep -q 'fwmark 0x100.*lookup 100'; then
+    ip rule add fwmark 0x100 lookup 100 2>/dev/null || true
   fi
   if ! ip route show table 100 2>/dev/null | grep -q 'local'; then
     ip route add local 0.0.0.0/0 dev lo table 100 2>/dev/null || true
+  fi
+  WAN_IF="${GFC_SNAT_IFACE:-auto}"
+  if [[ "$WAN_IF" == "auto" ]]; then
+    WAN_IF="$(ip -4 route show default 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="dev") print $(i+1)}' | head -1)"
+  fi
+  if [[ -n "$WAN_IF" ]]; then
+    ip rule add fwmark 0x1 lookup 1 2>/dev/null || true
+    ip route replace default dev "$WAN_IF" table 1 2>/dev/null || true
   fi
 fi
 

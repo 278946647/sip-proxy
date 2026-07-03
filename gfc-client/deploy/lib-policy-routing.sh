@@ -105,9 +105,10 @@ apply_gfc_nft_policy_conf() {
   local cn_load="${GFC_ETC:-/etc/gfc-client}/nftables-cn-ip-load.nft"
   if command -v nft >/dev/null; then
     nft list table inet gfc_client_mangle &>/dev/null && nft delete table inet gfc_client_mangle || true
+    nft list table inet gfc &>/dev/null && nft delete table inet gfc || true
     nft -f "$outfile"
-    if [[ -f "$cn_load" ]] && grep -q 'add element inet gfc_client_mangle cn_ip' "$cn_load" 2>/dev/null; then
-      nft -f "$cn_load" && echo "    nft cn_ip load: ok"
+    if [[ -f "$cn_load" ]] && grep -q 'add element inet gfc TO_CN' "$cn_load" 2>/dev/null; then
+      nft -f "$cn_load" && echo "    nft TO_CN load: ok"
     fi
   fi
 }
@@ -155,6 +156,7 @@ PY
 }
 
 teardown_gfc_nft_policy() {
+  command -v nft >/dev/null && nft delete table inet gfc 2>/dev/null || true
   command -v nft >/dev/null && nft delete table inet gfc_client_mangle 2>/dev/null || true
 }
 

@@ -58,6 +58,30 @@ env_set() {
 	fi
 }
 
+install_unbound_pkg() {
+	if ! command -v opkg >/dev/null 2>&1; then
+		return 0
+	fi
+	if command -v unbound-checkconf >/dev/null 2>&1 \
+		|| command -v unbound >/dev/null 2>&1 \
+		|| [ -x /usr/sbin/unbound ] \
+		|| [ -x /sbin/unbound ]; then
+		return 0
+	fi
+	echo "==> install unbound-daemon + unbound-checkconf (ImmortalWrt DNS core)"
+	opkg update >/dev/null 2>&1 || true
+	# ImmortalWrt/OpenWrt: no meta package "unbound"; use daemon + checkconf.
+	opkg install unbound-daemon unbound-checkconf 2>/dev/null \
+		|| opkg install unbound-daemon 2>/dev/null \
+		|| true
+	# Keep GFC-rendered /etc/unbound/unbound.conf when opkg warns about conffile drift.
+	if [ -f /etc/unbound/unbound.conf-opkg ] && [ -f /etc/gfc-client/gfc.env ]; then
+		echo "    kept GFC unbound.conf (opkg default at unbound.conf-opkg)"
+	fi
+}
+
+install_unbound_pkg
+
 stop_service gfc-agent
 stop_service gfc-api
 stop_service gfc-mosdns
@@ -77,6 +101,7 @@ for bin in gfc-api gfc-agent gfc-bootstrap; do
 done
 
 chmod +x /usr/lib/gfc-client/deploy/immortalwrt/*.sh 2>/dev/null || true
+find /usr/lib/gfc-client/deploy -name '*.sh' -exec chmod +x {} \; 2>/dev/null || true
 
 ensure_group "$GFC_MOSDNS_USER" "$GFC_MOSDNS_UID"
 ensure_user "$GFC_MOSDNS_USER" "$GFC_MOSDNS_UID" "$GFC_MOSDNS_USER"

@@ -207,9 +207,11 @@ if [[ -f "$_LOGROTATE" ]]; then
 fi
 
 if [[ -n "${GFC_TPROXY_IFACE:-}" ]]; then
-  echo "==> TPROXY policy routing (fwmark 0x1 -> table 100)"
-  ip rule add fwmark 0x1 lookup 100 2>/dev/null || true
+  echo "==> TPROXY policy routing (fwmark 0x100 -> table 100)"
+  ip rule del fwmark 0x1 lookup 100 2>/dev/null || true
+  ip rule add fwmark 0x100 lookup 100 2>/dev/null || true
   ip route replace local 0.0.0.0/0 dev lo table 100 2>/dev/null || true
+  ip rule add fwmark 0x1 lookup 1 2>/dev/null || true
 fi
 
 SNAT_IF="${GFC_SNAT_IFACE:-auto}"

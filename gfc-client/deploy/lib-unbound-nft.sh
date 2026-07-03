@@ -52,16 +52,12 @@ write_gfc_nft_dns_conf() {
   local lan="$1" port="$2" outfile="$3"
   cat >"$outfile" <<EOF
 #!/usr/sbin/nft -f
+# LAN DNS hijack — docs/NFT_ARCHITECTURE.md (no skuid OUTPUT bypass)
 table inet gfc_dns_hijack {
   chain prerouting {
     type nat hook prerouting priority dstnat; policy accept;
     iifname "${lan}" udp dport 53 redirect to :${port}
     iifname "${lan}" tcp dport 53 redirect to :${port}
-  }
-  chain output_dns {
-    type nat hook output priority -100; policy accept;
-    meta skuid != ${GFC_UNBOUND_UID} ip daddr != 127.0.0.1 udp dport 53 redirect to :${port}
-    meta skuid != ${GFC_UNBOUND_UID} ip daddr != 127.0.0.1 tcp dport 53 redirect to :${port}
   }
 }
 EOF

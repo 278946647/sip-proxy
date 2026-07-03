@@ -178,10 +178,109 @@ def write_cn_load_nft(cidrs: list[str]) -> Path:
         for i in range(0, len(cidrs), BATCH_SIZE):
             batch = cidrs[i : i + BATCH_SIZE]
             elems = ", ".join(batch)
-            lines.append(f"add element inet gfc_client_mangle cn_ip {{ {elems} }}")
+            lines.append(f"add element inet gfc TO_CN {{ {elems} }}")
     path.write_text("\n".join(lines) + "\n")
     path.chmod(0o644)
     return path
+
+
+def normalize_mark(mark: str) -> str:
+    raw = mark.strip().lower()
+    if not raw.startswith("0x"):
+        raw = "0x" + raw
+    try:
+        value = int(raw, 16)
+    except ValueError:
+        return "0x00002023"
+    return f"0x{value:08x}"
+
+
+def render_architecture(cfg: dict) -> str:
+    """inet gfc per docs/NFT_ARCHITECTURE.md (kernel-split default)."""
+    lan = cfg["lan"]
+    lan_cidr = cfg["lan_cidr"]
+    mark = normalize_mark(cfg["mark"])
+    ssh_port = cfg["ssh_port"]
+    ext_const = fmt_ip_elements(cfg["ext_const_ips"])
+
+    bypass_set = ""
+    bypass_preroute = ""
+    bypass_output = ""
+    if cfg["bypass_ips"]:
+        bypass_set = f"""
+  set bypass_ip {{
+    type ipv4_addr
+    flags interval
+    elements = {{ {fmt_bypass_elements(cfg["bypass_ips"])} }}
+  }}"""
+        bypass_preroute = """
+    ip daddr @bypass_ip return"""
+        bypass_output = """
+    ip daddr @bypass_ip counter return"""
+
+    cn_load = cfg["cn_load_path"]
+    cn_count = cfg["cn_count"]
+
+    return f"""#!/usr/sbin/nft -f
+# GFC client inet gfc — docs/NFT_ARCHITECTURE.md
+# TO_CN: {cn_count} prefixes via {cn_load}
+table inet gfc {{
+  set TO_CN {{
+    type ipv4_addr
+    flags interval
+  }}
+
+  set TO_RFC1918 {{
+    type ipv4_addr
+    flags interval
+    elements = {{ 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 }}
+  }}{bypass_set}
+
+  set ext {{
+    type ipv4_addr
+    size 262144
+    timeout 2h
+  }}
+
+  set ext_const {{
+    type ipv4_addr
+    elements = {{ {ext_const} }}
+  }}
+
+  chain prerouting_mangle_ct {{
+    type filter hook prerouting priority mangle; policy accept;
+    iifname "{lan}" ct mark set {mark} accept
+  }}
+
+  chain prerouting_mangle_route {{
+    type filter hook prerouting priority filter; policy accept;
+    iifname "{lan}" ip daddr {{ 10.0.0.0/8, 127.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 }} return
+    iifname "{lan}" ip daddr {lan_cidr} return
+    iifname "{lan}" udp dport {{ 53, 67, 68, 123 }} return{bypass_preroute}
+    iifname "{lan}" ip daddr @ext_const ct mark {mark} meta mark set ct mark return
+    iifname "{lan}" ip daddr @TO_CN return
+    iifname "{lan}" ct mark {mark} meta mark set ct mark
+  }}
+
+  chain gfc_forward {{
+    type filter hook forward priority filter; policy accept;
+    ct state established,related accept
+    ct state new ip saddr {lan_cidr} ct mark set meta mark
+    accept
+  }}
+
+  chain output_mangle_route {{
+    type route hook output priority filter; policy accept;
+    meta mark != 0x00000000 return
+    tcp dport {ssh_port} return
+    ip daddr @TO_RFC1918 return
+    ip daddr 127.0.0.0/8 return
+    ip daddr @TO_CN return{bypass_output}
+    meta mark set {mark}
+    ct mark set meta mark
+  }}
+}}
+"""
 
 
 def scheme_a(cfg: dict) -> str:
@@ -449,7 +548,7 @@ def main() -> int:
     cfg["routing_mode"] = load_routing_mode()
 
     if scheme == "kernel-split":
-        body = scheme_b(cfg)
+        body = render_architecture(cfg)
     elif scheme == "byst-redirect":
         body = scheme_c(cfg)
     else:

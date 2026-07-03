@@ -214,7 +214,7 @@ admin_tcp_set = ", ".join(str(p) for p in admin_tcp)
 masq = ""
 if wan and enable_masq == "1":
     masq = f"""
-table ip gfc_client_nat {{
+table inet nat {{
   chain postrouting {{
     type nat hook postrouting priority srcnat; policy accept;
     oifname "{wan}" masquerade
@@ -362,11 +362,13 @@ if command -v nft >/dev/null; then
   if [[ "${GFC_SKIP_NETPLAN_APPLY:-0}" == "1" ]]; then
     echo "    nft load: deferred (configs written — run finish-network-install.sh)"
   else
+    nft list table inet nat &>/dev/null && nft delete table inet nat || true
     nft list table ip gfc_client_nat &>/dev/null && nft delete table ip gfc_client_nat || true
     nft list table inet gfc_client_filter &>/dev/null && nft delete table inet gfc_client_filter || true
     nft list table inet gfc_dns &>/dev/null && nft delete table inet gfc_dns || true
     nft list table inet gfc_dns_hijack &>/dev/null && nft delete table inet gfc_dns_hijack || true
     nft list table inet gfc_client_mangle &>/dev/null && nft delete table inet gfc_client_mangle || true
+    nft list table inet gfc &>/dev/null && nft delete table inet gfc || true
     nft -f "$NFT_BOOT" && echo "    nft filter: ok" || echo "    WARN: nft filter failed"
     nft -f "$NFT_DNS" && echo "    nft dns: ok" || echo "    WARN: nft dns failed"
     if [[ -f "$NFT_POLICY" ]] && gfc_need_proxy_dataplane; then

@@ -86,8 +86,21 @@ CN_LIST="${GFC_CN_IP_LIST:-$GFC_ETC/mosdns/easymosdns/rules/china_ip_list.txt}"
 stop_rules() {
 	ip -4 rule del fwmark "$MARK" table "$TABLE" 2>/dev/null || true
 	ip -4 route flush table "$TABLE" 2>/dev/null || true
+	nft delete table inet gfc 2>/dev/null || true
 	nft delete table inet gfc_client_mangle 2>/dev/null || true
 	nft delete table inet gfc_dns_hijack 2>/dev/null || true
+	nft delete table inet nat 2>/dev/null || true
+}
+
+apply_wan_nat() {
+	nft -f - <<EOF
+table inet nat {
+  chain postrouting {
+    type nat hook postrouting priority srcnat; policy accept;
+    oifname "$WAN_IFACE" masquerade
+  }
+}
+EOF
 }
 
 apply_dns_hijack() {
@@ -117,12 +130,20 @@ fmt_ext_const_elements() {
 	echo "$out"
 }
 
-apply_policy_table_kernel_split() {
+apply_policy_table_architecture() {
+	local ext_const
+	ext_const="$(fmt_ext_const_elements)"
 	nft -f - <<EOF
-table inet gfc_client_mangle {
-  set cn_ip {
+table inet gfc {
+  set TO_CN {
     type ipv4_addr
     flags interval
+  }
+
+  set TO_RFC1918 {
+    type ipv4_addr
+    flags interval
+    elements = { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 }
   }
 
   set bypass_ip {
@@ -130,25 +151,57 @@ table inet gfc_client_mangle {
     flags interval
   }
 
-  chain classify {
-    meta mark $MARK return
-    ct mark != 0x00000000 meta mark set ct mark return
-    ip daddr { 10.0.0.0/8, 127.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 } return
-    ip daddr $LAN_CIDR return
-    tcp dport { 53, 67, 68 } return
-    udp dport { 53, 67, 68 } return
-    ip daddr @bypass_ip return
-    ip daddr @cn_ip return
+  set ext {
+    type ipv4_addr
+    size 262144
+    timeout 2h
+  }
+
+  set ext_const {
+    type ipv4_addr
+    elements = { $ext_const }
+  }
+
+  chain prerouting_mangle_ct {
+    type filter hook prerouting priority mangle; policy accept;
+    iifname "$LAN_IFACE" ct mark set $MARK accept
+  }
+
+  chain prerouting_mangle_route {
+    type filter hook prerouting priority filter; policy accept;
+    iifname "$LAN_IFACE" ip daddr { 10.0.0.0/8, 127.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 } return
+    iifname "$LAN_IFACE" ip daddr $LAN_CIDR return
+    iifname "$LAN_IFACE" udp dport { 53, 67, 68, 123 } return
+    iifname "$LAN_IFACE" ip daddr @bypass_ip return
+    iifname "$LAN_IFACE" ip daddr @ext_const ct mark $MARK meta mark set ct mark return
+    iifname "$LAN_IFACE" ip daddr @TO_CN return
+    iifname "$LAN_IFACE" ct mark $MARK meta mark set ct mark
+  }
+
+  chain gfc_forward {
+    type filter hook forward priority filter; policy accept;
+    ct state established,related accept
+    ct state new ip saddr $LAN_CIDR ct mark set meta mark
+    accept
+  }
+
+  chain output_mangle_route {
+    type route hook output priority filter; policy accept;
+    meta mark != 0x00000000 return
+    tcp dport $SSH_PORT return
+    ip daddr @TO_RFC1918 return
+    ip daddr 127.0.0.0/8 return
+    ip daddr @TO_CN return
+    ip daddr @bypass_ip counter return
     meta mark set $MARK
     ct mark set meta mark
   }
-
-  chain prerouting {
-    type filter hook prerouting priority $NFT_PRIORITY; policy accept;
-    iifname "$LAN_IFACE" ip daddr != $LAN_CIDR jump classify
-  }
 }
 EOF
+}
+
+apply_policy_table_kernel_split() {
+	apply_policy_table_architecture
 }
 
 apply_policy_table_byst_redirect() {
@@ -252,22 +305,8 @@ apply_policy_table() {
 }
 
 apply_output_policy_kernel_split() {
-	[ "$OUTPUT_POLICY" = "1" ] || return 0
-
-	# Match the tested gateway policy: sing-box owns VLESS handshakes and must
-	# be exempt; MosDNS DoH is marked into gfctun; other router-originated
-	# traffic falls through classify for consistent split behavior.
-	nft -f - <<EOF || true
-add chain inet gfc_client_mangle output { type route hook output priority $NFT_PRIORITY; policy accept; }
-add rule inet gfc_client_mangle output oif "lo" return
-add rule inet gfc_client_mangle output oifname "$TUN_IFACE" return
-add rule inet gfc_client_mangle output iifname "$TUN_IFACE" return
-add rule inet gfc_client_mangle output meta skuid $SINGBOX_UID return
-add rule inet gfc_client_mangle output meta l4proto tcp tcp sport $SSH_PORT return
-add rule inet gfc_client_mangle output meta skuid $MOSDNS_UID ip daddr { 1.0.0.1, 1.1.1.1, 8.8.4.4, 8.8.8.8 } meta mark set $MARK
-add rule inet gfc_client_mangle output meta skuid $MOSDNS_UID tcp dport 443 meta mark set $MARK
-add rule inet gfc_client_mangle output jump classify
-EOF
+	# output_mangle_route is defined in inet gfc (architecture).
+	:
 }
 
 apply_output_policy() {
@@ -329,7 +368,7 @@ load_bypass_set() {
 	fi
 	awk 'BEGIN{started=0; n=0}
 		/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ {
-			if (!started) { printf "add element inet gfc_client_mangle bypass_ip { "; started=1; }
+			if (!started) { printf "add element inet gfc bypass_ip { "; started=1; }
 			if (n > 0) printf ", ";
 			printf "%s/32", $1;
 			n++;
@@ -348,7 +387,7 @@ load_cn_set() {
 	awk '/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\/[0-9]+/ { print $1 }' "$CN_LIST" > "$CN_AUDIT"
 	awk 'BEGIN{n=0; started=0}
 		/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\/[0-9]+/ {
-			if (!started) { printf "add element inet gfc_client_mangle cn_ip { "; started=1; }
+			if (!started) { printf "add element inet gfc TO_CN { "; started=1; }
 			if (n > 0) printf ", ";
 			printf "%s", $1;
 			n++;
@@ -370,6 +409,7 @@ wait_tun() {
 
 start_rules() {
 	stop_rules
+	apply_wan_nat
 	apply_dns_hijack
 	apply_policy_table
 	apply_output_policy
@@ -392,7 +432,7 @@ case "$ACTION" in
 	status)
 		echo "scheme=$ROUTING_SCHEME lan=$LAN_IFACE wan=$WAN_IFACE cidr=$LAN_CIDR tun=$TUN_IFACE mark=$MARK table=$TABLE redirect=$REDIRECT_PORT ssh=$SSH_PORT"
 		echo "dns_hijack=$(nft list table inet gfc_dns_hijack >/dev/null 2>&1 && echo yes || echo no)"
-		echo "policy=$(nft list table inet gfc_client_mangle >/dev/null 2>&1 && echo yes || echo no)"
+		echo "policy=$(nft list table inet gfc >/dev/null 2>&1 && echo yes || echo no)"
 		echo "cn_list=$CN_LIST"
 		echo "cn_audit=$CN_AUDIT"
 		echo "bypass_audit=$BYPASS_AUDIT"

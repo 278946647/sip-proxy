@@ -16,7 +16,7 @@ import { LineCodeField } from "../components/LineCodeField";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import dayjs from "dayjs";
-import { apiDelete, apiGet, apiPatch } from "../api/client";
+import { apiDelete, apiGet, apiPatch, apiPost } from "../api/client";
 import { mapLineDetail, type LineDetail } from "../types";
 
 export function LineDetailPage() {
@@ -26,7 +26,28 @@ export function LineDetailPage() {
   const [form] = Form.useForm();
   const [saving, setSaving] = useState(false);
   const [lineCode, setLineCode] = useState("");
+  const [codeMeta, setCodeMeta] = useState<{ fingerprint?: string; lineId?: string }>({});
   const [codeLoading, setCodeLoading] = useState(false);
+
+  const loadLineCode = async () => {
+    if (!id) return;
+    setCodeLoading(true);
+    try {
+      const res = await apiGet<{
+        line_code_b32: string;
+        client_uuid?: string;
+        tid?: string;
+        line_id?: string;
+        fingerprint?: string;
+      }>(`/admin/lines/${id}/line-code`);
+      setLineCode(res.line_code_b32 || "");
+      setCodeMeta({ fingerprint: res.fingerprint, lineId: res.line_id });
+    } catch (e) {
+      message.error(String(e));
+    } finally {
+      setCodeLoading(false);
+    }
+  };
 
   const load = async () => {
     const raw = await apiGet<Record<string, unknown>>(`/admin/lines/${id}`);
@@ -36,9 +57,18 @@ export function LineDetailPage() {
       remark: d.remark,
       socksRemark: d.socksRemark,
     });
+    if (d.lineType === "client") {
+      await loadLineCode();
+    } else {
+      setLineCode("");
+      setCodeMeta({});
+    }
   };
 
   useEffect(() => {
+    setLine(null);
+    setLineCode("");
+    setCodeMeta({});
     void load().catch((e) => message.error(String(e)));
   }, [id]);
 
@@ -59,13 +89,30 @@ export function LineDetailPage() {
     }
   };
 
-  const refreshLineCode = async () => {
+  const refreshLineCode = async (rotateUuid = false) => {
     if (!id) return "";
     setCodeLoading(true);
     try {
-      const res = await apiGet<{ line_code_b32: string }>(`/admin/lines/${id}/line-code`);
+      const op = localStorage.getItem("gfc_user") || "admin";
+      const qs = `operator=${encodeURIComponent(op)}${rotateUuid ? "&rotate_uuid=true" : ""}`;
+      let res: {
+        line_code_b32: string;
+        fingerprint?: string;
+        line_id?: string;
+      };
+      try {
+        res = await apiPost(`/admin/lines/${id}/line-code/refresh?${qs}`, {});
+      } catch (err) {
+        if (!rotateUuid && String(err).includes("404")) {
+          res = await apiGet(`/admin/lines/${id}/line-code`);
+        } else {
+          throw err;
+        }
+      }
       setLineCode(res.line_code_b32 || "");
+      setCodeMeta({ fingerprint: res.fingerprint, lineId: res.line_id });
       await load();
+      message.success(rotateUuid ? "已生成新 UUID 与线路码" : "线路码已根据当前线路数据重新生成");
       return res.line_code_b32 || "";
     } catch (e) {
       message.error(String(e));
@@ -74,16 +121,6 @@ export function LineDetailPage() {
       setCodeLoading(false);
     }
   };
-
-  useEffect(() => {
-    if (line?.lineType === "client") {
-      if (line.lineCodeB32) {
-        setLineCode(line.lineCodeB32);
-      } else {
-        void refreshLineCode();
-      }
-    }
-  }, [line?.id, line?.lineType, line?.lineCodeB32]);
 
   if (!line) return null;
 
@@ -163,13 +200,33 @@ export function LineDetailPage() {
         <div className="line-detail-section">
           <Typography.Title level={5}>线路码（Base32）</Typography.Title>
           <Typography.Paragraph type="secondary">
-            创建线路时自动生成。将下方编码写入客户端盒子，盒子解码后激活并拉取配置。
+            线路码由 TID、UUID、节点与控制面地址实时编码生成，不会长期缓存旧值。
+            「刷新线路码」使线码与数据库一致；「换新 UUID」会使旧线码与已刷盒子全部失效。
           </Typography.Paragraph>
+          {codeMeta.fingerprint ? (
+            <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+              校验指纹：<Typography.Text code>{codeMeta.fingerprint}</Typography.Text>
+              {codeMeta.lineId ? (
+                <>
+                  {" "}
+                  | lineId=<Typography.Text code>{codeMeta.lineId}</Typography.Text>
+                </>
+              ) : null}
+            </Typography.Paragraph>
+          ) : null}
           <LineCodeField
             value={lineCode}
             loading={codeLoading}
-            onRefresh={() => void refreshLineCode()}
+            onRefresh={() => void refreshLineCode(false)}
           />
+          <div style={{ marginTop: 8 }}>
+            <Popconfirm
+              title="生成新 UUID？旧线路码与已激活盒子将失效，需重新刷码。"
+              onConfirm={() => void refreshLineCode(true)}
+            >
+              <Button loading={codeLoading}>换新 UUID 并重生线路码</Button>
+            </Popconfirm>
+          </div>
         </div>
       )}
 

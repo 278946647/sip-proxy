@@ -86,7 +86,7 @@ export function LinesPage() {
   const onCreate = async () => {
     const v = await form.validateFields();
     try {
-      await apiPost("/admin/lines", {
+      const created = await apiPost<Record<string, unknown>>("/admin/lines", {
         name: v.name,
         line_type: v.lineType || "client",
         source_cidrs: v.sourceCidrs
@@ -103,7 +103,12 @@ export function LinesPage() {
       message.success("线路已创建");
       setModalOpen(false);
       form.resetFields();
-      void load();
+      const newId = created.id as number | undefined;
+      if (newId) {
+        nav(`/lines/${newId}`);
+      } else {
+        void load();
+      }
     } catch (e) {
       message.error(String(e));
     }

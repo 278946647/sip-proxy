@@ -1,5 +1,7 @@
 # GFC Client Gateway Core（内核策略路由版）
 
+> **nft 规则以 [`docs/NFT_ARCHITECTURE.md`](../../docs/NFT_ARCHITECTURE.md) 为准。** 本文档描述数据流与运维；表名/链名/mark 以该文件为唯一真相。
+
 ## 可行性结论
 
 **可行，且比 sing-box `auto_redirect` 更适合网关场景。**

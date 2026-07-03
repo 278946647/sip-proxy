@@ -7,9 +7,11 @@ from pathlib import Path
 from typing import Any
 
 from .env_sync import sync_bootstrap_token
+from .nft_render import render_forward_nft
 from .routes import (
     apply_egress_snat,
     apply_static_routes,
+    ensure_local_egress_policy,
     ensure_tproxy_policy,
     resolve_snat_iface,
 )
@@ -38,23 +40,20 @@ def nftables_tproxy_active() -> bool:
     return r.returncode == 0 and "tproxy" in (r.stdout or "")
 
 
-def _render_nftables(tproxy_port: int, iface: str | None) -> str:
-    if not iface:
+def _render_nftables(
+    tproxy_port: int,
+    tproxy_iface: str | None,
+    wan_iface: str | None,
+    bypass_cidrs: list[str] | None,
+) -> str:
+    if not tproxy_iface or not wan_iface:
         return ""
-    return f"""#!/usr/sbin/nft -f
-table inet gfc {{
-  chain prerouting {{
-    type filter hook prerouting priority mangle; policy accept;
-    iifname "{iface}" ip protocol tcp meta mark set 0x1 tproxy ip to :{tproxy_port} accept
-    iifname "{iface}" ip protocol udp meta mark set 0x1 tproxy ip to :{tproxy_port} accept
-  }}
-  chain output {{
-    type route hook output priority mangle; policy accept;
-    ip protocol tcp meta mark 0x1 meta mark set 0x1 accept
-    ip protocol udp meta mark 0x1 meta mark set 0x1 accept
-  }}
-}}
-"""
+    return render_forward_nft(
+        wan_iface=wan_iface,
+        tproxy_iface=tproxy_iface,
+        tproxy_port=tproxy_port,
+        bypass_cidrs=bypass_cidrs,
+    )
 
 
 def apply_payload(payload: dict[str, Any], config_dir: Path) -> tuple[bool, str]:
@@ -97,11 +96,12 @@ def apply_payload(payload: dict[str, Any], config_dir: Path) -> tuple[bool, str]
     messages.append("sing-box config ok")
 
     tproxy_port = int(dataplane.get("tproxyPort") or 12345)
-    iface = (payload.get("tproxyIface") or "").strip() or None
-    if not iface:
-        iface = os.environ.get("GFC_TPROXY_IFACE", "").strip() or None
-    if iface:
-        messages.extend(ensure_tproxy_policy(tproxy_port))
+    tproxy_iface = (payload.get("tproxyIface") or "").strip() or None
+    if not tproxy_iface:
+        tproxy_iface = os.environ.get("GFC_TPROXY_IFACE", "").strip() or None
+    bypass_cidrs = dataplane.get("bypassCidrs") or []
+    if not isinstance(bypass_cidrs, list):
+        bypass_cidrs = []
 
     snat_iface = resolve_snat_iface()
     ok_snat, msg_snat = apply_egress_snat(snat_iface)
@@ -109,10 +109,14 @@ def apply_payload(payload: dict[str, Any], config_dir: Path) -> tuple[bool, str]
     if not ok_snat:
         return False, "; ".join(messages)
 
+    if tproxy_iface and snat_iface:
+        messages.extend(ensure_tproxy_policy(tproxy_port))
+        messages.extend(ensure_local_egress_policy(snat_iface))
+
     drift = sync_bootstrap_token(payload.get("bootstrapToken"))
     if drift:
         messages.append(drift)
-    nft = _render_nftables(tproxy_port, iface)
+    nft = _render_nftables(tproxy_port, tproxy_iface, snat_iface, bypass_cidrs)
     if nft:
         NFTABLES_CONFIG.write_text(nft, encoding="utf-8")
         subprocess.run(

@@ -28,7 +28,7 @@ from .platform_secrets import (
     save_security_settings,
     security_to_public,
 )
-from .client_config import encode_platform_bootstrap_code, refresh_line_code
+from .client_config import encode_platform_bootstrap_code, line_code_fingerprint, refresh_line_code
 from .models import AlertEvent, ClientDevice, FlowStat, Line, Node, OperationLog, PlatformUser, SocksProfile
 from .reality_util import default_reality_config
 from .security import hash_password
@@ -83,6 +83,33 @@ def _gen_tid() -> str:
     day = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d")
     suffix = "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(6))
     return f"TID-{day}-{suffix}"
+
+
+def _line_code_response(line: Line, code: str) -> dict[str, str]:
+    return {
+        "line_code_b32": code,
+        "client_uuid": line.client_uuid or "",
+        "tid": line.tid,
+        "line_id": str(line.id),
+        "fingerprint": line_code_fingerprint(code),
+    }
+
+
+async def _sync_line_code(
+    session: AsyncSession,
+    line: Line,
+    node: Node,
+    *,
+    commit: bool = True,
+) -> str:
+    """Re-encode line code from current DB fields; persist when stale."""
+    code = refresh_line_code(line, node)
+    if code != (line.line_code_b32 or ""):
+        line.line_code_b32 = code
+        session.add(line)
+        if commit:
+            await session.commit()
+    return code
 
 
 async def _log_op(
@@ -681,6 +708,8 @@ async def get_line(line_id: int, session: AsyncSession = Depends(get_session)) -
 
     sp = line.socks_profile
     node = line.node
+    if (line.line_type or "client") == "client" and node:
+        await _sync_line_code(session, line, node)
     base = _line_to_list_item(line)
     return LineDetailOut(
         **base.model_dump(),
@@ -744,8 +773,7 @@ async def create_line(
     session.add(line)
     await session.flush()
     if line_type == "client":
-        line.line_code_b32 = refresh_line_code(line, node)
-        session.add(line)
+        await _sync_line_code(session, line, node, commit=False)
     await _log_op(session, body.created_by, "create_line", tid, f"node={node.name}")
     await session.commit()
     await session.refresh(line)
@@ -1281,11 +1309,32 @@ async def get_line_code(
     line = (await session.execute(stmt)).scalars().first()
     if not line or not line.node:
         raise HTTPException(404, "line not found")
-    if not line.line_code_b32:
-        line.line_code_b32 = refresh_line_code(line, line.node)
-        session.add(line)
-        await session.commit()
-    return {"line_code_b32": line.line_code_b32 or ""}
+    if (line.line_type or "client") != "client":
+        raise HTTPException(400, "not a client line")
+    code = await _sync_line_code(session, line, line.node)
+    return _line_code_response(line, code)
+
+
+@router.post("/lines/{line_id}/line-code/refresh")
+async def refresh_line_code_endpoint(
+    line_id: int,
+    rotate_uuid: bool = Query(False, description="生成新 UUID 并使旧线码失效"),
+    session: AsyncSession = Depends(get_session),
+    operator: str = Query("admin"),
+) -> dict[str, str]:
+    """Re-encode line code from current DB fields (uuid/node/server). Fixes uuid mismatch."""
+    stmt = select(Line).where(Line.id == line_id).options(selectinload(Line.node))
+    line = (await session.execute(stmt)).scalars().first()
+    if not line or not line.node:
+        raise HTTPException(404, "line not found")
+    if (line.line_type or "client") != "client":
+        raise HTTPException(400, "not a client line")
+    if rotate_uuid or not line.client_uuid:
+        line.client_uuid = str(uuid.uuid4())
+    code = await _sync_line_code(session, line, line.node, commit=False)
+    await _log_op(session, operator, "refresh_line_code", line.tid)
+    await session.commit()
+    return _line_code_response(line, code)
 
 
 @router.get("/platform/bootstrap-code")

@@ -114,13 +114,18 @@ if [[ -n "$SNAT_IF" && "$SNAT_IF" != "0" && "$SNAT_IF" != "off" ]]; then
   fi
 fi
 
-if ip rule list 2>/dev/null | grep -q 'fwmark 0x1.*lookup 100'; then
-  echo "    OK TPROXY policy: fwmark 0x1 lookup 100"
+if ip rule list 2>/dev/null | grep -qE 'fwmark 0x100.*lookup 100'; then
+  echo "    OK TPROXY policy: fwmark 0x100 lookup 100"
 else
-  echo "    FAIL missing TPROXY policy (ip rule fwmark 0x1 lookup 100)"
-  echo "         fix: sudo ip rule add fwmark 0x1 lookup 100"
+  echo "    FAIL missing TPROXY policy (ip rule fwmark 0x100 lookup 100)"
+  echo "         fix: sudo ip rule add fwmark 0x100 lookup 100"
   echo "              sudo ip route replace local 0.0.0.0/0 dev lo table 100"
   echo "         or:  sudo bash deploy/node/force-reapply.sh"
+fi
+if ip rule list 2>/dev/null | grep -qE 'fwmark 0x1.*lookup 1'; then
+  echo "    OK local egress policy: fwmark 0x1 lookup 1"
+else
+  echo "    WARN missing local egress policy (ip rule fwmark 0x1 lookup 1)"
 fi
 
 echo "    ip_forward=$(sysctl -n net.ipv4.ip_forward 2>/dev/null || echo '?')"

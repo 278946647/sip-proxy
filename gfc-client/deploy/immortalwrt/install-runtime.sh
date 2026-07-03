@@ -82,6 +82,25 @@ ensure_singbox_caps() {
 	fi
 }
 
+install_unbound_pkg() {
+	if ! command -v opkg >/dev/null 2>&1; then
+		return 0
+	fi
+	if command -v unbound-checkconf >/dev/null 2>&1 \
+		|| command -v unbound >/dev/null 2>&1 \
+		|| [ -x /usr/sbin/unbound ] \
+		|| [ -x /sbin/unbound ]; then
+		return 0
+	fi
+	echo "==> install unbound-daemon + unbound-checkconf (ImmortalWrt DNS core)"
+	opkg update >/dev/null 2>&1 || true
+	opkg install unbound-daemon unbound-checkconf 2>/dev/null \
+		|| opkg install unbound-daemon 2>/dev/null \
+		|| true
+}
+
+install_unbound_pkg
+
 ensure_singbox_caps
 
 cat >"$GFC_ETC/gfc.env" <<EOF

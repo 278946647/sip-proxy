@@ -1,0 +1,56 @@
+---
+description: GFC nftables 冻结 — 未经用户明确批准禁止修改规则
+globs:
+  - "**/gen-nft-policy.py"
+  - "**/lib-*-nft.sh"
+  - "**/gfc-routing.sh"
+  - "**/apply-network.sh"
+  - "**/node_agent/apply.py"
+  - "**/node_agent/routes.py"
+  - "**/*.nft"
+  - "**/NFT_ARCHITECTURE.md"
+alwaysApply: true
+---
+
+# NFT 规则变更协议（强制）
+
+## 权威来源（优先级从高到低）
+
+1. `docs/NFT_ARCHITECTURE.md`（仓库内唯一真相）
+2. 用户在对话中明确给出的 nft 片段
+3. 其他文档（`GATEWAY_CORE.md`、`ARCHITECTURE.md`、生成器注释）— **不得覆盖 1**
+
+## 修改前必须做的事
+
+在编写或修改任何 nft 相关代码之前：
+
+1. 阅读 `docs/NFT_ARCHITECTURE.md`
+2. 输出 **规范 vs 当前实现** 差异表（表名、链名、mark、规则顺序）
+3. 等待用户回复 **「确认修改」** 或等价明确批准
+4. 仅修改用户点名的文件；禁止顺带「优化」或重构
+
+未获批准时：**只读分析，不写代码**。
+
+## 绝对禁止（未经架构评审 + 用户批准）
+
+- 重命名表：`nat` / `gfc_dns_hijack` / `gfc` / `gfc-nat`
+- 重命名链：`prerouting_mangle_ct` / `prerouting_mangle_route` / `gfc_forward` / `output_mangle_route`
+- 修改 hook priority（DNS -100、mangle -150、filter 0 等）
+- 修改默认 mark：`0x2023`（客户端）、`0x100`（转发 TPROXY）、`0x1`（转发本机）
+- 用 `meta skuid` 替代 `bypass_ip` 或 `TO_CN`
+- 合并 nft 表或发明新 packet flow
+- 引入新方案名（如 `gfc_client_mangle`、`classify` 替代规范链名）
+
+## 允许的无须批准操作
+
+- 只读：`nft list ruleset`、解码、对照文档做 gap 分析
+- 文档：按用户要求更新 `NFT_ARCHITECTURE.md` 本身
+- 本规则文件的修订（需用户发起）
+
+## 用户固定口令（建议每次 nft 任务附带）
+
+> 严格按 `docs/NFT_ARCHITECTURE.md`，只改我点名的文件，改前先给 diff 说明，我确认后再写代码。
+
+## 违规处理
+
+若发现生成器输出与 `NFT_ARCHITECTURE.md` 不一致，应报告为 **bug**，不得将错就错更新文档来迁就代码。

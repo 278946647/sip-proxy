@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/278946647/sip-proxy/gfc-client/internal/config"
+	"github.com/278946647/sip-proxy/gfc-client/internal/platform"
 )
 
 type Renderer struct {
@@ -92,6 +93,9 @@ func (r *Renderer) Render(payload map[string]any) error {
 	text = strings.ReplaceAll(text, "223.5.5.5", up.Domestic)
 	text = strings.ReplaceAll(text, "119.29.29.29", "119.29.29.29")
 	text = patchIntlForwardZone(text, up.Intl)
+	if platform.IsOpenWrt() {
+		text = patchOpenWrtPaths(text)
+	}
 	if err := os.MkdirAll(filepath.Dir(r.cfg.Paths.UnboundConfig), 0o755); err != nil {
 		return err
 	}
@@ -134,6 +138,37 @@ func patchIntlForwardZone(text, intlServer string) string {
 	return strings.Join(out, "\n")
 }
 
+func patchOpenWrtPaths(text string) string {
+	caCandidates := []string{
+		"/etc/ssl/certs/ca-certificates.crt",
+		"/etc/ssl/cert.pem",
+		"/etc/ssl/cacert.pem",
+	}
+	for _, ca := range caCandidates {
+		if _, err := os.Stat(ca); err == nil {
+			text = strings.ReplaceAll(text,
+				`tls-cert-bundle: "/etc/ssl/certs/ca-certificates.crt"`,
+				fmt.Sprintf(`tls-cert-bundle: "%s"`, ca),
+			)
+			break
+		}
+	}
+	anchorCandidates := []string{
+		"/var/lib/unbound/root.key",
+		"/etc/unbound/root.key",
+	}
+	for _, anchor := range anchorCandidates {
+		if _, err := os.Stat(anchor); err == nil {
+			text = strings.ReplaceAll(text,
+				`auto-trust-anchor-file: "/var/lib/unbound/root.key"`,
+				fmt.Sprintf(`auto-trust-anchor-file: "%s"`, anchor),
+			)
+			break
+		}
+	}
+	return text
+}
+
 func copyIfChanged(src, dst string) error {
 	in, err := os.ReadFile(src)
 	if err != nil {
@@ -148,13 +183,21 @@ func copyIfChanged(src, dst string) error {
 	return os.WriteFile(dst, in, 0o644)
 }
 
+func BinaryInstalled() bool {
+	return findBinary("unbound-checkconf") != "" || findBinary("unbound") != ""
+}
+
 func CheckConfig(path string) error {
 	bin := findBinary("unbound-checkconf")
 	if bin == "" {
 		bin = findBinary("unbound")
-		if bin == "" {
-			return fmt.Errorf("unbound-checkconf binary not found")
+	}
+	if bin == "" {
+		// ImmortalWrt install may render configs before opkg installs unbound.
+		if platform.IsOpenWrt() || os.Getenv("GFC_SKIP_UNBOUND_CHECK") == "1" {
+			return nil
 		}
+		return fmt.Errorf("unbound-checkconf binary not found (install unbound package)")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -176,7 +219,13 @@ func CheckConfig(path string) error {
 }
 
 func findBinary(name string) string {
-	for _, p := range []string{"/usr/sbin/" + name, "/usr/bin/" + name, "/usr/local/sbin/" + name} {
+	for _, p := range []string{
+		"/usr/sbin/" + name,
+		"/usr/bin/" + name,
+		"/sbin/" + name,
+		"/bin/" + name,
+		"/usr/local/sbin/" + name,
+	} {
 		if st, err := os.Stat(p); err == nil && !st.IsDir() {
 			return p
 		}

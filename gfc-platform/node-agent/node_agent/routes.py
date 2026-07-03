@@ -63,31 +63,54 @@ table ip gfc-nat {{
 
 
 def tproxy_policy_active() -> bool:
-    """TPROXY reply path needs fwmark 0x1 -> table 100 with local default via lo."""
+    """TPROXY reply path needs fwmark 0x100 -> table 100 with local default via lo."""
     ok, rules = _run(["ip", "rule", "show"])
-    if not ok or "fwmark 0x1" not in rules or "lookup 100" not in rules:
+    if not ok or "fwmark 0x100" not in rules or "lookup 100" not in rules:
         return False
     ok, routes = _run(["ip", "route", "show", "table", "100"])
     return ok and "local" in routes
 
 
 def ensure_tproxy_policy(tproxy_port: int) -> list[str]:
-    """Policy routing for TPROXY reply path (mark 0x1 -> local table)."""
-    _ = tproxy_port  # port is fixed in nftables; kept for call-site clarity
+    """Policy routing for TPROXY reply path (mark 0x100 -> local table)."""
+    _ = tproxy_port
     msgs: list[str] = []
+    ok, rules = _run(["ip", "rule", "show"])
+    if ok and "fwmark 0x1" in rules and "fwmark 0x100" not in rules:
+        _run(["ip", "rule", "del", "fwmark", "0x1", "lookup", "100"])
+        msgs.append("removed legacy fwmark 0x1 -> table 100")
     if not tproxy_policy_active():
-        ok, err = _run(["ip", "rule", "add", "fwmark", "0x1", "lookup", "100"])
-        msgs.append("ip rule fwmark 1 -> table 100" if ok else f"ip rule warn: {err}")
+        ok, err = _run(["ip", "rule", "add", "fwmark", "0x100", "lookup", "100"])
+        msgs.append("ip rule fwmark 0x100 -> table 100" if ok else f"ip rule warn: {err}")
     ok, routes = _run(["ip", "route", "show", "table", "100"])
     if "local" not in routes:
         ok, err = _run(
             ["ip", "route", "add", "local", "0.0.0.0/0", "dev", "lo", "table", "100"]
         )
         msgs.append("ip route table 100 local" if ok else f"route local warn: {err}")
-    elif not tproxy_policy_active():
-        msgs.append("tproxy policy incomplete")
-    else:
+    elif tproxy_policy_active():
         msgs.append("tproxy policy ok")
+    else:
+        msgs.append("tproxy policy incomplete")
+    return msgs
+
+
+def local_egress_policy_active(wan_iface: str) -> bool:
+    ok, rules = _run(["ip", "rule", "show"])
+    if not ok or "fwmark 0x1" not in rules or "lookup 1" not in rules:
+        return False
+    ok, routes = _run(["ip", "route", "show", "table", "1"])
+    return ok and wan_iface in routes and "default" in routes
+
+
+def ensure_local_egress_policy(wan_iface: str) -> list[str]:
+    """Local process egress: fwmark 0x1 -> table 1 -> default via WAN."""
+    msgs: list[str] = []
+    if not local_egress_policy_active(wan_iface):
+        ok, err = _run(["ip", "rule", "add", "fwmark", "0x1", "lookup", "1"])
+        msgs.append("ip rule fwmark 0x1 -> table 1" if ok else f"ip rule local warn: {err}")
+    ok, err = _run(["ip", "route", "replace", "default", "dev", wan_iface, "table", "1"])
+    msgs.append(f"ip route table 1 default dev {wan_iface}" if ok else f"route table 1 warn: {err}")
     return msgs
 
 

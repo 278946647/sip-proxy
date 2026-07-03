@@ -17,7 +17,7 @@ import { DeleteOutlined, EyeOutlined, ReloadOutlined } from "@ant-design/icons";
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import dayjs from "dayjs";
-import { apiDelete, apiGet, apiPatch } from "../api/client";
+import { apiDelete, apiGet, apiPatch, apiPost } from "../api/client";
 import { mapClientDevice, type ClientDeviceListItem, type LineListItem } from "../types";
 import { mapLineItem } from "../types";
 
@@ -118,7 +118,12 @@ export function ClientDevicesPage() {
     }
     setCodeLoading(true);
     try {
-      const res = await apiGet<{ line_code_b32: string }>(`/admin/lines/${lineId}/line-code`);
+      let res: { line_code_b32: string };
+      try {
+        res = await apiPost(`/admin/lines/${lineId}/line-code/refresh?operator=admin`, {});
+      } catch {
+        res = await apiGet(`/admin/lines/${lineId}/line-code`);
+      }
       const ln = lines.find((l) => l.id === lineId);
       setLineCodeModal({
         open: true,

@@ -53,6 +53,11 @@ def refresh_line_code(line: Line, node: Node) -> str:
     return encode_line_code(build_line_code_payload(line, node))
 
 
+def line_code_fingerprint(code: str) -> str:
+    """Short hash for UI / ops to verify line code changed."""
+    return hashlib.sha256(code.encode("utf-8")).hexdigest()[:12]
+
+
 def encode_platform_bootstrap_code() -> str:
     return encode_line_code(build_platform_bootstrap_payload())
 
