@@ -12,9 +12,25 @@ func TestPreferProxyGroup(t *testing.T) {
 	if g["type"] != "urltest" || g["tag"] != preferProxyTag {
 		t.Fatalf("unexpected group: %#v", g)
 	}
+	// direct first: all-unhealthy fallback; proxy selected when it alone has history.
 	outs, ok := g["outbounds"].([]any)
-	if !ok || len(outs) != 2 || outs[0] != "proxy" || outs[1] != "direct" {
-		t.Fatalf("outbounds want [proxy, direct], got %#v", g["outbounds"])
+	if !ok || len(outs) != 2 || outs[0] != "direct" || outs[1] != "proxy" {
+		t.Fatalf("outbounds want [direct, proxy], got %#v", g["outbounds"])
+	}
+	url, _ := g["url"].(string)
+	if url == "" || url == "https://www.gstatic.com/generate_204" {
+		t.Fatalf("health URL must fail on direct WAN, got %q", url)
+	}
+	if g["interrupt_exist_connections"] != true {
+		t.Fatal("interrupt_exist_connections must be true for active switch-back")
+	}
+}
+
+func TestPreferProxyGroupHealthURLOverride(t *testing.T) {
+	t.Setenv("GFC_PROXY_HEALTH_URL", "https://example.com/health")
+	g := preferProxyGroup("proxy")
+	if g["url"] != "https://example.com/health" {
+		t.Fatalf("url=%v", g["url"])
 	}
 }
 
