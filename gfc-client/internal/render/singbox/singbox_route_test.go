@@ -12,17 +12,15 @@ func TestPreferProxyGroup(t *testing.T) {
 	if g["type"] != "urltest" || g["tag"] != preferProxyTag {
 		t.Fatalf("unexpected group: %#v", g)
 	}
-	// direct first: all-unhealthy fallback; proxy selected when it alone has history.
+	// proxy-only: never include direct (open-WAN latency would always win).
 	outs, ok := g["outbounds"].([]any)
-	if !ok || len(outs) != 2 || outs[0] != "direct" || outs[1] != "proxy" {
-		t.Fatalf("outbounds want [direct, proxy], got %#v", g["outbounds"])
+	if !ok || len(outs) != 1 || outs[0] != "proxy" {
+		t.Fatalf("outbounds want [proxy], got %#v", g["outbounds"])
 	}
-	url, _ := g["url"].(string)
-	if url == "" || url == "https://www.gstatic.com/generate_204" {
-		t.Fatalf("health URL must fail on direct WAN, got %q", url)
-	}
-	if g["interrupt_exist_connections"] != true {
-		t.Fatal("interrupt_exist_connections must be true for active switch-back")
+	for _, o := range outs {
+		if o == "direct" {
+			t.Fatal("direct must not be in proxy-prefer")
+		}
 	}
 }
 

@@ -19,7 +19,7 @@ var domesticDNS = []string{
 	"223.5.5.5/32", "223.6.6.6/32", "119.29.29.29/32", "114.114.114.114/32",
 }
 
-// Default international DNS IPs: prefer proxy, fall back to direct when proxy is unhealthy.
+// Default international DNS IPs: always via proxy-prefer (VLESS).
 var intlDNS = []string{
 	"1.1.1.1/32", "1.0.0.1/32", "8.8.8.8/32", "8.8.4.4/32",
 }
@@ -163,7 +163,7 @@ func (r *Renderer) RenderActive(payload map[string]any, ruleSets []map[string]an
 		proxyOutbound = "proxy-group"
 	}
 
-	// Prefer VLESS when healthy; fall back to WAN direct only when proxy is unhealthy.
+	// TUN/international traffic always uses VLESS (see preferProxyGroup).
 	preferTag := preferProxyTag
 	if scheme != "byst-redirect" {
 		outbounds = append(outbounds, preferProxyGroup(proxyOutbound))
@@ -191,7 +191,7 @@ func (r *Renderer) RenderActive(payload map[string]any, ruleSets []map[string]an
 			activeRuleSets = ruleSets
 			r.appendSplitRules(&routeRules, len(ruleSets) > 0, preferTag)
 		}
-		// Other traffic prefers proxy (falls back to direct when unhealthy).
+		// Other traffic uses VLESS (proxy-prefer is proxy-only).
 		routeRules = append(routeRules, map[string]any{"outbound": preferTag})
 	}
 
@@ -351,34 +351,30 @@ func (r *Renderer) buildInbounds(proxyMode string) []any {
 	return []any{redirect, tun}
 }
 
-// preferProxyGroup prefers VLESS when healthy, otherwise WAN direct, and switches
-// back to proxy when it recovers.
+// preferProxyGroup always selects VLESS for TUN/international traffic.
 //
-// sing-box urltest selects the lowest-latency *healthy* outbound (history present).
-// Failed checks delete history. When no outbound is healthy, Select returns the
-// first list entry. Therefore:
-//   - outbounds order is [direct, proxy]: all-unhealthy → direct fallback
-//   - health URL must succeed via proxy and fail on direct WAN; otherwise direct
-//     wins on latency (e.g. gstatic often works on CN direct and wrongly stays selected)
-//   - when proxy recovers it alone has history → active switch-back to proxy
+// sing-box urltest picks the lowest-latency *healthy* member. On open-WAN
+// gateways (typical ImmortalWrt edge), direct reaches public health URLs faster
+// than VLESS, so including "direct" makes now=direct permanently and leaks
+// proxy-bound traffic to eth0. sing-box has no priority/fallback group, so the
+// only correct config is proxy-only: kernel already decided this flow should be
+// proxied (mark → gfctun); sing-box must not second-guess via WAN direct.
 func preferProxyGroup(proxyTag string) map[string]any {
 	url := strings.TrimSpace(os.Getenv("GFC_PROXY_HEALTH_URL"))
 	if url == "" {
-		// Must fail on direct WAN in the deployment region; override via env if needed.
-		url = "https://www.google.com/generate_204"
+		url = "https://www.gstatic.com/generate_204"
 	}
 	interval := strings.TrimSpace(os.Getenv("GFC_PROXY_HEALTH_INTERVAL"))
 	if interval == "" {
 		interval = "1m"
 	}
 	return map[string]any{
-		"type":                        "urltest",
-		"tag":                         preferProxyTag,
-		"outbounds":                   []any{"direct", proxyTag},
-		"url":                         url,
-		"interval":                    interval,
-		"tolerance":                   100,
-		"interrupt_exist_connections": true,
+		"type":      "urltest",
+		"tag":       preferProxyTag,
+		"outbounds": []any{proxyTag},
+		"url":       url,
+		"interval":  interval,
+		"tolerance": 100,
 	}
 }
 
