@@ -163,13 +163,12 @@ elif [ -x /usr/bin/gfc-bootstrap ]; then
 	fi
 fi
 
+# unbound owns DNS :53; dnsmasq is DHCP-only and advertises LAN gateway as DNS.
 if command -v uci >/dev/null 2>&1; then
 	cp /etc/config/dhcp "/etc/config/dhcp.bak.gfc.$(date +%s)" 2>/dev/null || true
-	uci set dhcp.@dnsmasq[0].noresolv='1'
-	uci -q delete dhcp.@dnsmasq[0].server
-	uci add_list dhcp.@dnsmasq[0].server="127.0.0.1#$GFC_MOSDNS_PORT"
-	uci set dhcp.@dnsmasq[0].cachesize='0'
-	uci commit dhcp
+fi
+if [ -x "$GFC_ROOT/deploy/immortalwrt/configure-dnsmasq-dhcp.sh" ]; then
+	"$GFC_ROOT/deploy/immortalwrt/configure-dnsmasq-dhcp.sh"
 fi
 
 /etc/init.d/gfc-api enable
@@ -187,6 +186,7 @@ service_restart() {
 
 service_restart gfc-api
 service_restart gfc-unbound || true
+# DHCP only; must run after UCI port=0 so it does not fight unbound for :53.
 /etc/init.d/dnsmasq restart || true
 service_restart gfc-agent
 if [ "${GFC_SAFE_INSTALL:-0}" = "1" ]; then

@@ -447,7 +447,28 @@ func (m *Manager) applyOpenWrtDHCP(cfg map[string]any) error {
 	if lease := strings.TrimSpace(text(cfg["leaseTime"])); lease != "" {
 		_, _ = uci("set", "dhcp.lan.leasetime="+lease)
 	}
+	// Advertise LAN gateway as DNS (unbound on :53). dnsmasq itself is port=0.
+	lanAddr := strings.TrimSpace(text(cfg["address"]))
+	if lanAddr == "" {
+		lanAddr = uciGet("network.lan.ipaddr", "")
+	}
+	if lanAddr != "" {
+		applyOpenWrtDHCPDNSOption(lanAddr)
+	}
 	return nil
+}
+
+// applyOpenWrtDHCPDNSOption sets DHCP option 6 to the LAN gateway IP.
+func applyOpenWrtDHCPDNSOption(lanAddr string) {
+	out, err := uci("-q", "get", "dhcp.lan.dhcp_option")
+	if err == nil && out != "" {
+		for _, opt := range strings.Fields(out) {
+			if strings.HasPrefix(opt, "6,") || strings.HasPrefix(opt, "6 ") {
+				_, _ = uci("del_list", "dhcp.lan.dhcp_option="+opt)
+			}
+		}
+	}
+	_, _ = uci("add_list", "dhcp.lan.dhcp_option=6,"+lanAddr)
 }
 
 func (m *Manager) applyOpenWrtRoutes(cfg map[string]any) error {

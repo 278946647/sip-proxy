@@ -105,7 +105,7 @@ EOF
 
 apply_dns_hijack() {
 	# LAN clients may point DNS at 8.8.8.8 or other resolvers. Redirect them
-	# back to dnsmasq:53; dnsmasq then forwards to mosdns:1053 via UCI.
+	# to local unbound:53 (dnsmasq is DHCP-only with port=0).
 	nft -f - <<EOF
 table inet gfc_dns_hijack {
   chain prerouting {
