@@ -27,6 +27,7 @@ if gfc_fix_crlf_file "$_self"; then exec bash "$_self" "$@"; fi
 
 _PY_REPAIR="$(cd "$(dirname "$_self")" && pwd)/repair_forward_node.py"
 if [[ -f "$_PY_REPAIR" && -f "$(dirname "$_PY_REPAIR")/_repair_impl.py" ]]; then
+  export REPO_ROOT="${1:-$(cd "$(dirname "$_self")/../.." && pwd)}"
   exec python3 "$_PY_REPAIR"
 fi
 

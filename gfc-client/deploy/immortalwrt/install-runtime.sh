@@ -129,14 +129,19 @@ GFC_SINGBOX_UID=${GFC_SINGBOX_UID}
 EOF
 chmod 600 "$GFC_ETC/gfc.env"
 
-for svc in gfc-api gfc-agent gfc-mosdns gfc-sing-box gfc-routing; do
+for svc in gfc-api gfc-agent gfc-unbound gfc-sing-box gfc-routing; do
 	cp "$INIT_SRC/$svc" "/etc/init.d/$svc"
 	chmod +x "/etc/init.d/$svc"
 done
 
 chmod +x "$GFC_ROOT"/deploy/immortalwrt/*.sh 2>/dev/null || true
 
-# Disable stock mosdns if present; GFC owns its own config path and service.
+# Stock OpenWrt unbound uses UCI (recursive from root) and ignores GFC conf.
+# Legacy gfc-mosdns / package mosdns are not used for LAN DNS.
+/etc/init.d/unbound stop 2>/dev/null || true
+/etc/init.d/unbound disable 2>/dev/null || true
+/etc/init.d/gfc-mosdns stop 2>/dev/null || true
+/etc/init.d/gfc-mosdns disable 2>/dev/null || true
 /etc/init.d/mosdns stop 2>/dev/null || true
 /etc/init.d/mosdns disable 2>/dev/null || true
 
@@ -169,7 +174,7 @@ fi
 
 /etc/init.d/gfc-api enable
 /etc/init.d/gfc-agent enable
-/etc/init.d/gfc-mosdns enable
+/etc/init.d/gfc-unbound enable
 /etc/init.d/gfc-sing-box enable
 /etc/init.d/gfc-routing enable
 
@@ -181,7 +186,7 @@ service_restart() {
 }
 
 service_restart gfc-api
-service_restart gfc-mosdns || true
+service_restart gfc-unbound || true
 /etc/init.d/dnsmasq restart || true
 service_restart gfc-agent
 if [ "${GFC_SAFE_INSTALL:-0}" = "1" ]; then

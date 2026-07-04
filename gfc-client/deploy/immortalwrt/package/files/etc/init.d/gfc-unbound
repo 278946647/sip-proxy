@@ -1,0 +1,43 @@
+#!/bin/sh /etc/rc.common
+# GFC Unbound — always use /etc/unbound/unbound.conf (GFC-rendered).
+# Stock OpenWrt /etc/init.d/unbound uses UCI and recurses from root; do not use it.
+
+START=86
+STOP=25
+USE_PROCD=1
+
+UNBOUND_CONF="/etc/unbound/unbound.conf"
+
+start_service() {
+	[ -f /etc/gfc-client/gfc.env ] && . /etc/gfc-client/gfc.env
+	local bin="/usr/sbin/unbound"
+	[ -x "$bin" ] || bin="$(command -v unbound 2>/dev/null || true)"
+	[ -n "$bin" ] && [ -x "$bin" ] || {
+		echo "ERROR: unbound binary not found" >&2
+		return 1
+	}
+	[ -f "$UNBOUND_CONF" ] || {
+		echo "ERROR: missing $UNBOUND_CONF (run gfc-bootstrap first)" >&2
+		return 1
+	}
+	if command -v unbound-checkconf >/dev/null 2>&1; then
+		if ! unbound-checkconf "$UNBOUND_CONF" >/dev/null 2>&1; then
+			echo "ERROR: unbound-checkconf failed for $UNBOUND_CONF" >&2
+			unbound-checkconf "$UNBOUND_CONF" 2>&1 | head -20 >&2
+			return 1
+		fi
+	fi
+	# Avoid port 53 conflict with stock unbound / dnsmasq.
+	/etc/init.d/unbound stop 2>/dev/null || true
+	procd_open_instance
+	procd_set_param command "$bin" -d -c "$UNBOUND_CONF"
+	procd_set_param respawn 5 10 0
+	procd_set_param stdout 1
+	procd_set_param stderr 1
+	procd_close_instance
+}
+
+reload_service() {
+	stop
+	start
+}

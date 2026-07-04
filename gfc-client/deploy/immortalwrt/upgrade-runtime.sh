@@ -84,6 +84,7 @@ install_unbound_pkg
 
 stop_service gfc-agent
 stop_service gfc-api
+stop_service gfc-unbound
 stop_service gfc-mosdns
 stop_service gfc-sing-box
 stop_service gfc-routing
@@ -148,11 +149,17 @@ ensure_singbox_caps() {
 ensure_singbox_caps
 
 if [ -d "$INIT_SRC" ]; then
-	for svc in gfc-api gfc-agent gfc-mosdns gfc-sing-box gfc-routing; do
+	for svc in gfc-api gfc-agent gfc-unbound gfc-sing-box gfc-routing; do
 		cp "$INIT_SRC/$svc" "/etc/init.d/$svc"
 		chmod +x "/etc/init.d/$svc"
 	done
 fi
+
+# Stock unbound (UCI recursive) must not own :53; GFC uses gfc-unbound + GFC conf.
+/etc/init.d/unbound stop 2>/dev/null || true
+/etc/init.d/unbound disable 2>/dev/null || true
+/etc/init.d/gfc-mosdns stop 2>/dev/null || true
+/etc/init.d/gfc-mosdns disable 2>/dev/null || true
 
 if [ "${GFC_SAFE_INSTALL:-0}" = "1" ]; then
 	echo "safe install: bootstrap reapply skipped"
@@ -179,7 +186,7 @@ fi
 rm -rf /tmp/luci-indexcache /tmp/luci-modulecache
 
 start_service gfc-api
-start_service gfc-mosdns
+start_service gfc-unbound
 /etc/init.d/dnsmasq restart 2>/dev/null || true
 start_service gfc-agent
 if [ "${GFC_SAFE_INSTALL:-0}" = "1" ]; then

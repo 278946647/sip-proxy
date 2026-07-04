@@ -1,18 +1,26 @@
 # ==========================================
-# Unbound 主配置文件
-# 功能：国内域名走 223.5.5.5/119.29.29.29，其他走 1.1.1.1/8.8.8.8 (DoT)
+# Unbound 主配置文件（GFC）
+# 国内域名 → 223.5.5.5 / 119.29.29.29
+# 其他域名 → 1.1.1.1 / 1.0.0.1（DoT）
+#
+# 注意：forward-zone / include(cn) 必须在 server: 块之外，
+# 否则 unbound 忽略转发、退化为向根服务器递归。
 # ==========================================
 
 server:
     # --- 基本网络设置 ---
     interface: 0.0.0.0
     port: 53
-    # 若只需本机使用，改为 interface: 127.0.0.1
+    # 仅 IPv4 解析与出站
+    do-ip4: yes
+    do-ip6: no
+    prefer-ip4: yes
 
     # --- 访问控制 ---
     access-control: 127.0.0.0/8 allow
     access-control: 192.168.0.0/16 allow
     access-control: 10.0.0.0/8 allow
+    access-control: 172.16.0.0/12 allow
 
     # --- 隐私与性能 ---
     verbosity: 1
@@ -24,40 +32,31 @@ server:
     # --- 安全设置 ---
     val-log-level: 2
     auto-trust-anchor-file: "/var/lib/unbound/root.key"
-    tls-cert-bundle: "/etc/ssl/certs/ca-certificates.crt"   
- 
-    # 关闭 QNAME 最小化（避免国内CDN解析异常）
+    tls-cert-bundle: "/etc/ssl/certs/ca-certificates.crt"
+
+    # 关闭 QNAME 最小化（避免国内 CDN 解析异常）
     qname-minimisation: no
 
     # --- 多线程优化 ---
     num-threads: 4
     so-rcvbuf: 1m
     so-sndbuf: 1m
-    val-permissive-mode: yes   
+    val-permissive-mode: yes
 
-    # ==========================================
-    # 关键：将国内域名标记为 insecure
-    # 通过 include 引入域名列表
-    # ==========================================
+    # 国内域名不做 DNSSEC 校验（domain-insecure: 仅允许出现在 server: 内）
     include: "/etc/unbound/domains-insecure.conf"
-#    include: "/etc/unbound/forward-china.conf"
-    include: "/etc/unbound/conf.d/cn.unbound.conf"
-
 
 # ==========================================
-# 默认转发：DoT 到 1.1.1.1 和 8.8.8.8
+# 国内域名转发（forward-zone 必须在 server: 外）
+# ==========================================
+include: "/etc/unbound/conf.d/cn.unbound.conf"
+
+# ==========================================
+# 默认转发：DoT 到 Cloudflare（失败不回退递归）
 # ==========================================
 forward-zone:
     name: "."
     forward-tls-upstream: yes
+    forward-first: no
     forward-addr: 1.1.1.1@853#cloudflare-dns.com
     forward-addr: 1.0.0.1@853#cloudflare-dns.com
-
-#     forward-addr: 1.1.1.1
-#    forward-addr: 8.8.8.8@853#dns.google
-#    forward-addr: 8.8.4.4@853#dns.google
-
-
-# ==========================================
-# 国内域名转发规则（从外部文件引入）
-# ==========================================

@@ -45,7 +45,7 @@ define Package/gfc-client/install
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_BIN) ./files/etc/init.d/gfc-api $(1)/etc/init.d/gfc-api
 	$(INSTALL_BIN) ./files/etc/init.d/gfc-agent $(1)/etc/init.d/gfc-agent
-	$(INSTALL_BIN) ./files/etc/init.d/gfc-mosdns $(1)/etc/init.d/gfc-mosdns
+	$(INSTALL_BIN) ./files/etc/init.d/gfc-unbound $(1)/etc/init.d/gfc-unbound
 	$(INSTALL_BIN) ./files/etc/init.d/gfc-sing-box $(1)/etc/init.d/gfc-sing-box
 	$(INSTALL_BIN) ./files/etc/init.d/gfc-routing $(1)/etc/init.d/gfc-routing
 endef
@@ -54,9 +54,11 @@ define Package/gfc-client/postinst
 #!/bin/sh
 [ -n "$$IPKG_INSTROOT" ] && exit 0
 mkdir -p /etc/gfc-client /var/lib/gfc-client/state /var/lib/gfc-client/rules /var/lib/gfc-client/dns-lists /var/log/gfc-client
+/etc/init.d/unbound stop 2>/dev/null || true
+/etc/init.d/unbound disable 2>/dev/null || true
 /etc/init.d/gfc-api enable
 /etc/init.d/gfc-agent enable
-/etc/init.d/gfc-mosdns enable
+/etc/init.d/gfc-unbound enable
 /etc/init.d/gfc-sing-box enable
 /etc/init.d/gfc-routing enable
 if [ -f /var/lib/gfc-client/state/config_bundle.json ]; then

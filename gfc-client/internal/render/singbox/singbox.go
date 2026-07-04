@@ -19,9 +19,12 @@ var domesticDNS = []string{
 	"223.5.5.5/32", "223.6.6.6/32", "119.29.29.29/32", "114.114.114.114/32",
 }
 
-var intlDOH = []string{
+// Default international DNS IPs: prefer proxy, fall back to direct via urltest.
+var intlDNS = []string{
 	"1.1.1.1/32", "1.0.0.1/32", "8.8.8.8/32", "8.8.4.4/32",
 }
+
+const preferProxyTag = "proxy-prefer"
 
 type Renderer struct {
 	cfg *config.Config
@@ -160,42 +163,42 @@ func (r *Renderer) RenderActive(payload map[string]any, ruleSets []map[string]an
 		proxyOutbound = "proxy-group"
 	}
 
+	// Prefer VLESS; when health-check fails, urltest falls back to WAN direct.
+	preferTag := preferProxyTag
+	if scheme != "byst-redirect" {
+		outbounds = append(outbounds, preferProxyGroup(proxyOutbound))
+	} else {
+		preferTag = proxyOutbound
+	}
+
 	inbounds := r.buildInbounds(proxyMode)
 	routingMode := r.RoutingMode()
 
 	var routeRules []map[string]any
 	var activeRuleSets []map[string]any
+	finalOutbound := "direct"
 	if scheme == "byst-redirect" {
 		// BYST-compatible dataplane: nft decides split/redirect, sing-box only carries traffic out.
 		routeRules = []map[string]any{}
+		finalOutbound = proxyOutbound
 	} else if scheme == "kernel-split" {
-		// CN/intl split is done in kernel nft (cn_ip + fwmark). TUN traffic → VLESS only.
-		// Relay node must use direct+WAN bind (not loop back through TUN/VLESS).
-		routeRules = []map[string]any{}
-		if dr := directIPRule(address); dr != nil {
-			routeRules = append(routeRules, dr)
-		}
-		if servers, ok := payload["controlPlaneServers"].([]any); ok {
-			for _, s := range servers {
-				if dr := directIPRule(fmt.Sprint(s)); dr != nil {
-					routeRules = append(routeRules, dr)
-				}
-			}
-		}
-		routeRules = append(routeRules, map[string]any{"outbound": proxyOutbound})
+		// CN/intl split is done in kernel nft. Inside TUN:
+		// bypass_ip → direct; intl DNS + other → prefer proxy; final → direct.
+		routeRules = r.preferProxyRouteRules(address, payload, preferTag, true)
 	} else {
-		routeRules = r.dnsRouteRules(address, payload, proxyOutbound)
+		routeRules = r.preferProxyRouteRules(address, payload, preferTag, false)
 		if routingMode != "global" {
 			activeRuleSets = ruleSets
-			r.appendSplitRules(&routeRules, len(ruleSets) > 0, proxyOutbound)
+			r.appendSplitRules(&routeRules, len(ruleSets) > 0, preferTag)
 		}
-		routeRules = append(routeRules, map[string]any{"outbound": proxyOutbound})
+		// Other traffic prefers proxy (urltest falls back to direct).
+		routeRules = append(routeRules, map[string]any{"outbound": preferTag})
 	}
 
 	route := map[string]any{
 		"auto_detect_interface": false,
 		"default_interface":     wan,
-		"final":                 proxyOutbound,
+		"final":                 finalOutbound,
 	}
 	if len(routeRules) > 0 {
 		route["rules"] = routeRules
@@ -348,24 +351,119 @@ func (r *Renderer) buildInbounds(proxyMode string) []any {
 	return []any{redirect, tun}
 }
 
-func (r *Renderer) dnsRouteRules(nodeAddr string, payload map[string]any, proxyTag string) []map[string]any {
-	rules := []map[string]any{
-		{"ip_cidr": domesticDNS, "port": []int{53}, "outbound": "direct"},
-		{"ip_cidr": intlDOH, "port": []int{443}, "outbound": proxyTag},
-		{"ip_cidr": []string{"127.0.0.1/32"}, "port": []int{config.DefaultDNSPort}, "outbound": "direct-local"},
+// preferProxyGroup selects proxy when healthy, otherwise WAN direct.
+func preferProxyGroup(proxyTag string) map[string]any {
+	url := strings.TrimSpace(os.Getenv("GFC_PROXY_HEALTH_URL"))
+	if url == "" {
+		url = "https://www.gstatic.com/generate_204"
 	}
-	if dr := directIPRule(nodeAddr); dr != nil {
-		rules = append(rules, dr)
+	interval := strings.TrimSpace(os.Getenv("GFC_PROXY_HEALTH_INTERVAL"))
+	if interval == "" {
+		interval = "1m"
 	}
-	if servers, ok := payload["controlPlaneServers"].([]any); ok {
-		for _, s := range servers {
-			if dr := directIPRule(fmt.Sprint(s)); dr != nil {
-				rules = append(rules, dr)
+	return map[string]any{
+		"type":      "urltest",
+		"tag":       preferProxyTag,
+		"outbounds": []any{proxyTag, "direct"},
+		"url":       url,
+		"interval":  interval,
+		"tolerance": 100,
+	}
+}
+
+func intlDNSCidrs() []string {
+	raw := strings.TrimSpace(os.Getenv("GFC_EXT_CONST_IPS"))
+	if raw == "" {
+		return append([]string(nil), intlDNS...)
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, token := range strings.Split(raw, ",") {
+		ip := strings.TrimSpace(token)
+		ip = strings.Split(ip, "/")[0]
+		if net.ParseIP(ip) == nil {
+			continue
+		}
+		cidr := ip + "/32"
+		if seen[cidr] {
+			continue
+		}
+		seen[cidr] = true
+		out = append(out, cidr)
+	}
+	if len(out) == 0 {
+		return append([]string(nil), intlDNS...)
+	}
+	return out
+}
+
+// preferProxyRouteRules builds:
+//
+//	bypass_ip / node / control-plane → direct
+//	private → direct
+//	intl DNS IPs → proxy-prefer
+//	(optional catch-all) → proxy-prefer
+//
+// route.final should be "direct".
+func (r *Renderer) preferProxyRouteRules(nodeAddr string, payload map[string]any, preferTag string, catchAll bool) []map[string]any {
+	var rules []map[string]any
+	if bypass := r.bypassIPCidrs(payload, nodeAddr); len(bypass) > 0 {
+		rules = append(rules, map[string]any{"ip_cidr": bypass, "outbound": "direct"})
+	}
+	rules = append(rules,
+		map[string]any{"ip_is_private": true, "outbound": "direct"},
+		map[string]any{"ip_cidr": domesticDNS, "port": []int{53}, "outbound": "direct"},
+		map[string]any{"ip_cidr": intlDNSCidrs(), "outbound": preferTag},
+	)
+	if catchAll {
+		rules = append(rules, map[string]any{"outbound": preferTag})
+	}
+	return rules
+}
+
+func (r *Renderer) bypassIPCidrs(payload map[string]any, nodeAddr string) []string {
+	seen := map[string]bool{}
+	var out []string
+	addHost := func(host string) {
+		host = strings.TrimSpace(host)
+		if host == "" {
+			return
+		}
+		if strings.Contains(host, "://") {
+			if u, err := url.Parse(host); err == nil && u.Hostname() != "" {
+				host = u.Hostname()
 			}
 		}
+		host = strings.Split(host, "/")[0]
+		if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+			host = host[1 : len(host)-1]
+		}
+		ip := net.ParseIP(host)
+		if ip == nil || ip.To4() == nil {
+			return
+		}
+		cidr := ip.String() + "/32"
+		if seen[cidr] {
+			return
+		}
+		seen[cidr] = true
+		out = append(out, cidr)
 	}
-	rules = append(rules, map[string]any{"ip_is_private": true, "outbound": "direct"})
-	return rules
+	addHost(nodeAddr)
+	if servers, ok := payload["controlPlaneServers"].([]any); ok {
+		for _, s := range servers {
+			addHost(fmt.Sprint(s))
+		}
+	}
+	for _, key := range []string{
+		"GFC_POLICY_BYPASS_IPS", "GFC_NODE_BYPASS", "GFC_CP_BYPASS",
+		"SERVER_URL", "SERVER_URL_FALLBACK",
+	} {
+		for _, token := range strings.Split(os.Getenv(key), ",") {
+			addHost(token)
+		}
+	}
+	return out
 }
 
 func (r *Renderer) appendSplitRules(rules *[]map[string]any, useMeta bool, proxyTag string) {

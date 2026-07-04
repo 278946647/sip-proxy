@@ -138,6 +138,14 @@ func trimServiceSuffix(service string) string {
 		return "gfc-routing"
 	case "gfc-sing-box":
 		return "gfc-sing-box"
+	case "gfc-unbound":
+		return "gfc-unbound"
+	case "gfc-mosdns":
+		// Legacy unit name; DNS is unbound under GFC config.
+		if IsOpenWrt() {
+			return "gfc-unbound"
+		}
+		return "gfc-unbound"
 	default:
 		return service
 	}
