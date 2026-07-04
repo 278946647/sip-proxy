@@ -459,14 +459,20 @@ func (m *Manager) applyOpenWrtDHCP(cfg map[string]any) error {
 }
 
 // applyOpenWrtDHCPDNSOption sets DHCP option 6 to the LAN gateway IP.
+// With dnsmasq port=0, option 6 must be explicit or clients get no DNS.
 func applyOpenWrtDHCPDNSOption(lanAddr string) {
-	out, err := uci("-q", "get", "dhcp.lan.dhcp_option")
-	if err == nil && out != "" {
+	keep := make([]string, 0, 4)
+	if out, err := uci("-q", "get", "dhcp.lan.dhcp_option"); err == nil && out != "" {
 		for _, opt := range strings.Fields(out) {
 			if strings.HasPrefix(opt, "6,") || strings.HasPrefix(opt, "6 ") {
-				_, _ = uci("del_list", "dhcp.lan.dhcp_option="+opt)
+				continue
 			}
+			keep = append(keep, opt)
 		}
+	}
+	_, _ = uci("-q", "delete", "dhcp.lan.dhcp_option")
+	for _, opt := range keep {
+		_, _ = uci("add_list", "dhcp.lan.dhcp_option="+opt)
 	}
 	_, _ = uci("add_list", "dhcp.lan.dhcp_option=6,"+lanAddr)
 }

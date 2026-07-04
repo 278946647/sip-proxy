@@ -167,8 +167,9 @@ fi
 if command -v uci >/dev/null 2>&1; then
 	cp /etc/config/dhcp "/etc/config/dhcp.bak.gfc.$(date +%s)" 2>/dev/null || true
 fi
-if [ -x "$GFC_ROOT/deploy/immortalwrt/configure-dnsmasq-dhcp.sh" ]; then
-	"$GFC_ROOT/deploy/immortalwrt/configure-dnsmasq-dhcp.sh"
+_dns_sh="$GFC_ROOT/deploy/immortalwrt/configure-dnsmasq-dhcp.sh"
+if [ -f "$_dns_sh" ]; then
+	sh "$_dns_sh"
 fi
 
 /etc/init.d/gfc-api enable

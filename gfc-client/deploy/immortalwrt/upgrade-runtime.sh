@@ -186,10 +186,15 @@ fi
 rm -rf /tmp/luci-indexcache /tmp/luci-modulecache
 
 # unbound owns DNS :53; dnsmasq is DHCP-only and advertises LAN gateway as DNS.
-if [ -x /usr/lib/gfc-client/deploy/immortalwrt/configure-dnsmasq-dhcp.sh ]; then
-	/usr/lib/gfc-client/deploy/immortalwrt/configure-dnsmasq-dhcp.sh
-elif [ -x "$GFC_ROOT/deploy/immortalwrt/configure-dnsmasq-dhcp.sh" ]; then
-	"$GFC_ROOT/deploy/immortalwrt/configure-dnsmasq-dhcp.sh"
+# Always invoke via sh (file may lack +x after tar extract).
+_dns_sh=""
+if [ -f /usr/lib/gfc-client/deploy/immortalwrt/configure-dnsmasq-dhcp.sh ]; then
+	_dns_sh=/usr/lib/gfc-client/deploy/immortalwrt/configure-dnsmasq-dhcp.sh
+elif [ -f "$GFC_ROOT/deploy/immortalwrt/configure-dnsmasq-dhcp.sh" ]; then
+	_dns_sh="$GFC_ROOT/deploy/immortalwrt/configure-dnsmasq-dhcp.sh"
+fi
+if [ -n "$_dns_sh" ]; then
+	sh "$_dns_sh"
 fi
 
 start_service gfc-api
