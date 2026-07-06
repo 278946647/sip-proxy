@@ -1,6 +1,11 @@
 # GFC Client Gateway Core（内核策略路由版）
 
-> **nft 规则以 [`docs/NFT_ARCHITECTURE.md`](../../docs/NFT_ARCHITECTURE.md) 为准。** 本文档描述数据流与运维；表名/链名/mark 以该文件为唯一真相。
+> **数据面权威文档（优先级从高到低）：**
+> - [`docs/NFT_ARCHITECTURE.md`](../../docs/NFT_ARCHITECTURE.md) — nft 表/链/mark
+> - [`docs/UNBOUND_ARCHITECTURE.md`](../../docs/UNBOUND_ARCHITECTURE.md) — LAN DNS / unbound
+> - [`docs/SINGBOX_ARCHITECTURE.md`](../../docs/SINGBOX_ARCHITECTURE.md) — sing-box 配置
+>
+> 本文档描述数据流与运维；与上述文件冲突时以 ARCHITECTURE 文档为准。
 
 ## 可行性结论
 
@@ -10,10 +15,10 @@
 |------|------------------------|---------------------------|
 | 数据面归属 | sing-box 与内核双套路由 | **内核** 决定走向，sing-box 只处理 TUN 内流量 |
 | LAN 转发 | 依赖 sing-box 自建 nft，易与 gfc nft 冲突 | **nft mangle 打标** + `ip rule`，逻辑单一 |
-| 职责边界 | 模糊 | **nft 分类 / MosDNS DNS / sing-box 出站** 清晰 |
+| 职责边界 | 模糊 | **nft 分类 / unbound DNS / sing-box 出站** 清晰 |
 | 调试 | sing-box nft + 系统路由难拆 | `ip rule` / `ip route table 2022` / `nft list` 可观测 |
 
-分流（Scheme B）：**内核 cn_ip 集** 判 CN 直连；非 CN 进 TUN；sing-box **不再**做 GeoSite/GeoIP 分流（`final: proxy`）。
+分流（Scheme B）：**内核 cn_ip 集** 判 CN 直连；非 CN 进 TUN；sing-box **不再**做 GeoSite/GeoIP 分流（`route.final: direct`，国际流量经 `proxy-prefer` → VLESS）。
 
 ---
 
@@ -21,27 +26,28 @@
 
 ```
 PC → bridge_lan
-  → PREROUTING DNS → MosDNS :53
+  → DHCP option 6 = LAN 网关（dnsmasq port=0）
+  → DNS → nft hijack → unbound :53
   → PREROUTING classify:
        dst ∈ cn_ip / 私网 / :53 → 无 mark → main 表 → WAN 直连
        其余 → mark 0x2023
   → ip rule → table 2022 → gfctun
-  → sing-box TUN → final VLESS Reality → 转发节点
+  → sing-box TUN → proxy-prefer → VLESS Reality → 转发节点
 
-MosDNS 国际上游 (1.1.1.1/8.8.8.8:443 DoH) → uid 65353 + :443 打标 → TUN → 代理
+国际 DNS 上游 IP（ext_const）→ nft 打标 → TUN → sing-box 代理
 ```
 
 | 流量 | 路径 |
 |------|------|
 | CN IP（china_ip_list） | **不进 TUN**，WAN 直连 |
-| 非 CN IP | mark → **gfctun → VLESS** |
-| MosDNS 国内 :53 上游 | 不打标，直连 |
-| MosDNS 国际 DoH :443 | 打标 → TUN → 代理 |
+| 非 CN IP | mark → **gfctun → proxy-prefer → VLESS** |
+| unbound 国内上游 :53 | 不打标，直连 |
+| 国际 DNS IP（ext_const） | 打标 → TUN → 代理 |
 | **转发节点 IP** | **bypass_ip**（VLESS 握手必须直连 WAN，不能进 TUN） |
 
-验证 VLESS：`sudo bash deploy/check-vless.sh`（TCP + bypass + Clash API delay）
+验证 VLESS：`sh deploy/check-vless.sh`（TCP + bypass + Clash API delay）
 
-sing-box（scheme B）：**无 geo rule_set**，route 仅 `final: proxy`
+sing-box（kernel-split）：**无 geo rule_set**；`route.final: direct`；国际流量 `proxy-prefer`（仅 `proxy`，不含 `direct`）
 
 回退标签：`kernel-split`。验证其他方案后，设置 `GFC_ROUTING_SCHEME=kernel-split` 并重新执行 `apply-network.sh` 即可回到当前默认数据面。
 
@@ -102,13 +108,12 @@ LAN 非 TCP 非 CN / ext / ext_const
 
 **OUTPUT 分类顺序**（数字越小越先执行；nat hook 不可用 `-200`，该槽位留给 conntrack）：
 
-1. DNS hijack（nat `-100` / `dstnat`）：本机/LAN :53 重定向到 MosDNS
-2. mangle（route `200`，晚于 DNS）：
+1. DNS hijack（nat `-100` / `dstnat`）：LAN :53 重定向到 unbound
+2. mangle / filter（见 `NFT_ARCHITECTURE.md`）：
    - 已打标 / TUN 环回 / 私网 / :53/:67/:68 → 跳过
-   - VLESS 节点 + 控制面 IP → 跳过（gfc-agent 直连）
-   - `meta skuid 65354`（sing-box）→ 跳过（防 TUN 回环）
-   - `meta skuid 65353` + tcp/443（MosDNS DoH）→ 打标
-   - 其余 → 打标 `0x2023`
+   - bypass_ip（节点 + 控制面）→ 跳过
+   - ext_const（国际 DNS IP）→ 打标
+   - 其余国际 → 打标 `0x2023`
 
 ---
 
@@ -118,10 +123,9 @@ LAN 非 TCP 非 CN / ext / ext_const
 
 | 表 | 职责 |
 |----|------|
-| `gfc_dns_hijack` | LAN/本机 DNS 劫持 → MosDNS :53（nat `dstnat` / output `-100`） |
-| `gfc_client_mangle` | LAN 转发 + 本机流量打 `fwmark 0x2023`（prerouting/output `200`，晚于 DNS/filter） |
-| `gfc_client_filter` | INPUT/FORWARD（含 `lan↔gfctun`，priority `-200`） |
-| `gfc_client_nat` | WAN MASQUERADE（直连兜底） |
+| `gfc_dns_hijack` | LAN DNS 劫持 → unbound :53（nat `dstnat`） |
+| `gfc` | 分类、forward sync、output 打标（见 NFT_ARCHITECTURE） |
+| `nat` | WAN MASQUERADE（直连兜底） |
 
 **禁止** sing-box `auto_redirect` 自建 nft（`singbox-nft-cleanup.sh` 清理残留）。
 
@@ -140,19 +144,23 @@ ip route add default dev gfctun table 2022
 
 ### sing-box
 
-**仅负责：**
+**仅负责（kernel-split）：**
 
-- TUN inbound（`auto_route: false`）
-- VLESS + Reality outbound
-- GeoIP/GeoSite 分流
-- `direct` 出站 `bind_interface: <WAN>`
+- TUN inbound（`auto_route: false`，`stack: gvisor`）
+- VLESS + Reality outbound（`bind_interface: <WAN>`）
+- Route：`bypass → direct`；国际 → `proxy-prefer`（**仅** `proxy`）
+- `direct` 出站 `bind_interface: <WAN>`（bypass 路径）
 
-**禁止：** auto_route、auto_redirect、DNS、NAT、策略路由。
+**禁止：** auto_route、auto_redirect、GeoIP/GeoSite 分流（kernel-split）、在 `proxy-prefer` 中加入 `direct`。
 
-### MosDNS
+详见 [`docs/SINGBOX_ARCHITECTURE.md`](../../docs/SINGBOX_ARCHITECTURE.md)。
 
-- 独占 `:53`
-- 国内 UDP 上游直连；国际 DoH:443 由打标后进 TUN
+### unbound + dnsmasq
+
+- **unbound**（`gfc-unbound`）：独占 `:53`；国内域名 UDP 上游；国际 DoT
+- **dnsmasq**：`port=0` 仅 DHCP；`dhcp_option 6,<LAN网关>`
+
+详见 [`docs/UNBOUND_ARCHITECTURE.md`](../../docs/UNBOUND_ARCHITECTURE.md)。
 
 ---
 
@@ -160,13 +168,13 @@ ip route add default dev gfctun table 2022
 
 ```
 network-online
- → gfc-network (nft filter/dns/policy + netplan)
- → dnsmasq (DHCP only)
- → gfc-mosdns
+ → gfc-network (nft + policy)
+ → dnsmasq (DHCP only, port=0)
+ → gfc-unbound (:53)
  → gfc-sing-box (创建 gfctun)
  → gfc-routing (ip rule + table 2022)
  → gfc-agent
- → gfc-web
+ → gfc-api
 ```
 
 ---

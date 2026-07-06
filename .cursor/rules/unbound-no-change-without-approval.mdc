@@ -1,0 +1,64 @@
+---
+description: GFC Unbound/DNS 配置冻结 — 未经用户明确批准禁止修改
+globs:
+  - "**/render/unbound/**"
+  - "**/share/unbound/**"
+  - "**/gfc-unbound"
+  - "**/configure-dnsmasq-dhcp.sh"
+  - "**/fix-unbound*.sh"
+  - "**/lib-unbound*.sh"
+  - "**/UNBOUND_ARCHITECTURE.md"
+alwaysApply: true
+---
+
+# Unbound / DNS 规则变更协议（强制）
+
+## 权威来源（优先级从高到低）
+
+1. `docs/UNBOUND_ARCHITECTURE.md`（仓库内唯一真相）
+2. `docs/NFT_ARCHITECTURE.md`（DNS 劫持、ext_const 路由分类）
+3. 用户在对话中明确给出的 unbound 片段
+4. 其他文档（`GATEWAY_CORE.md`、`ARCHITECTURE.md`、MosDNS 注释）— **不得覆盖 1**
+
+## 修改前必须做的事
+
+在编写或修改任何 unbound / LAN DNS 相关代码之前：
+
+1. 阅读 `docs/UNBOUND_ARCHITECTURE.md`
+2. 输出 **规范 vs 当前实现** 差异表（listen、forward-zone 位置、上游、dnsmasq UCI）
+3. 等待用户回复 **「确认修改」** 或等价明确批准
+4. 仅修改用户点名的文件；禁止顺带「优化」或重构
+
+未获批准时：**只读分析，不写代码**。
+
+## 绝对禁止（未经架构评审 + 用户批准）
+
+- 让 dnsmasq 监听 `:53` 或 `server=127.0.0.1#1053`（legacy MosDNS）
+- 将 `forward-zone` 放入 `server:` 块内
+- 用 MosDNS / easymosdns 替代 unbound 作为 LAN DNS
+- 用 sing-box DNS inbound / fake-ip 替代 unbound 服务 LAN
+- 默认 zone 改为纯 UDP 8.8.8.8 并 `forward-first: yes`（递归回退）
+- 硬编码部署 LAN 网段到 unbound access-control 之外的全局策略
+- 启用 stock OpenWrt `/etc/init.d/unbound`（UCI 递归）替代 `gfc-unbound`
+
+## dnsmasq 边界（强制）
+
+| 项 | 要求 |
+|----|------|
+| `dhcp.@dnsmasq[0].port` | `0` |
+| `dhcp.lan.dhcp_option` | 含 `6,<LAN网关IP>` |
+| DNS 解析 | 仅 unbound `:53` |
+
+## 允许的无须批准操作
+
+- 只读：`unbound-checkconf`、`drill @127.0.0.1`、`uci show dhcp`
+- 文档：按用户要求更新 `UNBOUND_ARCHITECTURE.md` 本身
+- Gap 分析：对照规范与 `/etc/unbound/unbound.conf`
+
+## 用户固定口令（建议每次 DNS 任务附带）
+
+> 严格按 `docs/UNBOUND_ARCHITECTURE.md`，只改我点名的文件，改前先给 diff 说明，我确认后再写代码。
+
+## 违规处理
+
+若生成器输出与 `UNBOUND_ARCHITECTURE.md` 不一致，应报告为 **bug**，不得将错就错更新文档来迁就代码。

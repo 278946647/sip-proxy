@@ -1,9 +1,14 @@
 # GFC Client 企业分流盒子 — 架构设计（Phase 1）
 
 > **版本**: v1.0-draft  
-> **目标平台**: Ubuntu Server 22.04 LTS（兼容 24.04）  
+> **目标平台**: Ubuntu Server 22.04 LTS（兼容 24.04） / ImmortalWrt  
 > **范围**: Client Box 仅；不修改 Control Plane API  
 > **状态**: 设计待确认，确认后按模块逐步实现
+>
+> **数据面权威文档（实现与 AI 生成必须以之为准）：**
+> [`docs/NFT_ARCHITECTURE.md`](../../docs/NFT_ARCHITECTURE.md) ·
+> [`docs/UNBOUND_ARCHITECTURE.md`](../../docs/UNBOUND_ARCHITECTURE.md) ·
+> [`docs/SINGBOX_ARCHITECTURE.md`](../../docs/SINGBOX_ARCHITECTURE.md)
 
 ---
 
@@ -17,7 +22,7 @@ GFC Client 是企业级 Linux 网关分流盒子，运行于 Ubuntu Server，面
 
 | 原则 | 说明 |
 |------|------|
-| 职责单一 (SRP) | dnsmasq 仅 DHCP；MosDNS 仅 DNS；Sing-box 仅流量转发；Go Agent 仅管控 |
+| 职责单一 (SRP) | dnsmasq 仅 DHCP；unbound 仅 DNS；Sing-box 仅流量转发；Go Agent 仅管控 |
 | 模块解耦 | 各组件可独立升级、重启、替换；禁止跨模块承担对方职责 |
 | 配置编排 | 控制平台下发**业务配置**，Agent 本地模板渲染最终配置文件 |
 | 企业级稳定 | systemd 管理、固定启动顺序、热重载、异常恢复、可回滚 |
@@ -25,7 +30,7 @@ GFC Client 是企业级 Linux 网关分流盒子，运行于 Ubuntu Server，面
 
 ### 1.3 与现有实现的关系
 
-仓库 `gfc-client/` 已有 Go Agent、Vue3 Web、MosDNS/Sing-box 渲染器及部署脚本。本设计在需求规范基础上**统一命名、补齐缺口、明确演进路径**，而非推倒重来。
+仓库 `gfc-client/` 已有 Go Agent、Vue3 Web、unbound/Sing-box 渲染器及部署脚本。`share/easymosdns/` 为 **legacy**，生产路径使用 unbound（见 `UNBOUND_ARCHITECTURE.md`）。
 
 **当前实现与目标的主要差距**（实现阶段处理）：
 

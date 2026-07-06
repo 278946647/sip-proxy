@@ -1,0 +1,81 @@
+---
+description: GFC Sing-box 配置冻结 — 未经用户明确批准禁止修改
+globs:
+  - "**/render/singbox/**"
+  - "**/sing-box.json"
+  - "**/gfc-sing-box"
+  - "**/node_agent/singbox.py"
+  - "**/SINGBOX_ARCHITECTURE.md"
+  - "**/check-vless.sh"
+alwaysApply: true
+---
+
+# Sing-box 规则变更协议（强制）
+
+## 权威来源（优先级从高到低）
+
+1. `docs/SINGBOX_ARCHITECTURE.md`（仓库内唯一真相）
+2. `docs/NFT_ARCHITECTURE.md`（mark、TUN ingress、分流边界）
+3. `docs/UNBOUND_ARCHITECTURE.md`（DNS 与 ext_const 对齐）
+4. 用户在对话中明确给出的 sing-box JSON 片段
+5. 其他文档 — **不得覆盖 1**
+
+## 修改前必须做的事
+
+在编写或修改任何 sing-box 配置生成代码之前：
+
+1. 阅读 `docs/SINGBOX_ARCHITECTURE.md`
+2. 输出 **规范 vs 当前实现** 差异表（inbound 字段、outbound tags、route 顺序、scheme）
+3. 等待用户回复 **「确认修改」** 或等价明确批准
+4. 仅修改用户点名的文件；禁止顺带「优化」或重构
+
+未获批准时：**只读分析，不写代码**。
+
+## 绝对禁止（未经架构评审 + 用户批准）
+
+### GFC Client (`kernel-split`)
+
+- TUN inbound 设置 `auto_route: true` / `strict_route: true` / `auto_redirect`
+- 在 `kernel-split` 启用 `rule_set` / geoip / geosite 做中外分流（应由 nft 完成）
+- 将 `proxy-prefer` 的 `outbounds` 加入 `direct`（开放 WAN 网关）
+- 修改规范 outbound tag：`direct`、`proxy`、`proxy-prefer`、`tun-in`
+- VLESS `bind_interface` 指向 `gfctun` 而非 WAN
+- `route.final` 改为 `proxy` / `proxy-prefer`（kernel-split 必须为 `direct`）
+- 用 skuid / process 规则替代 `ip_cidr` bypass
+- sing-box 自建 nft 表与 `inet gfc` 冲突
+
+### GFC Forward Node
+
+- 修改规范 inbound tag：`tproxy-in`、`vless-reality-in`（无批准）
+- 更改 TPROXY / VLESS 默认端口 12345 / 8443（无批准）
+- 删除 prerouting 侧 bypass 与 sing-box route bypass 一致性
+
+### 通用
+
+- 修改默认 Reality SNI / flow / 端口常量（无批准、无控制面契约更新）
+- 使用已废弃 outbound 类型（Shadowsocks legacy 等）
+
+## kernel-split 强制契约（摘要）
+
+| 项 | 值 |
+|----|-----|
+| Scheme | `GFC_ROUTING_SCHEME=kernel-split` |
+| TUN | `gfctun`, `gvisor`, `auto_route: false` |
+| 国际流量出站 | `proxy-prefer` → **仅** `proxy` |
+| VLESS | `:8443`, `xtls-rprx-vision`, `www.cloudflare.com` |
+| Route 顺序 | bypass → private → domestic:53 → intl DNS → catch-all proxy-prefer |
+| VLESS 故障 | 不自动切 direct（当前版本） |
+
+## 允许的无须批准操作
+
+- 只读：`sing-box check`、`curl 127.0.0.1:9090/proxies/...`、`check-vless.sh`
+- 文档：按用户要求更新 `SINGBOX_ARCHITECTURE.md` 本身
+- Gap 分析：对照规范与 `/etc/gfc-client/sing-box.json`
+
+## 用户固定口令（建议每次 sing-box 任务附带）
+
+> 严格按 `docs/SINGBOX_ARCHITECTURE.md`，只改我点名的文件，改前先给 diff 说明，我确认后再写代码。
+
+## 违规处理
+
+若生成器输出与 `SINGBOX_ARCHITECTURE.md` 不一致，应报告为 **bug**，不得将错就错更新文档来迁就代码。
