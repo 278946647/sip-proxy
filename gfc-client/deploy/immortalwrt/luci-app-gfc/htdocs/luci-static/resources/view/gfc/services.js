@@ -51,7 +51,7 @@ return view.extend({
 		});
 
 		return E('div', { 'class': 'cbi-map' }, [
-			E('h2', {}, [ 'GFC 服务' ]),
+			E('h2', {}, [ '服务进程' ]),
 			E('table', { 'class': 'table' }, [
 				E('tr', {}, [
 					E('th', {}, [ '服务' ]),

@@ -7,15 +7,14 @@ import { connectivityApi } from '@/api/connectivity'
 import { asArray, asRecord, textValue } from '@/utils/data'
 
 const loading = ref(false)
-const flashing = ref(false)
 const clearing = ref(false)
 const error = ref('')
 const message = ref('')
-const code = ref('')
-const resetState = ref(false)
 const activation = ref<Record<string, unknown>>({})
 const nodes = ref<Record<string, unknown>>({})
 const agent = ref<Record<string, unknown>>({})
+
+const externalActivateHref = computed(() => `http://${window.location.hostname}/gfc/activate.html`)
 
 const activationPayload = computed(() => asRecord(activation.value.payload))
 const nodeRows = computed(() => asArray(nodes.value.nodes).map(asRecord))
@@ -37,24 +36,6 @@ async function load() {
     error.value = String(err)
   } finally {
     loading.value = false
-  }
-}
-
-async function flash() {
-  if (!code.value.trim()) {
-    message.value = '请输入线路码'
-    return
-  }
-  flashing.value = true
-  message.value = ''
-  try {
-    const res = await connectivityApi.flashCode(code.value.trim(), resetState.value)
-    message.value = res.ok ? '线路码已写入并应用' : (res.error?.message ?? '刷码失败')
-    await load()
-  } catch (err) {
-    message.value = String(err)
-  } finally {
-    flashing.value = false
   }
 }
 
@@ -80,32 +61,31 @@ onMounted(load)
   <section class="page">
     <header class="page-head">
       <div>
-        <h2>线路码 / 激活</h2>
-        <p>读取当前激活状态、节点与 Agent 同步信息，并支持重新刷码。</p>
+        <h2>激活状态</h2>
+        <p>查看当前线路码、节点与 Agent 同步状态。刷码请使用系统外部激活页（无需登录）。</p>
       </div>
       <button :disabled="loading" @click="load">{{ loading ? '刷新中...' : '刷新' }}</button>
     </header>
 
-    <div class="card">
-      <h3>刷入线路码</h3>
-      <textarea v-model="code" rows="5" placeholder="粘贴控制平台生成的线路码" />
-      <label class="check">
-        <input v-model="resetState" type="checkbox" />
-        重置本地状态后刷入
-      </label>
-      <div class="actions">
-        <button :disabled="flashing" @click="flash">{{ flashing ? '刷码中...' : '刷码并应用' }}</button>
-        <button class="danger" :disabled="clearing" @click="clearActivation">{{ clearing ? '清除中...' : '清除激活' }}</button>
+    <div class="banner">
+      <div>
+        <strong>设备激活已移至系统外部</strong>
+        <p>在 ImmortalWrt 上访问 <code>/gfc/activate.html</code>（端口 80），无需 OpenWrt 或 GFC 管理 Token。</p>
       </div>
-      <p v-if="message" class="message">{{ message }}</p>
-      <p v-if="error" class="error">{{ error }}</p>
+      <a :href="externalActivateHref" target="_blank" rel="noreferrer">打开外部激活页</a>
     </div>
 
     <div class="cards">
-      <StatCard label="线路码" :value="activation.value.code_present ? '已写入' : '未写入'" :tone="activation.value.code_present ? 'ok' : 'warn'" />
+      <StatCard label="线路码" :value="activation.code_present ? '已写入' : '未写入'" :tone="activation.code_present ? 'ok' : 'warn'" />
       <StatCard label="控制面" :value="textValue(activationPayload.controlPlaneUrl || activationPayload.control_plane_url || activationPayload.control)" />
       <StatCard label="节点数量" :value="String(nodeRows.length)" />
       <StatCard label="Agent" :value="textValue(agent.status || agent.state)" />
+    </div>
+
+    <div class="actions">
+      <button class="danger" :disabled="clearing" @click="clearActivation">{{ clearing ? '清除中...' : '清除激活' }}</button>
+      <p v-if="message" class="message">{{ message }}</p>
+      <p v-if="error" class="error">{{ error }}</p>
     </div>
 
     <section class="panel">
@@ -151,33 +131,41 @@ p {
   color: var(--muted);
 }
 
-.card {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 14px;
-  display: grid;
-  gap: 10px;
-}
-
-textarea {
-  width: 100%;
-  resize: vertical;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 8px;
-}
-
-.check {
+.banner {
   display: flex;
-  gap: 6px;
+  justify-content: space-between;
   align-items: center;
-  color: var(--muted);
+  gap: 12px;
+  flex-wrap: wrap;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+
+.banner strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.banner a {
+  color: #fff;
+  background: var(--brand);
+  border-radius: 8px;
+  padding: 8px 12px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+code {
+  font-size: 12px;
 }
 
 .actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
+  align-items: center;
 }
 
 button {

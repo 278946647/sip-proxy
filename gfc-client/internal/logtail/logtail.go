@@ -16,7 +16,6 @@ var logFiles = map[string]string{
 	"agent":    "gfc-agent.log",
 	"sing-box": "sing-box.log",
 	"unbound":  "unbound.log",
-	"mosdns":   "unbound.log",
 	"api":      "gfc-api.log",
 	"web":      "gfc-api.log",
 }

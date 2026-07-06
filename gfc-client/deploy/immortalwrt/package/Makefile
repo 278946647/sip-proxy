@@ -12,11 +12,11 @@ define Package/gfc-client
   SECTION:=net
   CATEGORY:=Network
   TITLE:=GFC client box management agent
-  DEPENDS:=+ca-bundle +ip-full +nftables +dnsmasq-full +sing-box +mosdns +libcap-bin +sqlite3-cli +autossh
+  DEPENDS:=+ca-bundle +ip-full +nftables +dnsmasq-full +sing-box +unbound-daemon +unbound-checkconf +libcap-bin +sqlite3-cli +autossh
 endef
 
 define Package/gfc-client/description
-GFC client management backend and web UI for ImmortalWrt/OpenWrt based boxes.
+GFC client agent and LuCI-backed API for ImmortalWrt/OpenWrt boxes.
 endef
 
 define Build/Prepare
@@ -37,7 +37,6 @@ define Package/gfc-client/install
 	$(INSTALL_DIR) $(1)/usr/lib/gfc-client
 	$(CP) $(PKG_BUILD_DIR)/deploy $(1)/usr/lib/gfc-client/
 	if [ -d "$(PKG_BUILD_DIR)/share" ]; then $(CP) $(PKG_BUILD_DIR)/share $(1)/usr/lib/gfc-client/; fi
-	if [ -d "$(PKG_BUILD_DIR)/web-static" ]; then $(CP) $(PKG_BUILD_DIR)/web-static $(1)/usr/lib/gfc-client/web; fi
 
 	$(INSTALL_DIR) $(1)/etc/gfc-client
 	$(INSTALL_CONF) ./files/etc/gfc-client/gfc.env $(1)/etc/gfc-client/gfc.env

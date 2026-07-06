@@ -11,7 +11,14 @@ start_service() {
 	if command -v readlink >/dev/null 2>&1; then
 		bin="$(readlink -f "$bin" 2>/dev/null || echo "$bin")"
 	fi
-	[ -f /etc/gfc-client/sing-box.json ] || return 0
+	if [ ! -x "$bin" ]; then
+		echo "gfc-sing-box: $bin not found; upload sing-box binary first" >&2
+		return 0
+	fi
+	if [ ! -f /etc/gfc-client/sing-box.json ]; then
+		echo "gfc-sing-box: no /etc/gfc-client/sing-box.json; activate device or apply config first" >&2
+		return 0
+	fi
 	chown root:"$user" /etc/gfc-client/sing-box.json 2>/dev/null || true
 	chmod 640 /etc/gfc-client/sing-box.json 2>/dev/null || true
 	[ -e /dev/net/tun ] && chmod 666 /dev/net/tun 2>/dev/null || true

@@ -1,6 +1,7 @@
 'use strict';
 'require view';
 'require fs';
+'require ui';
 
 var API = 'http://127.0.0.1:8080/api/v1';
 
@@ -22,13 +23,22 @@ function val(v) {
 
 return view.extend({
 	load: function() {
-		return Promise.all([ call('/nodes'), call('/status'), call('/singbox/stats') ]);
+		return Promise.all([
+			call('/activation'),
+			call('/nodes'),
+			call('/status'),
+			call('/agent'),
+			call('/singbox/stats')
+		]);
 	},
 
 	render: function(data) {
-		var nodes = (((data[0] || {}).data || {}).nodes || []);
-		var status = ((data[1] || {}).data || {});
-		var singbox = ((data[2] || {}).data || {});
+		var activation = ((data[0] || {}).data || {});
+		var nodes = (((data[1] || {}).data || {}).nodes || []);
+		var status = ((data[2] || {}).data || {});
+		var agent = ((data[3] || {}).data || {});
+		var singbox = ((data[4] || {}).data || {});
+		var inner = activation.payload || {};
 
 		var rows = nodes.map(function(node) {
 			return E('tr', {}, [
@@ -40,25 +50,29 @@ return view.extend({
 				E('td', {}, [ node.enabled === false ? '禁用' : '启用' ])
 			]);
 		});
-
 		if (!rows.length) {
 			rows.push(E('tr', {}, [
-				E('td', { 'colspan': 6 }, [ '暂无节点。激活设备或等待控制面下发配置后会显示。' ])
+				E('td', { 'colspan': 6 }, [ '暂无节点。请在外部激活页刷入线路码。' ])
 			]));
 		}
 
 		return E('div', { 'class': 'cbi-map' }, [
-			E('h2', {}, [ 'GFC 节点/线路' ]),
+			E('h2', {}, [ '线路与节点' ]),
+			E('p', { 'class': 'hint' }, [
+				'刷码请访问 ',
+				E('a', { 'href': '/gfc/activate.html' }, [ '/gfc/activate.html' ]),
+				'（无需登录）。'
+			]),
 			E('div', { 'class': 'cbi-section' }, [
-				E('div', { 'class': 'cbi-value' }, [
-					E('label', { 'class': 'cbi-value-title' }, [ '设备状态' ]),
-					E('div', { 'class': 'cbi-value-field' }, [ val(status.state) ])
-				]),
-				E('div', { 'class': 'cbi-value' }, [
-					E('label', { 'class': 'cbi-value-title' }, [ 'Sing-box' ]),
-					E('div', { 'class': 'cbi-value-field' }, [ singbox.ok ? 'ok' : val(singbox.error || singbox.controller) ])
+				E('table', { 'class': 'table' }, [
+					E('tr', {}, [ E('td', { 'class': 'th' }, [ '线路码' ]), E('td', {}, [ activation.code_present ? '已写入' : '未激活' ]) ]),
+					E('tr', {}, [ E('td', { 'class': 'th' }, [ '控制面' ]), E('td', {}, [ val(inner.controlPlaneUrl || inner.control_plane_url || inner.control) ]) ]),
+					E('tr', {}, [ E('td', { 'class': 'th' }, [ '设备状态' ]), E('td', {}, [ val(status.state) ]) ]),
+					E('tr', {}, [ E('td', { 'class': 'th' }, [ 'Agent' ]), E('td', {}, [ val(agent.status || agent.state) ]) ]),
+					E('tr', {}, [ E('td', { 'class': 'th' }, [ 'Sing-box' ]), E('td', {}, [ singbox.ok ? '正常' : val(singbox.error) ]) ])
 				])
 			]),
+			E('h3', {}, [ '节点列表' ]),
 			E('table', { 'class': 'table' }, [
 				E('tr', {}, [
 					E('th', {}, [ '名称' ]),

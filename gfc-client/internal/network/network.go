@@ -177,6 +177,15 @@ func (m *Manager) loadConfig(name string, defaults map[string]any) map[string]an
 }
 
 func ListInterfaces() []string {
+	return listInterfaces(false)
+}
+
+// ListRouteDevices returns interface names usable as static route targets (includes gfctun).
+func ListRouteDevices() []string {
+	return listInterfaces(true)
+}
+
+func listInterfaces(includeTun bool) []string {
 	ifaces, err := net.Interfaces()
 	if err != nil {
 		return nil
@@ -187,7 +196,10 @@ func ListInterfaces() []string {
 			continue
 		}
 		n := iface.Name
-		if strings.HasPrefix(n, "docker") || strings.HasPrefix(n, "veth") || strings.HasPrefix(n, "gfctun") {
+		if strings.HasPrefix(n, "docker") || strings.HasPrefix(n, "veth") {
+			continue
+		}
+		if !includeTun && strings.HasPrefix(n, "gfctun") {
 			continue
 		}
 		names = append(names, n)

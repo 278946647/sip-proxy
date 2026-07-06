@@ -86,7 +86,7 @@ async function updateEasy() {
   saving.value = true
   try {
     const res = await policyApi.easyMosdnsUpdate()
-    message.value = res.ok ? 'EasyMosDNS 配置已更新并重载' : (res.error?.message ?? '更新失败')
+    message.value = res.ok ? 'Unbound 域名列表已更新并重载' : (res.error?.message ?? '更新失败')
     await load()
   } finally {
     saving.value = false
@@ -99,7 +99,7 @@ onMounted(load)
 <template>
   <section class="page">
     <header class="page-head">
-      <div><h2>DNS 分流 / 域名列表</h2><p>管理本地域名列表并触发 MosDNS 规则更新。</p></div>
+      <div><h2>DNS 分流 / 域名列表</h2><p>管理本地域名列表并触发 Unbound 规则更新。</p></div>
       <button :disabled="loading" @click="load">{{ loading ? '刷新中...' : '刷新' }}</button>
     </header>
     <div class="cards">
@@ -119,7 +119,7 @@ onMounted(load)
         <button :disabled="saving" @click="updateList">按行追加/删除</button>
         <button :disabled="saving" @click="importList">导入内容</button>
         <button :disabled="saving" @click="exportList">导出列表</button>
-        <button :disabled="saving" @click="updateEasy">更新 EasyMosDNS</button>
+        <button :disabled="saving" @click="updateEasy">更新 Unbound 列表</button>
       </div>
       <p v-if="message" class="message">{{ message }}</p>
       <p v-if="error" class="error">{{ error }}</p>

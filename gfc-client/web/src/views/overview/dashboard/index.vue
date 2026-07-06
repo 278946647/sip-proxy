@@ -61,7 +61,7 @@ onMounted(load)
     <header class="page-head">
       <div>
         <h2>Dashboard</h2>
-        <p>设备运行状态、网络、DNS、TUN 与 Agent 汇总。</p>
+        <p>设备运行状态、网络、Unbound DNS、TUN 与 Agent 汇总。</p>
       </div>
       <button :disabled="loading" @click="load">{{ loading ? '刷新中...' : '刷新' }}</button>
     </header>
@@ -75,7 +75,7 @@ onMounted(load)
       <StatCard label="内存" :value="textValue(system.memory || system.mem_percent)" />
       <StatCard label="网络模式" :value="textValue(network.mode || network.proxy_mode)" />
       <StatCard label="TUN" :value="textValue(tun.up || tun.status)" :tone="tun.up ? 'ok' : 'normal'" />
-      <StatCard label="DNS" :value="textValue(dns.ok || dns.status)" :tone="dns.ok ? 'ok' : 'normal'" />
+      <StatCard label="Unbound" :value="textValue(dns.ok || dns.status)" :tone="dns.ok ? 'ok' : 'normal'" />
       <StatCard label="Agent" :value="textValue(agent.status || agent.state)" />
     </div>
 
@@ -104,7 +104,7 @@ onMounted(load)
       <JsonBlock title="状态详情 /status" :data="status" />
       <JsonBlock title="服务健康 /health" :data="health" />
       <JsonBlock title="指标快照 /metrics" :data="metrics" />
-      <JsonBlock title="DNS 统计 /dns/stats" :data="dnsStats" />
+      <JsonBlock title="Unbound 统计 /dns/stats" :data="dnsStats" />
       <JsonBlock title="转发统计 /singbox/stats" :data="forwardStats" />
       <JsonBlock title="告警调试 /alerts" :data="alerts" />
     </div>

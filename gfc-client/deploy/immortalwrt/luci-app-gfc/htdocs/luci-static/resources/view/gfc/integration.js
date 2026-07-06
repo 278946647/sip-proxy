@@ -86,11 +86,11 @@ return view.extend({
 			services['web'].active === 'active';
 		var routingReady = /2022/.test(ipRule) || /gfctun/.test(route2022);
 		var nftReady = /gfc/.test(nftTables);
-		var mosdnsReady = /1053/.test(netstat);
+		var unboundReady = /:53/.test(netstat) && !/1053/.test(netstat);
 
 		return E('div', { 'class': 'cbi-map' }, [
-			E('h2', {}, [ 'GFC 联调检查' ]),
-			E('p', {}, [ '用于激活后验证数据面链路。此页面只读，不会修改网络配置。' ]),
+			E('h2', {}, [ '激活验收清单' ]),
+			E('p', { 'class': 'hint' }, [ '激活后只读检查：服务、Unbound、nft、策略路由、TUN、节点下发。' ]),
 			E('table', { 'class': 'table' }, [
 				E('tr', {}, [
 					E('th', {}, [ '检查项' ]),
@@ -103,7 +103,7 @@ return view.extend({
 				row('数据面模式', dataplane.mode === 'active', dataplane),
 				row('TUN gfctun', tun.up === true, tun.error || tun.addrs),
 				row('Sing-box 控制器', singbox.ok === true, singbox.error || singbox.controller),
-				row('MosDNS 1053', mosdnsReady, 'dns queries=' + val(dnsStats.query_lines)),
+				row('Unbound :53', unboundReady, 'dns queries=' + val(dnsStats.query_lines)),
 				row('策略路由', routingReady, route2022 || ipRule),
 				row('nft 规则', nftReady, nftTables)
 			]),

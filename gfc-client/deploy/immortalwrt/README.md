@@ -9,7 +9,7 @@ system integration layer with ImmortalWrt/OpenWrt primitives.
 - `/usr/bin/gfc-agent`: control-plane polling agent.
 - `/usr/bin/gfc-bootstrap`: first boot, dataplane reapply, and network apply helper.
 - `/usr/lib/gfc-client/web`: prebuilt Vue static UI.
-- `/etc/gfc-client`: device config, rendered sing-box/mosdns configs, network JSON.
+- `/etc/gfc-client`: device config, rendered sing-box/unbound configs, network JSON.
 - `/var/lib/gfc-client`: local state, sqlite DB, rule data, backups.
 
 ## Build with ImmortalWrt SDK
@@ -44,7 +44,7 @@ The package enables these procd services:
 
 - `gfc-api`
 - `gfc-agent`
-- `gfc-mosdns`
+- `gfc-unbound`
 - `gfc-sing-box`
 - `gfc-routing`
 
@@ -116,50 +116,28 @@ cd gfc-immortalwrt-runtime-*
 ./install.sh
 ```
 
-This runtime tarball intentionally does not include `sing-box` or `mosdns`
-binaries; install or upload them separately to `/usr/bin/sing-box` and
-`/usr/bin/mosdns`.
+This runtime tarball intentionally does not include `sing-box` binaries;
+install or upload them separately to `/usr/bin/sing-box`.
 
 ## DNS Ownership
 
-The safe default is to keep `dnsmasq` on port 53 for DHCP/LAN compatibility and
-forward DNS queries to GFC mosdns:
-
 ```text
-LAN clients -> dnsmasq :53 -> mosdns 127.0.0.1:1053 -> upstream DNS
+LAN clients -> dnsmasq (DHCP only, port=0) -> DHCP option 6 = gateway
+             -> unbound :53 (GFC gfc-unbound)
 ```
 
-`install-runtime.sh` applies this with UCI:
-
-```sh
-uci set dhcp.@dnsmasq[0].noresolv='1'
-uci -q delete dhcp.@dnsmasq[0].server
-uci add_list dhcp.@dnsmasq[0].server='127.0.0.1#1053'
-uci set dhcp.@dnsmasq[0].cachesize='0'
-uci commit dhcp
-```
-
-GFC routing additionally installs a DNS hijack nft table so LAN clients using
-external DNS servers are redirected back to the router's `dnsmasq:53`, then to
-`mosdns:1053`.
+`configure-dnsmasq-dhcp.sh` sets `dhcp.@dnsmasq[0].port=0` and advertises the LAN
+gateway as DNS. GFC nft DNS hijack redirects external DNS to local unbound.
 
 ## Dataplane Split
 
-The ImmortalWrt dataplane uses independent nft tables and coexists with fw4:
+The ImmortalWrt dataplane uses `inet gfc` nft tables and kernel-split sing-box:
 
 ```text
-LAN traffic -> nft gfc_client_mangle
-  CN/private/DNS/DHCP -> direct
-  non-CN -> fwmark 0x2023 -> table 2022 -> gfctun -> sing-box
+LAN -> nft prerouting (TO_CN / bypass / ext) -> direct or fwmark 0x2023 -> gfctun
 ```
 
-The CN IP set is loaded from:
-
-```text
-/etc/gfc-client/mosdns/easymosdns/rules/china_ip_list.txt
-```
-
-falling back to:
+CN IP set source:
 
 ```text
 /usr/lib/gfc-client/share/easymosdns/rules/china_ip_list.txt
@@ -179,12 +157,29 @@ Check dataplane state with:
 nft list set inet gfc_client_mangle cn_ip
 ```
 
+## Port 80 Device Activation (No Login)
+
+ImmortalWrt keeps **uhttpd on :80** for system login. GFC device activation is served
+outside LuCI auth:
+
+| URL | Purpose |
+|-----|---------|
+| `http://<device-ip>/` | Redirects to activation portal |
+| `http://<device-ip>/gfc/activate.html` | Line-code flash + activation status |
+| `http://<device-ip>/cgi-bin/luci/admin/gfc` | **GFC 管理界面（LuCI）** |
+| `http://127.0.0.1:8080/api/v1/` | gfc-api 本地 API（LuCI 后端，无 Web UI） |
+
+Install with `install-luci-app.sh`, which deploys:
+
+- `/www/gfc/activate.html` — external activation UI
+- `/www/cgi-bin/gfc-activation` — same-origin CGI proxy to `gfc-api` on `127.0.0.1:8080`
+
 ## LuCI App Testing
 
 The first LuCI app version lives in `deploy/immortalwrt/luci-app-gfc` and adds:
 
 - Overview
-- Activation
+- Activation status (flash moved to `/gfc/activate.html`)
 - Nodes
 - Policy
 - Dataplane

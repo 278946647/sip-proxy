@@ -1,0 +1,9 @@
+<div class="gfc-login-banner" style="margin: 1.25rem 0 0; padding: 1rem 1.1rem; border: 1px solid #cbd5e1; border-radius: 10px; background: #f8fafc;">
+	<h3 style="margin: 0 0 0.35rem; font-size: 1rem; color: #0f172a;">GFC 设备激活</h3>
+	<p style="margin: 0 0 0.75rem; font-size: 0.875rem; color: #475569; line-height: 1.5;">
+		刷线路码与设备激活无需 OpenWrt 账号，请使用外部激活页完成首次上线。
+	</p>
+	<a href="/gfc/activate.html" style="display: inline-block; padding: 0.45rem 0.9rem; border-radius: 6px; background: #2563eb; color: #fff; text-decoration: none; font-size: 0.875rem;">
+		前往线路码激活
+	</a>
+</div>

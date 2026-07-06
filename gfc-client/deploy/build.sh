@@ -17,6 +17,4 @@ CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$ROOT/bin/gfc-agent" ./cmd
 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$ROOT/bin/gfc-bootstrap" ./cmd/gfc-bootstrap
 echo "    bin/gfc-api bin/gfc-agent bin/gfc-bootstrap"
 
-bash "$ROOT/deploy/build-web.sh"
-
-echo "==> Done"
+echo "==> Done (LuCI is the management UI; Vue web build skipped)"

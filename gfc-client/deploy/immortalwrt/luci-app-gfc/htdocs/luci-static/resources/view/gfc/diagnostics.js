@@ -7,7 +7,7 @@ var API = 'http://127.0.0.1:8080/api/v1';
 
 function post(path, body) {
 	return fs.exec('/usr/bin/wget', [
-		'-qO-', '-T', '10',
+		'-qO-', '-T', '25',
 		'--header=Content-Type: application/json',
 		'--post-data=' + JSON.stringify(body || {}),
 		API + path
@@ -17,9 +17,15 @@ function post(path, body) {
 }
 
 function run(kind, host, out) {
-	out.textContent = 'running...';
+	out.textContent = '检测中...';
 	return post('/diagnostics/' + kind, { host: host }).then(function(res) {
-		out.textContent = JSON.stringify((res || {}).data || res, null, 2);
+		var data = (res || {}).data || res || {};
+		if (kind === 'vless' && data.conclusion) {
+			var head = (data.ok ? '【通过】' : '【未通过】') + ' ' + data.conclusion;
+			out.textContent = head + '\n\n' + JSON.stringify(data, null, 2);
+			return;
+		}
+		out.textContent = JSON.stringify(data, null, 2);
 	}).catch(function(err) {
 		out.textContent = err.message || String(err);
 		ui.addNotification(null, E('p', {}, out.textContent), 'danger');
@@ -28,19 +34,13 @@ function run(kind, host, out) {
 
 return view.extend({
 	render: function() {
-		var dnsHost = E('input', {
-			'class': 'cbi-input-text',
-			'value': 'www.google.com'
-		});
-		var pingHost = E('input', {
-			'class': 'cbi-input-text',
-			'value': '1.1.1.1'
-		});
+		var dnsHost = E('input', { 'class': 'cbi-input-text', 'value': 'www.google.com' });
+		var pingHost = E('input', { 'class': 'cbi-input-text', 'value': '1.1.1.1' });
 		var output = E('pre', {
 			'style': 'white-space: pre-wrap; max-height: 520px; overflow: auto'
-		}, [ '请选择诊断操作' ]);
+		}, [ '选择检测项查看结果。' ]);
 
-		var dnsBtn = E('button', { 'class': 'btn cbi-button cbi-button-action' }, [ 'DNS 查询' ]);
+		var dnsBtn = E('button', { 'class': 'btn cbi-button cbi-button-action' }, [ 'DNS 解析' ]);
 		dnsBtn.addEventListener('click', function() {
 			run('dns', dnsHost.value, output);
 		});
@@ -50,21 +50,34 @@ return view.extend({
 			run('ping', pingHost.value, output);
 		});
 
-		var tunBtn = E('button', { 'class': 'btn cbi-button cbi-button-action' }, [ 'TUN 状态' ]);
+		var tunBtn = E('button', { 'class': 'btn cbi-button' }, [ 'TUN 接口状态' ]);
 		tunBtn.addEventListener('click', function() {
 			run('tun', '', output);
 		});
 
+		var vlessBtn = E('button', { 'class': 'btn cbi-button cbi-button-apply' }, [ 'VLESS 隧道出口检测' ]);
+		vlessBtn.addEventListener('click', function() {
+			run('vless', '', output);
+		});
+
 		return E('div', { 'class': 'cbi-map' }, [
-			E('h2', {}, [ 'GFC 诊断' ]),
+			E('h2', {}, [ '连通性检测' ]),
+			E('p', { 'class': 'hint' }, [
+				'TUN 检测仅确认 gfctun 是否存在；',
+				'VLESS 检测通过 curl 出口 IP 与当前节点服务器 IP 比对，验证代理隧道是否生效。'
+			]),
 			E('div', { 'class': 'cbi-section' }, [
 				E('div', { 'class': 'cbi-value' }, [
-					E('label', { 'class': 'cbi-value-title' }, [ 'DNS Host' ]),
+					E('label', { 'class': 'cbi-value-title' }, [ 'DNS 域名' ]),
 					E('div', { 'class': 'cbi-value-field' }, [ dnsHost, ' ', dnsBtn ])
 				]),
 				E('div', { 'class': 'cbi-value' }, [
-					E('label', { 'class': 'cbi-value-title' }, [ 'Ping Host' ]),
+					E('label', { 'class': 'cbi-value-title' }, [ 'Ping 目标' ]),
 					E('div', { 'class': 'cbi-value-field' }, [ pingHost, ' ', pingBtn, ' ', tunBtn ])
+				]),
+				E('div', { 'class': 'cbi-value' }, [
+					E('label', { 'class': 'cbi-value-title' }, [ '代理隧道' ]),
+					E('div', { 'class': 'cbi-value-field' }, [ vlessBtn ])
 				])
 			]),
 			output

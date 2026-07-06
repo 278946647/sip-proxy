@@ -14,9 +14,8 @@ start_service() {
 	procd_set_param env GFC_ETC=/etc/gfc-client
 	procd_set_param env GFC_LIB=/var/lib/gfc-client
 	procd_set_param env GFC_LOG_DIR=/var/log/gfc-client
-	procd_set_param env GFC_WEB_MODE=admin
+	procd_set_param env GFC_WEB_MODE=api
 	procd_set_param env GFC_CLIENT_WEB_PORT=8080
-	procd_set_param env GFC_CLIENT_FLASH_PORT=18080
 	procd_set_param respawn 5 10 0
 	procd_set_param stdout 1
 	procd_set_param stderr 1

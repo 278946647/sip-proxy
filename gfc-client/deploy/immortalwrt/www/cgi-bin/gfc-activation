@@ -1,0 +1,60 @@
+#!/bin/sh
+# Same-origin activation API proxy for port 80 (uhttpd CGI).
+# Forwards to gfc-api on localhost without exposing admin token to the browser.
+set -eu
+
+API="${GFC_API_URL:-http://127.0.0.1:8080/api/v1}"
+TIMEOUT="${GFC_API_TIMEOUT:-15}"
+
+print_headers() {
+	printf 'Content-Type: application/json\r\n'
+	printf 'Cache-Control: no-store\r\n'
+	printf '\r\n'
+}
+
+json_error() {
+	print_headers
+	printf '%s\n' "{\"ok\":false,\"error\":{\"message\":\"$1\"}}"
+	exit 0
+}
+
+read_body() {
+	if [ -n "${CONTENT_LENGTH:-}" ] && [ "$CONTENT_LENGTH" -gt 0 ] 2>/dev/null; then
+		dd bs=1 count="$CONTENT_LENGTH" 2>/dev/null
+	fi
+}
+
+case "${REQUEST_METHOD:-GET}" in
+GET)
+	ACTION="${QUERY_STRING#action=}"
+	ACTION="${ACTION%%&*}"
+	case "$ACTION" in
+	status)
+		print_headers
+		wget -qO- -T "$TIMEOUT" "$API/activation" 2>/dev/null || printf '{"ok":false,"error":{"message":"activation status unavailable"}}'
+		;;
+	health)
+		print_headers
+		wget -qO- -T "$TIMEOUT" "$API/health" 2>/dev/null || printf '{"ok":false}'
+		;;
+	*)
+		json_error "unknown action"
+		;;
+	esac
+	;;
+POST)
+	BODY="$(read_body)"
+	if [ -z "$BODY" ]; then
+		json_error "empty body"
+	fi
+	print_headers
+	printf '%s' "$BODY" | wget -qO- -T "$TIMEOUT" \
+		--header='Content-Type: application/json' \
+		--post-file=- \
+		"$API/activation/flash" 2>/dev/null \
+		|| printf '{"ok":false,"error":{"message":"flash request failed"}}'
+	;;
+*)
+	json_error "method not allowed"
+	;;
+esac

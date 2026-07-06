@@ -23,7 +23,7 @@ return view.extend({
 		var select = E('select', { 'class': 'cbi-input-select' }, [
 			E('option', { 'value': 'agent' }, [ 'agent' ]),
 			E('option', { 'value': 'api' }, [ 'api' ]),
-			E('option', { 'value': 'mosdns' }, [ 'mosdns' ]),
+			E('option', { 'value': 'unbound' }, [ 'unbound' ]),
 			E('option', { 'value': 'sing-box' }, [ 'sing-box' ])
 		]);
 		var content = E('pre', {
@@ -44,7 +44,7 @@ return view.extend({
 		});
 
 		return E('div', { 'class': 'cbi-map' }, [
-			E('h2', {}, [ 'GFC 日志' ]),
+			E('h2', {}, [ '运行日志' ]),
 			E('div', { 'class': 'cbi-section' }, [
 				E('div', { 'class': 'cbi-value' }, [
 					E('label', { 'class': 'cbi-value-title' }, [ '服务' ]),

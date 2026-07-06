@@ -11,7 +11,7 @@
         "/usr/sbin/nft": [ "exec" ],
         "/etc/init.d/gfc-api": [ "exec" ],
         "/etc/init.d/gfc-agent": [ "exec" ],
-        "/etc/init.d/gfc-mosdns": [ "exec" ],
+        "/etc/init.d/gfc-unbound": [ "exec" ],
         "/etc/init.d/gfc-sing-box": [ "exec" ],
         "/etc/init.d/gfc-routing": [ "exec" ],
         "/usr/bin/logread": [ "exec" ]
@@ -22,7 +22,7 @@
         "/usr/bin/wget": [ "exec" ],
         "/etc/init.d/gfc-api": [ "exec" ],
         "/etc/init.d/gfc-agent": [ "exec" ],
-        "/etc/init.d/gfc-mosdns": [ "exec" ],
+        "/etc/init.d/gfc-unbound": [ "exec" ],
         "/etc/init.d/gfc-sing-box": [ "exec" ],
         "/etc/init.d/gfc-routing": [ "exec" ]
       }

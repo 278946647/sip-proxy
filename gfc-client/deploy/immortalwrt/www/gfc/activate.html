@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GFC 设备激活</title>
+  <link rel="stylesheet" href="/gfc/gfc-portal.css" />
+</head>
+<body>
+  <div class="wrap">
+    <div class="shell">
+      <header class="brand">
+        <div>
+          <h1>GFC 终端盒子</h1>
+          <p>粘贴控制平台线路码，无需登录即可完成设备激活</p>
+        </div>
+      </header>
+
+      <div class="grid-2">
+        <section class="card">
+          <h2>刷入线路码</h2>
+          <p class="hint">从控制平台复制 Base32 线路码，粘贴到下方文本框后提交。激活后 Agent 将自动拉取节点与策略配置。</p>
+          <form id="gfc-activate-form">
+            <textarea id="gfc-line-code" rows="7" placeholder="粘贴线路码…" autocomplete="off" spellcheck="false"></textarea>
+            <label class="check">
+              <input id="gfc-reset-state" type="checkbox" checked />
+              重置本地状态后刷入（推荐首次激活）
+            </label>
+            <div class="actions">
+              <button id="gfc-submit" class="primary" type="submit">立即激活</button>
+              <a class="btn ghost" href="/cgi-bin/luci/admin/gfc/status/overview">进入管理后台</a>
+            </div>
+            <p id="gfc-message" class="message"></p>
+          </form>
+        </section>
+
+        <aside class="card">
+          <h2>激活状态</h2>
+          <div class="status-row">
+            <div class="stat">
+              <span>线路码</span>
+              <strong id="stat-code">加载中…</strong>
+            </div>
+            <div class="stat">
+              <span>控制面</span>
+              <strong id="stat-control-plane">-</strong>
+            </div>
+            <div class="stat">
+              <span>Agent</span>
+              <strong id="stat-agent">-</strong>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </div>
+  </div>
+  <script src="/gfc/gfc-activate.js"></script>
+</body>
+</html>

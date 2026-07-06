@@ -25,7 +25,7 @@ func main() {
 
 	mode := os.Getenv("GFC_WEB_MODE")
 	if mode == "" {
-		mode = "both"
+		mode = "api"
 	}
 	switch mode {
 	case "both":
@@ -42,15 +42,18 @@ func main() {
 		wg.Wait()
 	case "flash":
 		runListener(cfg, st, cfg.FlashPort, "flash")
-	default:
+	case "admin":
+		// Legacy: Vue SPA; use api + LuCI on new deployments.
 		runListener(cfg, st, cfg.WebPort, "admin")
+	default:
+		runListener(cfg, st, cfg.WebPort, "api")
 	}
 }
 
 func runListener(cfg *config.Config, st *store.Store, port int, mode string) {
 	srv := api.NewServer(cfg, st, mode)
 	addr := fmt.Sprintf("0.0.0.0:%d", port)
-	log.Printf("gfc-api mode=%s http://%s web=%s", mode, addr, cfg.Paths.WebRoot)
+	log.Printf("gfc-api mode=%s http://%s", mode, addr)
 	if err := http.ListenAndServe(addr, srv.Router()); err != nil {
 		log.Fatalf("listen %s: %v", addr, err)
 	}

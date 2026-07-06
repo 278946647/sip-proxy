@@ -53,17 +53,54 @@ cat >"$STAGE/install.sh" <<'EOF'
 #!/bin/sh
 set -eu
 
+step() { echo "==> [install] $*"; }
+
+elf_machine() {
+	# ELF e_machine @ offset 18 (little-endian), e.g. 3e00=x86_64 b700=aarch64
+	dd if="$1" bs=1 skip=18 count=2 2>/dev/null | od -An -tx1 | tr -d ' \n'
+}
+
+want_machine() {
+	case "$(uname -m)" in
+	x86_64) echo 3e00 ;;
+	aarch64) echo b700 ;;
+	armv7l|armv6l) echo 2800 ;;
+	*) echo "" ;;
+	esac
+}
+
+verify_bin_arch() {
+	local bin="$1" want got
+	want="$(want_machine)"
+	[ -n "$want" ] || return 0
+	got="$(elf_machine "$bin")"
+	if [ -z "$got" ]; then
+		return 0
+	fi
+	if [ "$got" != "$want" ]; then
+		echo "ERROR: $bin is ELF machine 0x$got but device is $(uname -m) (need 0x$want)." >&2
+		echo "       Rebuild tarball on build host, e.g. GOARCH=amd64 for x86_64." >&2
+		exit 1
+	fi
+}
+
+step "copy binaries to /tmp"
 cp bin/gfc-api /tmp/gfc-api
 cp bin/gfc-agent /tmp/gfc-agent
 cp bin/gfc-bootstrap /tmp/gfc-bootstrap
+verify_bin_arch /tmp/gfc-api
+
+step "install deploy + share under /usr/lib/gfc-client"
 mkdir -p /usr/lib/gfc-client
 cp -a usr/lib/gfc-client/deploy /usr/lib/gfc-client/
 cp -a usr/lib/gfc-client/share /usr/lib/gfc-client/
 chmod +x /usr/lib/gfc-client/deploy/immortalwrt/*.sh
 
 if [ -x /usr/lib/gfc-client/deploy/immortalwrt/upgrade-runtime.sh ]; then
+	step "upgrade existing runtime (GFC_SAFE_INSTALL=1 skips bootstrap; GFC_SKIP_DATAPLANE=1 skips sing-box)"
 	/usr/lib/gfc-client/deploy/immortalwrt/upgrade-runtime.sh
 else
+	step "first-time install-runtime"
 	mv /tmp/gfc-api /usr/bin/gfc-api
 	mv /tmp/gfc-agent /usr/bin/gfc-agent
 	mv /tmp/gfc-bootstrap /usr/bin/gfc-bootstrap
@@ -71,6 +108,7 @@ else
 	/usr/lib/gfc-client/deploy/immortalwrt/install-runtime.sh
 	/usr/lib/gfc-client/deploy/immortalwrt/install-luci-app.sh
 fi
+step "done"
 EOF
 chmod +x "$STAGE/install.sh"
 

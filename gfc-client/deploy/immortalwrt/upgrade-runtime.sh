@@ -58,7 +58,13 @@ env_set() {
 	fi
 }
 
+step() { echo "==> [upgrade] $*"; }
+
 install_unbound_pkg() {
+	if [ "${GFC_SKIP_OPKG:-0}" = "1" ]; then
+		step "skip opkg (GFC_SKIP_OPKG=1)"
+		return 0
+	fi
 	if ! command -v opkg >/dev/null 2>&1; then
 		return 0
 	fi
@@ -68,7 +74,7 @@ install_unbound_pkg() {
 		|| [ -x /sbin/unbound ]; then
 		return 0
 	fi
-	echo "==> install unbound-daemon + unbound-checkconf (ImmortalWrt DNS core)"
+	step "opkg install unbound-daemon (may hang if mirror/network slow; Ctrl+C and retry with GFC_SKIP_OPKG=1 if already installed)"
 	opkg update >/dev/null 2>&1 || true
 	# ImmortalWrt/OpenWrt: no meta package "unbound"; use daemon + checkconf.
 	opkg install unbound-daemon unbound-checkconf 2>/dev/null \
@@ -80,8 +86,10 @@ install_unbound_pkg() {
 	fi
 }
 
+step "optional unbound packages"
 install_unbound_pkg
 
+step "stop gfc services"
 stop_service gfc-agent
 stop_service gfc-api
 stop_service gfc-unbound
@@ -94,6 +102,7 @@ pkill gfc-agent 2>/dev/null || true
 pkill gfc-bootstrap 2>/dev/null || true
 sleep 1
 
+step "install binaries"
 for bin in gfc-api gfc-agent gfc-bootstrap; do
 	if [ -f "/tmp/$bin" ]; then
 		mv "/tmp/$bin" "/usr/bin/$bin"
@@ -101,6 +110,7 @@ for bin in gfc-api gfc-agent gfc-bootstrap; do
 	fi
 done
 
+step "sync deploy scripts + gfc.env"
 chmod +x /usr/lib/gfc-client/deploy/immortalwrt/*.sh 2>/dev/null || true
 find /usr/lib/gfc-client/deploy -name '*.sh' -exec chmod +x {} \; 2>/dev/null || true
 
@@ -109,6 +119,7 @@ ensure_user "$GFC_MOSDNS_USER" "$GFC_MOSDNS_UID" "$GFC_MOSDNS_USER"
 ensure_group "$GFC_SINGBOX_USER" "$GFC_SINGBOX_UID"
 ensure_user "$GFC_SINGBOX_USER" "$GFC_SINGBOX_UID" "$GFC_SINGBOX_USER"
 env_set GFC_ROUTING_SCHEME "${GFC_ROUTING_SCHEME:-kernel-split}"
+env_set GFC_WEB_MODE api
 env_set GFC_ENABLE_OUTPUT_POLICY 1
 env_set GFC_POLICY_MARK "${GFC_POLICY_MARK:-0x2023}"
 env_set GFC_POLICY_TABLE "${GFC_POLICY_TABLE:-2022}"
@@ -130,7 +141,8 @@ ensure_singbox_caps() {
 	if [ -e /dev/net/tun ]; then
 		chmod 666 /dev/net/tun 2>/dev/null || true
 	fi
-	if ! command -v setcap >/dev/null 2>&1 && command -v opkg >/dev/null 2>&1; then
+	if ! command -v setcap >/dev/null 2>&1 && command -v opkg >/dev/null 2>&1 \
+		&& [ "${GFC_SKIP_OPKG:-0}" != "1" ]; then
 		echo "WARN: setcap not found; installing libcap-bin..." >&2
 		opkg update >/dev/null 2>&1 || true
 		opkg install libcap-bin >/dev/null 2>&1 || true
@@ -146,8 +158,10 @@ ensure_singbox_caps() {
 	fi
 }
 
+step "sing-box capabilities"
 ensure_singbox_caps
 
+step "install procd init scripts"
 if [ -d "$INIT_SRC" ]; then
 	for svc in gfc-api gfc-agent gfc-unbound gfc-sing-box gfc-routing; do
 		cp "$INIT_SRC/$svc" "/etc/init.d/$svc"
@@ -161,8 +175,27 @@ fi
 /etc/init.d/gfc-mosdns stop 2>/dev/null || true
 /etc/init.d/gfc-mosdns disable 2>/dev/null || true
 
+start_dataplane() {
+	if [ "${GFC_SKIP_DATAPLANE:-0}" = "1" ]; then
+		echo "NOTE: GFC_SKIP_DATAPLANE=1, gfc-sing-box / gfc-routing not started"
+		return 0
+	fi
+	if [ ! -x /usr/bin/sing-box ]; then
+		echo "NOTE: /usr/bin/sing-box missing; install sing-box before starting gfc-sing-box" >&2
+		return 0
+	fi
+	if [ ! -f /etc/gfc-client/sing-box.json ]; then
+		echo "NOTE: no /etc/gfc-client/sing-box.json yet; activate device first, then apply config" >&2
+		return 0
+	fi
+	step "start gfc-sing-box + gfc-routing"
+	start_service gfc-sing-box
+	start_service gfc-routing
+}
+
+step "bootstrap / reapply dataplane config"
 if [ "${GFC_SAFE_INSTALL:-0}" = "1" ]; then
-	echo "safe install: bootstrap reapply skipped"
+	echo "safe install: bootstrap reapply skipped (GFC_SAFE_INSTALL=1)"
 elif [ -x /usr/bin/gfc-bootstrap ]; then
 	run_bootstrap() {
 		GFC_PLATFORM=immortalwrt \
@@ -179,10 +212,12 @@ elif [ -x /usr/bin/gfc-bootstrap ]; then
 	fi
 fi
 
+step "install LuCI app"
 if [ -x /usr/lib/gfc-client/deploy/immortalwrt/install-luci-app.sh ]; then
 	/usr/lib/gfc-client/deploy/immortalwrt/install-luci-app.sh || true
 fi
 
+step "clear LuCI cache"
 rm -rf /tmp/luci-indexcache /tmp/luci-modulecache
 
 # unbound owns DNS :53; dnsmasq is DHCP-only and advertises LAN gateway as DNS.
@@ -193,19 +228,20 @@ if [ -f /usr/lib/gfc-client/deploy/immortalwrt/configure-dnsmasq-dhcp.sh ]; then
 elif [ -f "$GFC_ROOT/deploy/immortalwrt/configure-dnsmasq-dhcp.sh" ]; then
 	_dns_sh="$GFC_ROOT/deploy/immortalwrt/configure-dnsmasq-dhcp.sh"
 fi
+step "configure dnsmasq DHCP (port=0)"
 if [ -n "$_dns_sh" ]; then
 	sh "$_dns_sh"
 fi
 
+step "start services"
 start_service gfc-api
 start_service gfc-unbound
 /etc/init.d/dnsmasq restart 2>/dev/null || true
 start_service gfc-agent
-if [ "${GFC_SAFE_INSTALL:-0}" = "1" ]; then
-	echo "GFC runtime upgraded (safe install: sing-box/routing not restarted)"
-	exit 0
-fi
-start_service gfc-sing-box
-start_service gfc-routing
+start_dataplane
+
+for svc in gfc-api gfc-agent gfc-unbound gfc-sing-box gfc-routing; do
+	/etc/init.d/"$svc" enable 2>/dev/null || true
+done
 
 echo "GFC runtime upgraded"

@@ -81,7 +81,7 @@ return view.extend({
 		});
 
 		return E('div', { 'class': 'cbi-map' }, [
-			E('h2', {}, [ 'GFC 设置' ]),
+			E('h2', {}, [ '设备运行模式' ]),
 			E('div', { 'class': 'cbi-section' }, [
 				E('div', { 'class': 'cbi-value' }, [
 					E('label', { 'class': 'cbi-value-title' }, [ '设备名称' ]),

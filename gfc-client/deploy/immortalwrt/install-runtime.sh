@@ -109,9 +109,8 @@ GFC_ROOT=$GFC_ROOT
 GFC_ETC=$GFC_ETC
 GFC_LIB=$GFC_LIB
 GFC_LOG_DIR=$GFC_LOG_DIR
-GFC_WEB_MODE=admin
+GFC_WEB_MODE=api
 GFC_CLIENT_WEB_PORT=$GFC_WEB_PORT
-GFC_CLIENT_FLASH_PORT=18080
 GFC_PROXY_MODE=${GFC_PROXY_MODE:-gateway}
 GFC_ROUTING_SCHEME=${GFC_ROUTING_SCHEME:-kernel-split}
 GFC_ENABLE_OUTPUT_POLICY=${GFC_ENABLE_OUTPUT_POLICY:-1}
@@ -146,7 +145,7 @@ chmod +x "$GFC_ROOT"/deploy/immortalwrt/*.sh 2>/dev/null || true
 /etc/init.d/mosdns disable 2>/dev/null || true
 
 if [ "${GFC_SAFE_INSTALL:-0}" = "1" ]; then
-	echo "safe install: bootstrap reapply skipped"
+	echo "safe install: bootstrap reapply skipped (GFC_SAFE_INSTALL=1)"
 elif [ -x /usr/bin/gfc-bootstrap ]; then
 	run_bootstrap() {
 		GFC_PLATFORM=immortalwrt \
@@ -190,11 +189,22 @@ service_restart gfc-unbound || true
 # DHCP only; must run after UCI port=0 so it does not fight unbound for :53.
 /etc/init.d/dnsmasq restart || true
 service_restart gfc-agent
-if [ "${GFC_SAFE_INSTALL:-0}" = "1" ]; then
-	echo "GFC runtime installed (safe install: sing-box/routing not restarted). API: http://127.0.0.1:${GFC_WEB_PORT}/api/v1/status"
-	exit 0
-fi
-service_restart gfc-sing-box || true
-/etc/init.d/gfc-routing start 2>/dev/null || true
+start_dataplane() {
+	if [ "${GFC_SKIP_DATAPLANE:-0}" = "1" ]; then
+		echo "NOTE: GFC_SKIP_DATAPLANE=1, gfc-sing-box / gfc-routing not started"
+		return 0
+	fi
+	if [ ! -x /usr/bin/sing-box ]; then
+		echo "NOTE: /usr/bin/sing-box missing; install sing-box before starting gfc-sing-box" >&2
+		return 0
+	fi
+	if [ ! -f /etc/gfc-client/sing-box.json ]; then
+		echo "NOTE: no /etc/gfc-client/sing-box.json yet; activate device first, then apply config" >&2
+		return 0
+	fi
+	service_restart gfc-sing-box || true
+	/etc/init.d/gfc-routing start 2>/dev/null || true
+}
+start_dataplane
 
 echo "GFC runtime installed. API: http://127.0.0.1:${GFC_WEB_PORT}/api/v1/status"

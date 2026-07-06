@@ -1,34 +1,34 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import JsonBlock from '@/components/common/JsonBlock.vue'
+import { onMounted, ref } from 'vue'
 import { maintenanceApi } from '@/api/maintenance'
-import { asArray, textValue } from '@/utils/data'
 
-const services = ['agent', 'api', 'mosdns', 'singbox', 'system']
-const service = ref('agent')
-const lines = ref(200)
 const loading = ref(false)
 const error = ref('')
-const payload = ref<Record<string, unknown>>({})
+const service = ref('agent')
+const lines = ref<string[]>([])
 
-const logLines = computed(() => {
-  const data = payload.value
-  const direct = asArray(data.lines)
-  if (direct.length) return direct.map((line) => textValue(line, ''))
-  const logs = asArray(data.logs)
-  if (logs.length) return logs.map((line) => textValue(line, ''))
-  const text = textValue(data.content || data.text || data.log, '')
-  return text ? text.split('\n') : []
-})
+const services = [
+  { value: 'agent', label: 'gfc-agent' },
+  { value: 'api', label: 'gfc-api' },
+  { value: 'unbound', label: 'unbound' },
+  { value: 'sing-box', label: 'sing-box' },
+]
 
 async function load() {
   loading.value = true
   error.value = ''
   try {
-    const res = await maintenanceApi.logs(service.value, lines.value)
-    if (res.ok) payload.value = res.data
+    const res = await maintenanceApi.logs(service.value, 200)
+    if (res.ok) {
+      const data = res.data as { lines?: string[] }
+      lines.value = Array.isArray(data.lines) ? data.lines : []
+    } else {
+      error.value = res.error?.message ?? '读取日志失败'
+      lines.value = []
+    }
   } catch (err) {
     error.value = String(err)
+    lines.value = []
   } finally {
     loading.value = false
   }
@@ -42,31 +42,23 @@ onMounted(load)
     <header class="page-head">
       <div>
         <h2>日志中心</h2>
-        <p>按服务读取后端日志尾部，默认保留轻量文本展示。</p>
+        <p>查看核心服务最近日志（agent / api / unbound / sing-box）。</p>
       </div>
-      <button :disabled="loading" @click="load">{{ loading ? '读取中...' : '刷新' }}</button>
+      <button :disabled="loading" @click="load">{{ loading ? '刷新中...' : '刷新' }}</button>
     </header>
 
     <div class="toolbar">
       <label>
         服务
         <select v-model="service" @change="load">
-          <option v-for="item in services" :key="item" :value="item">{{ item }}</option>
-        </select>
-      </label>
-      <label>
-        行数
-        <select v-model.number="lines" @change="load">
-          <option :value="100">100</option>
-          <option :value="200">200</option>
-          <option :value="500">500</option>
+          <option v-for="item in services" :key="item.value" :value="item.value">{{ item.label }}</option>
         </select>
       </label>
     </div>
 
-    <div v-if="error" class="error">{{ error }}</div>
-    <pre class="log-view" v-if="logLines.length">{{ logLines.join('\n') }}</pre>
-    <JsonBlock v-else title="日志原始响应 /logs" :data="payload" />
+    <p v-if="error" class="error">{{ error }}</p>
+
+    <pre class="log-box">{{ lines.length ? lines.join('\n') : (loading ? '加载中...' : '暂无日志') }}</pre>
   </section>
 </template>
 
@@ -93,15 +85,18 @@ p {
   color: var(--muted);
 }
 
-.toolbar {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
+button {
+  border: 0;
+  border-radius: 8px;
+  padding: 8px 12px;
+  color: #fff;
+  background: var(--brand);
+  cursor: pointer;
 }
 
-label {
+.toolbar label {
   display: flex;
-  gap: 6px;
+  gap: 8px;
   align-items: center;
   color: var(--muted);
 }
@@ -113,25 +108,20 @@ select {
   background: #fff;
 }
 
-button {
-  border: 0;
-  border-radius: 8px;
-  padding: 8px 12px;
-  color: #fff;
-  background: var(--brand);
-  cursor: pointer;
-}
-
-.log-view {
+.log-box {
   margin: 0;
-  padding: 12px;
-  max-height: calc(100vh - 230px);
+  min-height: 360px;
+  max-height: 70vh;
   overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: #0f172a;
+  color: #e2e8f0;
   border-radius: 10px;
-  background: #020617;
-  color: #d1fae5;
+  padding: 12px;
   font-size: 12px;
-  line-height: 1.5;
+  line-height: 1.45;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 .error {

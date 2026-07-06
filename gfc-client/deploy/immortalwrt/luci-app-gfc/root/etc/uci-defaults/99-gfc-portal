@@ -1,0 +1,35 @@
+#!/bin/sh
+# First-boot: expose GFC activation on port 80 and link from LuCI login.
+set -eu
+
+WWW_GFC="/www/gfc"
+SRC_ROOT="${GFC_ROOT:-/usr/lib/gfc-client}/deploy/immortalwrt/www"
+
+if [ -d "$SRC_ROOT" ]; then
+	mkdir -p /www/cgi-bin /www/gfc
+	cp -f "$SRC_ROOT/cgi-bin/gfc-activation" /www/cgi-bin/gfc-activation 2>/dev/null || true
+	chmod +x /www/cgi-bin/gfc-activation 2>/dev/null || true
+	cp -f "$SRC_ROOT/gfc/"* /www/gfc/ 2>/dev/null || true
+	cp -f "$SRC_ROOT/index.html" /www/index.html 2>/dev/null || true
+fi
+
+if command -v uci >/dev/null 2>&1; then
+	# Prefer GFC portal as device landing page on port 80.
+	uci -q set uhttpd.main.index_page='index.html' || true
+	uci -q delete uhttpd.main.cgi_prefix 2>/dev/null || true
+	uci -q add_list uhttpd.main.cgi_prefix='/cgi-bin' || true
+	uci commit uhttpd 2>/dev/null || true
+fi
+
+# Inject activation banner into LuCI login template when available.
+BANNER_MARK='gfc/activate-banner'
+SYSAUTH="$(find /usr/share/ucode/luci/template -name 'sysauth.ut' 2>/dev/null | head -n1)"
+if [ -n "$SYSAUTH" ] && [ -f "$SYSAUTH" ] && ! grep -q "$BANNER_MARK" "$SYSAUTH" 2>/dev/null; then
+	cp "$SYSAUTH" "${SYSAUTH}.bak-gfc" 2>/dev/null || true
+	# Append banner include before closing login container when possible.
+	if grep -q '</form>' "$SYSAUTH"; then
+		sed -i "s|</form>|</form>\n\t{% include('view/gfc/activate-banner') %}|" "$SYSAUTH" 2>/dev/null || true
+	fi
+fi
+
+exit 0

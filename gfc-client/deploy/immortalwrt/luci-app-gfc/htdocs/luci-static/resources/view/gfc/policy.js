@@ -82,7 +82,7 @@ return view.extend({
 		}
 
 		return E('div', { 'class': 'cbi-map' }, [
-			E('h2', {}, [ 'GFC 策略' ]),
+			E('h2', {}, [ '代理出站选择' ]),
 			E('table', { 'class': 'table' }, [
 				E('tr', {}, [
 					E('th', {}, [ '策略组' ]),

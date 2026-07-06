@@ -1,106 +1,133 @@
 {
   "admin/gfc": {
-    "title": "GFC 客户端",
+    "title": "GFC 终端网关",
     "order": 30,
     "action": {
-      "type": "view",
-      "path": "gfc/overview"
+      "type": "firstchild"
     },
     "depends": {
       "acl": [ "luci-app-gfc" ]
     }
   },
-  "admin/gfc/overview": {
-    "title": "概览",
+  "admin/gfc/status": {
+    "title": "运行状态",
+    "order": 10,
+    "action": {
+      "type": "firstchild"
+    }
+  },
+  "admin/gfc/status/overview": {
+    "title": "运行总览",
     "order": 10,
     "action": {
       "type": "view",
       "path": "gfc/overview"
     }
   },
-  "admin/gfc/activation": {
-    "title": "设备激活",
+  "admin/gfc/status/nodes": {
+    "title": "线路与节点",
     "order": 20,
-    "action": {
-      "type": "view",
-      "path": "gfc/activation"
-    }
-  },
-  "admin/gfc/nodes": {
-    "title": "节点/线路",
-    "order": 30,
     "action": {
       "type": "view",
       "path": "gfc/nodes"
     }
   },
-  "admin/gfc/policy": {
-    "title": "策略",
-    "order": 40,
-    "action": {
-      "type": "view",
-      "path": "gfc/policy"
-    }
-  },
-  "admin/gfc/dataplane": {
-    "title": "数据面",
-    "order": 50,
-    "action": {
-      "type": "view",
-      "path": "gfc/dataplane"
-    }
-  },
-  "admin/gfc/integration": {
-    "title": "联调检查",
-    "order": 60,
-    "action": {
-      "type": "view",
-      "path": "gfc/integration"
-    }
-  },
-  "admin/gfc/settings": {
-    "title": "设置",
-    "order": 70,
-    "action": {
-      "type": "view",
-      "path": "gfc/settings"
-    }
-  },
-  "admin/gfc/network": {
-    "title": "网络",
-    "order": 80,
-    "action": {
-      "type": "view",
-      "path": "gfc/network"
-    }
-  },
-  "admin/gfc/services": {
-    "title": "服务",
-    "order": 90,
+  "admin/gfc/status/services": {
+    "title": "服务进程",
+    "order": 30,
     "action": {
       "type": "view",
       "path": "gfc/services"
     }
   },
-  "admin/gfc/dns": {
-    "title": "DNS",
-    "order": 100,
+  "admin/gfc/config": {
+    "title": "业务配置",
+    "order": 20,
+    "action": {
+      "type": "firstchild"
+    }
+  },
+  "admin/gfc/config/routing": {
+    "title": "静态路由",
+    "order": 10,
+    "action": {
+      "type": "view",
+      "path": "gfc/routing"
+    }
+  },
+  "admin/gfc/config/policy": {
+    "title": "代理出站选择",
+    "order": 20,
+    "action": {
+      "type": "view",
+      "path": "gfc/policy"
+    }
+  },
+  "admin/gfc/config/dns": {
+    "title": "DNS 与分流",
+    "order": 30,
     "action": {
       "type": "view",
       "path": "gfc/dns"
     }
   },
-  "admin/gfc/diagnostics": {
-    "title": "诊断",
-    "order": 110,
+  "admin/gfc/config/policy-route": {
+    "title": "策略路由",
+    "order": 40,
+    "action": {
+      "type": "view",
+      "path": "gfc/policy-route"
+    }
+  },
+  "admin/gfc/config/settings": {
+    "title": "设备运行模式",
+    "order": 50,
+    "action": {
+      "type": "view",
+      "path": "gfc/settings"
+    }
+  },
+  "admin/gfc/ops": {
+    "title": "配置运维",
+    "order": 30,
+    "action": {
+      "type": "firstchild"
+    }
+  },
+  "admin/gfc/ops/dataplane": {
+    "title": "配置下发与回滚",
+    "order": 10,
+    "action": {
+      "type": "view",
+      "path": "gfc/dataplane"
+    }
+  },
+  "admin/gfc/diag": {
+    "title": "故障诊断",
+    "order": 40,
+    "action": {
+      "type": "firstchild"
+    }
+  },
+  "admin/gfc/diag/connectivity": {
+    "title": "连通性检测",
+    "order": 10,
     "action": {
       "type": "view",
       "path": "gfc/diagnostics"
     }
   },
-  "admin/gfc/logs": {
-    "title": "日志",
-    "order": 120,
+  "admin/gfc/diag/acceptance": {
+    "title": "激活验收清单",
+    "order": 20,
+    "action": {
+      "type": "view",
+      "path": "gfc/integration"
+    }
+  },
+  "admin/gfc/diag/logs": {
+    "title": "运行日志",
+    "order": 30,
     "action": {
       "type": "view",
       "path": "gfc/logs"

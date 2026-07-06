@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
@@ -24,6 +25,7 @@ import (
 	"github.com/278946647/sip-proxy/gfc-client/internal/rules"
 	"github.com/278946647/sip-proxy/gfc-client/internal/stats"
 	"github.com/278946647/sip-proxy/gfc-client/internal/store"
+	"github.com/278946647/sip-proxy/gfc-client/internal/unboundmgr"
 	"github.com/278946647/sip-proxy/gfc-client/internal/upgrade"
 )
 
@@ -36,7 +38,8 @@ type Server struct {
 	rules      *rules.Manager
 	network    *network.Manager
 	revSSH     *reversessh.Manager
-	mode       string // admin | flash
+	unboundMgr *unboundmgr.Manager
+	mode       string // admin | flash | api
 }
 
 func NewServer(cfg *config.Config, st *store.Store, mode string) *Server {
@@ -51,6 +54,7 @@ func NewServer(cfg *config.Config, st *store.Store, mode string) *Server {
 		rules:      rules.New(cfg),
 		network:    network.New(cfg),
 		revSSH:     reversessh.New(cfg),
+		unboundMgr: unboundmgr.New(cfg),
 		mode:       mode,
 	}
 }
@@ -87,7 +91,18 @@ func (s *Server) Router() *gin.Engine {
 		v1.GET("/dns/lists/:name", s.dnsExport)
 		v1.POST("/dns/lists/:name", s.dnsUpdate)
 		v1.POST("/dns/lists/:name/import", s.dnsImport)
-		v1.POST("/dns/easymosdns/update", s.easyUpdate)
+		v1.POST("/dns/unbound/update", s.easyUpdate)
+		v1.POST("/dns/easymosdns/update", s.easyUpdate) // deprecated alias
+
+		v1.GET("/dns/unbound/status", s.unboundStatus)
+		v1.POST("/dns/unbound/check", s.unboundCheck)
+		v1.POST("/dns/unbound/cn/backup", s.unboundCNBackup)
+		v1.POST("/dns/unbound/cn/restore", s.unboundCNRestore)
+		v1.POST("/dns/unbound/cn/sync", s.unboundCNSync)
+		v1.GET("/dns/unbound/snippets/:kind", s.unboundGetSnippet)
+		v1.PUT("/dns/unbound/snippets/:kind", s.unboundPutSnippet)
+
+		v1.GET("/policy/egress-routes", s.policyEgressRoutes)
 
 		v1.GET("/rules", s.listRules)
 		v1.POST("/rules/update", s.updateRules)
@@ -110,6 +125,7 @@ func (s *Server) Router() *gin.Engine {
 		v1.PUT("/network/dhcp", s.putDHCP)
 		v1.GET("/network/routes", s.getRoutes)
 		v1.PUT("/network/routes", s.putRoutes)
+		v1.GET("/network/route-devices", s.getRouteDevices)
 		v1.GET("/network/vlan", s.getVLAN)
 		v1.PUT("/network/vlan", s.putVLAN)
 		v1.GET("/policy/firewall", s.getFirewall)
@@ -179,7 +195,7 @@ func (s *Server) getStatus(c *gin.Context) {
 		"network":   s.network.Status(),
 		"system":    stats.System(),
 		"tun":       stats.TunStatus(config.TunInterface),
-		"dns":       stats.DNSProbe("127.0.0.1", config.DefaultMosDNS),
+		"dns":       stats.DNSProbe("127.0.0.1", config.DefaultDNSPort),
 		"agent":     stats.AgentStatus(s.cfg),
 	}
 	s.ok(c, data)
@@ -214,7 +230,7 @@ func (s *Server) getAlerts(c *gin.Context) {
 			})
 		}
 	}
-	dns := stats.DNSProbe("127.0.0.1", config.DefaultMosDNS)
+	dns := stats.DNSProbe("127.0.0.1", config.DefaultDNSPort)
 	if ok, _ := dns["ok"].(bool); !ok {
 		alerts = append(alerts, map[string]any{
 			"severity": "warning",
@@ -560,6 +576,8 @@ func (s *Server) runDiagnostic(c *gin.Context) {
 		s.ok(c, map[string]any{"host": host, "output": string(out), "ok": err == nil, "error": errString(err)})
 	case "tun":
 		s.ok(c, stats.TunStatus(config.TunInterface))
+	case "vless", "egress":
+		s.ok(c, s.diagnoseVLESS())
 	default:
 		s.fail(c, 400, "unsupported diagnostic type")
 	}
@@ -667,7 +685,201 @@ func (s *Server) putLogging(c *gin.Context) {
 	s.ok(c, map[string]any{"level": body.Level, "apply": ok, "message": msg})
 }
 
+func (s *Server) getRouteDevices(c *gin.Context) {
+	devs := network.ListRouteDevices()
+	s.ok(c, map[string]any{"devices": devs})
+}
+
+func (s *Server) unboundStatus(c *gin.Context) {
+	_ = s.unboundMgr.EnsureTree()
+	s.ok(c, s.unboundMgr.Status())
+}
+
+func (s *Server) unboundCheck(c *gin.Context) {
+	s.ok(c, s.unboundMgr.CheckConfig())
+}
+
+func (s *Server) unboundCNBackup(c *gin.Context) {
+	name, err := s.unboundMgr.BackupCN()
+	if err != nil {
+		s.fail(c, 400, err.Error())
+		return
+	}
+	s.ok(c, map[string]any{"backup": name})
+}
+
+func (s *Server) unboundCNRestore(c *gin.Context) {
+	var body struct {
+		Backup string `json:"backup"`
+	}
+	if err := c.BindJSON(&body); err != nil {
+		s.fail(c, 400, err.Error())
+		return
+	}
+	if err := s.unboundMgr.RestoreCN(body.Backup); err != nil {
+		s.fail(c, 400, err.Error())
+		return
+	}
+	ok, msg := s.engine.ReloadDNS()
+	s.ok(c, map[string]any{"restored": body.Backup, "reload": ok, "message": msg})
+}
+
+func (s *Server) unboundCNSync(c *gin.Context) {
+	if err := s.unboundMgr.SyncCNFromBundle(); err != nil {
+		s.fail(c, 400, err.Error())
+		return
+	}
+	ok, msg := s.engine.ReloadDNS()
+	s.ok(c, map[string]any{"synced": true, "reload": ok, "message": msg})
+}
+
+func (s *Server) unboundGetSnippet(c *gin.Context) {
+	kind := c.Param("kind")
+	text, err := s.unboundMgr.GetSnippet(kind)
+	if err != nil {
+		s.fail(c, 404, err.Error())
+		return
+	}
+	s.ok(c, map[string]any{"kind": kind, "content": text})
+}
+
+func (s *Server) unboundPutSnippet(c *gin.Context) {
+	kind := c.Param("kind")
+	var body struct {
+		Content string `json:"content"`
+	}
+	if err := c.BindJSON(&body); err != nil {
+		s.fail(c, 400, err.Error())
+		return
+	}
+	if err := s.unboundMgr.PutSnippet(kind, body.Content); err != nil {
+		s.fail(c, 400, err.Error())
+		return
+	}
+	ok, msg := s.engine.ReloadDNS()
+	s.ok(c, map[string]any{"kind": kind, "reload": ok, "message": msg, "check": s.unboundMgr.CheckConfig()})
+}
+
+func (s *Server) policyEgressRoutes(c *gin.Context) {
+	s.ok(c, map[string]any{
+		"status":  "planned",
+		"message": "策略路由（域名/IP → 指定出口）将通过 nft set + ip rule 实现，后续版本开放配置。",
+	})
+}
+
+func (s *Server) diagnoseVLESS() map[string]any {
+	tun := stats.TunStatus(config.TunInterface)
+	nodeIP := s.activeNodeServerIP()
+	egress, egErr := probeEgressIP()
+	direct, dirErr := probeDirectIP(s.cfg.WanIface)
+	match := nodeIP != "" && egress != "" && nodeIP == egress
+	tunUp, _ := tun["up"].(bool)
+	ok := match && tunUp
+	return map[string]any{
+		"tun":            tun,
+		"node_server_ip": nodeIP,
+		"egress_ip":      egress,
+		"direct_ip":      direct,
+		"match":          match,
+		"ok":             ok,
+		"conclusion":     vlessConclusion(nodeIP, egress, direct, tunUp, egErr, dirErr, match),
+		"egress_error":   errString(egErr),
+		"direct_error":   errString(dirErr),
+		"note":           "egress 为本机经策略路由出口 IP，应与当前 VLESS 节点公网 IP 一致；TUN 探测仅表示 gfctun 接口存在，不能代替本项检测。",
+	}
+}
+
+func vlessConclusion(nodeIP, egress, direct string, tunUp bool, egErr, dirErr error, match bool) string {
+	if strings.TrimSpace(nodeIP) == "" {
+		return "未通过：未配置可用 VLESS 节点，无法比对出口 IP"
+	}
+	if egErr != nil {
+		return "未通过：出口 IP 探测失败（" + egErr.Error() + "），请检查 gfc-sing-box / gfc-routing 是否运行"
+	}
+	if !tunUp {
+		return "未通过：gfctun 未就绪，请先启动 gfc-sing-box 与 gfc-routing"
+	}
+	if match {
+		return "通过：出口 IP 与节点服务器 IP 一致，VLESS 隧道已生效"
+	}
+	if direct != "" && egress == direct {
+		return "未通过：出口仍为 WAN 直连 IP（" + egress + "），国际流量未走代理隧道"
+	}
+	if egress != "" {
+		return "未通过：出口 IP（" + egress + "）与节点服务器 IP（" + nodeIP + "）不一致"
+	}
+	if dirErr != nil {
+		return "未通过：无法确认 WAN 直连 IP（" + dirErr.Error() + "）"
+	}
+	return "未通过：隧道状态异常，请查看 sing-box 日志"
+}
+
+func (s *Server) activeNodeServerIP() string {
+	nodes, _ := s.store.ListNodes()
+	for _, n := range nodes {
+		if enabled, ok := n["enabled"].(bool); ok && !enabled {
+			continue
+		}
+		for _, key := range []string{"server", "host", "address"} {
+			if v := strings.TrimSpace(fmt.Sprint(n[key])); v != "" && v != "<nil>" {
+				return strings.Split(v, ":")[0]
+			}
+		}
+	}
+	if payload := s.engine.LoadBundle(); payload != nil {
+		if node, _ := payload["node"].(map[string]any); node != nil {
+			if addr := strings.TrimSpace(fmt.Sprint(node["address"])); addr != "" && addr != "<nil>" {
+				return strings.Split(addr, ":")[0]
+			}
+		}
+	}
+	return ""
+}
+
+func probeEgressIP() (string, error) {
+	urls := []string{
+		"https://api.ipify.org",
+		"https://ifconfig.me/ip",
+		"https://ip.gs",
+	}
+	for _, u := range urls {
+		out, err := exec.Command("curl", "-fsS", "--max-time", "15", "-4", u).Output()
+		if err != nil {
+			continue
+		}
+		ip := strings.TrimSpace(string(out))
+		if net.ParseIP(ip) != nil {
+			return ip, nil
+		}
+	}
+	return "", fmt.Errorf("egress IP probe failed (curl)")
+}
+
+func probeDirectIP(wanIface string) (string, error) {
+	wan := strings.TrimSpace(wanIface)
+	if wan == "" {
+		wan = "eth0"
+	}
+	out, err := exec.Command("curl", "-fsS", "--max-time", "12", "-4", "--interface", wan, "https://api.ipify.org").Output()
+	if err != nil {
+		return "", err
+	}
+	ip := strings.TrimSpace(string(out))
+	if net.ParseIP(ip) == nil {
+		return "", fmt.Errorf("invalid direct ip: %s", ip)
+	}
+	return ip, nil
+}
+
 func (s *Server) serveStatic(c *gin.Context) {
+	if s.mode == "api" {
+		c.JSON(http.StatusNotFound, gin.H{
+			"ok":    false,
+			"error": gin.H{"message": "管理界面请使用 LuCI: /cgi-bin/luci/admin/gfc"},
+		})
+		return
+	}
+
 	webRoot := s.cfg.Paths.WebRoot
 	reqPath := c.Request.URL.Path
 
@@ -695,7 +907,12 @@ func (s *Server) serveStatic(c *gin.Context) {
 
 	path := reqPath
 	if path == "/" {
-		path = "/index.html"
+		if s.mode == "admin" {
+			path = "/index.html"
+		} else {
+			c.JSON(http.StatusNotFound, gin.H{"ok": false, "error": gin.H{"message": "use /api/v1"}})
+			return
+		}
 	}
 	fp := filepath.Join(webRoot, filepath.Clean("/"+path))
 	if st, err := os.Stat(fp); err != nil || st.IsDir() {

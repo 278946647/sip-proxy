@@ -37,8 +37,8 @@ server:
     # 关闭 QNAME 最小化（避免国内 CDN 解析异常）
     qname-minimisation: no
 
-    # --- 多线程优化 ---
-    num-threads: 4
+    # --- 多线程优化（嵌入式设备 2 线程即可） ---
+    num-threads: 2
     so-rcvbuf: 1m
     so-sndbuf: 1m
     val-permissive-mode: yes
@@ -50,6 +50,9 @@ server:
 # 国内域名转发（forward-zone 必须在 server: 外）
 # ==========================================
 include: "/etc/unbound/conf.d/cn.unbound.conf"
+include: "/etc/unbound/conf.d/gfc-domestic-forward.conf"
+include: "/etc/unbound/local.d/gfc-block.conf"
+include: "/etc/unbound/local.d/gfc-static.conf"
 
 # ==========================================
 # 默认转发：DoT 到 Cloudflare（失败不回退递归）

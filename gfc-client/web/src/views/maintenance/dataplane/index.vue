@@ -27,7 +27,7 @@ async function run(action: 'reload' | 'apply' | 'rollback') {
 <template>
   <section class="page">
     <header class="page-head">
-      <div><h2>配置应用 / 回滚</h2><p>对 MosDNS、Sing-box、nftables 等数据面执行应用、重载和回滚。</p></div>
+      <div><h2>配置应用 / 回滚</h2><p>对 Unbound、Sing-box、nftables 等数据面执行应用、重载和回滚。</p></div>
     </header>
     <div class="card">
       <button :disabled="!!loading" @click="run('reload')">重载当前配置</button>

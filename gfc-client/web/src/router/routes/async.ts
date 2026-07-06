@@ -94,7 +94,7 @@ export const asyncRoutes: AppRouteRecord[] = [
     children: [
       { path: 'summary', name: 'ConnectivitySummary', component: ConnectivityActivationPage, meta: { title: '线路总览', auths: ['connectivity:read'] } },
       { path: 'platform', name: 'ConnectivityPlatform', component: ConnectivityActivationPage, meta: { title: '控制平台注册', auths: ['connectivity:platform:read'] } },
-      { path: 'activation', name: 'ConnectivityActivation', component: ConnectivityActivationPage, meta: { title: '线路码 / 激活', auths: ['connectivity:activation:read'] } },
+      { path: 'activation', name: 'ConnectivityActivation', component: ConnectivityActivationPage, meta: { title: '激活状态', auths: ['connectivity:activation:read'] } },
       { path: 'nodes', name: 'ConnectivityNodes', component: ConnectivityNodesPage, meta: { title: '节点列表', auths: ['connectivity:nodes:read'] } },
       { path: 'tunnel', name: 'ConnectivityTunnel', component: ConnectivityAgentPage, meta: { title: 'Tunnel 状态', auths: ['connectivity:tunnel:read'] } },
       { path: 'outbound', name: 'ConnectivityOutbound', component: ConnectivityNodesPage, meta: { title: 'VLESS / REALITY', auths: ['connectivity:outbound:read'] } },

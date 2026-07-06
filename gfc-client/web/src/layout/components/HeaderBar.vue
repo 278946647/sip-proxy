@@ -6,7 +6,7 @@ import { removeToken } from '@/utils/auth'
 const props = defineProps<{ title: string }>()
 const router = useRouter()
 
-const flashHref = computed(() => `http://${window.location.hostname}/flash.html`)
+const flashHref = computed(() => `http://${window.location.hostname}/gfc/activate.html`)
 
 function logout() {
   removeToken()
@@ -18,7 +18,7 @@ function logout() {
   <header class="header">
     <div class="title">{{ props.title }}</div>
     <div class="actions">
-      <a :href="flashHref" target="_blank" rel="noreferrer">刷码页</a>
+      <a :href="flashHref" target="_blank" rel="noreferrer">外部激活页</a>
       <button @click="logout">退出</button>
     </div>
   </header>
