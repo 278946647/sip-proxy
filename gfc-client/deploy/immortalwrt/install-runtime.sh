@@ -101,6 +101,19 @@ install_unbound_pkg() {
 
 install_unbound_pkg
 
+install_tc_deps() {
+	if ! command -v opkg >/dev/null 2>&1; then
+		return 0
+	fi
+	if ! command -v tc >/dev/null 2>&1; then
+		opkg install tc-tiny 2>/dev/null || opkg install ip-full 2>/dev/null || true
+	fi
+	for mod in kmod-sched-core kmod-sched-htb kmod-ifb; do
+		opkg install "$mod" 2>/dev/null || true
+	done
+}
+install_tc_deps
+
 ensure_singbox_caps
 
 cat >"$GFC_ETC/gfc.env" <<EOF
@@ -134,6 +147,7 @@ for svc in gfc-api gfc-agent gfc-unbound gfc-sing-box gfc-routing; do
 done
 
 chmod +x "$GFC_ROOT"/deploy/immortalwrt/*.sh 2>/dev/null || true
+chmod +x "$GFC_ROOT"/deploy/apply-tc-htb.sh 2>/dev/null || true
 
 # Stock OpenWrt unbound uses UCI (recursive from root) and ignores GFC conf.
 # Legacy gfc-mosdns / package mosdns are not used for LAN DNS.

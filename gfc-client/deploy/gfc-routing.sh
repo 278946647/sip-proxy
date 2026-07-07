@@ -26,6 +26,9 @@ start() {
     echo "    WARN: proxy routing not ready (start sing-box after line code)" >&2
     exit 1
   fi
+  if [[ -x "$SCRIPT_DIR/apply-tc-htb.sh" ]]; then
+    bash "$SCRIPT_DIR/apply-tc-htb.sh" apply 2>/dev/null || true
+  fi
   echo "==> gfc-routing done"
 }
 

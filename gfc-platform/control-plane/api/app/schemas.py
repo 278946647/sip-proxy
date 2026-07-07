@@ -178,7 +178,7 @@ class LineCreateIn(BaseModel):
     socks_profile_id: int | None = None
     line_type: str = Field(default="client", pattern="^(client|forward)$")
     country: str = ""
-    bandwidth_mbps: int = 5
+    bandwidth_mbps: int = Field(default=5, ge=1, le=10000)
     remark: str | None = None
     socks_remark: str | None = None
     created_by: str = "admin"
@@ -189,7 +189,7 @@ class LineUpdateIn(BaseModel):
     socks_remark: str | None = None
     status: str | None = None
     is_enabled: bool | None = None
-    bandwidth_mbps: int | None = None
+    bandwidth_mbps: int | None = Field(default=None, ge=1, le=10000)
     country: str | None = None
     source_cidrs: list[str] | None = None
     socks_profile_id: int | None = None

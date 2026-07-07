@@ -91,6 +91,7 @@ stop_rules() {
 	nft delete table inet gfc_client_mangle 2>/dev/null || true
 	nft delete table inet gfc_dns_hijack 2>/dev/null || true
 	nft delete table inet nat 2>/dev/null || true
+	[ -x "$GFC_ROOT/deploy/apply-tc-htb.sh" ] && sh "$GFC_ROOT/deploy/apply-tc-htb.sh" remove 2>/dev/null || true
 }
 
 apply_wan_nat() {
@@ -423,6 +424,9 @@ start_rules() {
 	ip -4 rule add pref 100 fwmark "$MARK" lookup "$TABLE" 2>/dev/null || \
 		ip -4 rule add fwmark "$MARK" table "$TABLE" 2>/dev/null || true
 	ip -4 route replace default dev "$TUN_IFACE" table "$TABLE"
+	if [ -x "$GFC_ROOT/deploy/apply-tc-htb.sh" ]; then
+		sh "$GFC_ROOT/deploy/apply-tc-htb.sh" apply 2>/dev/null || true
+	fi
 	echo "gfc routing: scheme=$ROUTING_SCHEME lan=$LAN_IFACE wan=$WAN_IFACE cidr=$LAN_CIDR mark=$MARK table=$TABLE redirect=$REDIRECT_PORT ssh=$SSH_PORT priority=$NFT_PRIORITY output=$OUTPUT_POLICY mosdns_uid=$MOSDNS_UID singbox_uid=$SINGBOX_UID cn=$CN_LIST bypass=$BYPASS_AUDIT"
 }
 

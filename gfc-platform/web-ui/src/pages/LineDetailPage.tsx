@@ -4,6 +4,7 @@ import {
   Descriptions,
   Form,
   Input,
+  InputNumber,
   Popconfirm,
   Row,
   Space,
@@ -25,6 +26,8 @@ export function LineDetailPage() {
   const [line, setLine] = useState<LineDetail | null>(null);
   const [form] = Form.useForm();
   const [saving, setSaving] = useState(false);
+  const [bandwidthDraft, setBandwidthDraft] = useState<number | null>(null);
+  const [bandwidthSaving, setBandwidthSaving] = useState(false);
   const [lineCode, setLineCode] = useState("");
   const [codeMeta, setCodeMeta] = useState<{ fingerprint?: string; lineId?: string }>({});
   const [codeLoading, setCodeLoading] = useState(false);
@@ -53,6 +56,7 @@ export function LineDetailPage() {
     const raw = await apiGet<Record<string, unknown>>(`/admin/lines/${id}`);
     const d = mapLineDetail(raw);
     setLine(d);
+    setBandwidthDraft(d.bandwidthMbps);
     form.setFieldsValue({
       remark: d.remark,
       socksRemark: d.socksRemark,
@@ -71,6 +75,27 @@ export function LineDetailPage() {
     setCodeMeta({});
     void load().catch((e) => message.error(String(e)));
   }, [id]);
+
+  const saveBandwidth = async () => {
+    if (!id || bandwidthDraft == null) return;
+    const mbps = Math.floor(bandwidthDraft);
+    if (!Number.isFinite(mbps) || mbps < 1) {
+      message.error("带宽须为正整数 (Mbps)");
+      return;
+    }
+    setBandwidthSaving(true);
+    try {
+      await apiPatch(`/admin/lines/${id}?operator=${localStorage.getItem("gfc_user") || "admin"}`, {
+        bandwidth_mbps: mbps,
+      });
+      message.success("带宽已保存，客户端将在下次拉取配置后自动生效");
+      await load();
+    } catch (e) {
+      message.error(String(e));
+    } finally {
+      setBandwidthSaving(false);
+    }
+  };
 
   const saveRemarks = async () => {
     const v = await form.validateFields();
@@ -164,7 +189,30 @@ export function LineDetailPage() {
             </Tag>
           </Descriptions.Item>
           <Descriptions.Item label="带宽">
-            <Tag color="blue">{line.bandwidthMbps}Mbps</Tag>
+            <Space>
+              <InputNumber
+                min={1}
+                max={10000}
+                precision={0}
+                value={bandwidthDraft ?? line.bandwidthMbps}
+                onChange={(v) => setBandwidthDraft(v == null ? null : Math.floor(v))}
+                addonAfter="Mbps"
+                style={{ width: 160 }}
+              />
+              <Button
+                type="primary"
+                size="small"
+                loading={bandwidthSaving}
+                disabled={
+                  bandwidthDraft == null ||
+                  !Number.isFinite(bandwidthDraft) ||
+                  Math.floor(bandwidthDraft) === line.bandwidthMbps
+                }
+                onClick={() => void saveBandwidth()}
+              >
+                保存
+              </Button>
+            </Space>
           </Descriptions.Item>
           <Descriptions.Item label="节点">{line.nodeName}</Descriptions.Item>
           <Descriptions.Item label="国家/地区">{line.country || "-"}</Descriptions.Item>

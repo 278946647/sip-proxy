@@ -15,6 +15,7 @@ import (
 	"github.com/278946647/sip-proxy/gfc-client/internal/render/unbound"
 	"github.com/278946647/sip-proxy/gfc-client/internal/render/singbox"
 	"github.com/278946647/sip-proxy/gfc-client/internal/rules"
+	"github.com/278946647/sip-proxy/gfc-client/internal/traffic"
 )
 
 const BackupGenerations = config.BackupGenerations
@@ -55,6 +56,9 @@ func (o *Orchestrator) snapshotBefore(version string) error {
 
 func (o *Orchestrator) BootstrapIdle() (bool, string) {
 	var msgs []string
+	if line := traffic.RemoveShaping(o.cfg.Paths.Root); line != "" {
+		msgs = append(msgs, line)
+	}
 	_ = o.dnsLists.EnsureDefaults()
 	ok, rmsgs := o.rules.EnsureLocal(false)
 	msgs = append(msgs, rmsgs...)
@@ -141,6 +145,7 @@ func (o *Orchestrator) applyPayload(payload map[string]any, version string, rest
 	if restart {
 		msgs = append(msgs, o.restartDataplaneServices()...)
 	}
+	msgs = append(msgs, o.applyTrafficShaping()...)
 	return true, joinMsgs(msgs)
 }
 
@@ -171,6 +176,7 @@ func (o *Orchestrator) Rollback() (bool, string) {
 	}
 	msgs = append(msgs, o.postDataplaneRepair()...)
 	msgs = append(msgs, o.restartDataplaneServices()...)
+	msgs = append(msgs, o.applyTrafficShaping()...)
 	return true, joinMsgs(msgs)
 }
 
@@ -261,6 +267,16 @@ func (o *Orchestrator) purgeStaleTun() {
 		return
 	}
 	_ = exec.Command("ip", "link", "delete", config.TunInterface).Run()
+}
+
+func (o *Orchestrator) applyTrafficShaping() []string {
+	if strings.TrimSpace(os.Getenv("GFC_SKIP_TC_SHAPING")) == "1" {
+		return []string{"tc-htb: skipped"}
+	}
+	if line := traffic.ApplyShaping(o.cfg.Paths.Root); line != "" {
+		return []string{line}
+	}
+	return nil
 }
 
 func (o *Orchestrator) ReloadDNS() (bool, string) {

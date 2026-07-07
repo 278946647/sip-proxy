@@ -89,6 +89,23 @@ install_unbound_pkg() {
 step "optional unbound packages"
 install_unbound_pkg
 
+install_tc_deps() {
+	if [ "${GFC_SKIP_OPKG:-0}" = "1" ]; then
+		return 0
+	fi
+	if ! command -v opkg >/dev/null 2>&1; then
+		return 0
+	fi
+	if ! command -v tc >/dev/null 2>&1; then
+		opkg install tc-tiny 2>/dev/null || opkg install ip-full 2>/dev/null || true
+	fi
+	for mod in kmod-sched-core kmod-sched-htb kmod-ifb; do
+		opkg install "$mod" 2>/dev/null || true
+	done
+}
+step "optional tc/htb packages"
+install_tc_deps
+
 step "stop gfc services"
 stop_service gfc-agent
 stop_service gfc-api
