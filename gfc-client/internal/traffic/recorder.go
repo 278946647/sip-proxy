@@ -4,10 +4,14 @@ import (
 	"log"
 	"time"
 
-	"github.com/278946647/sip-proxy/gfc-client/internal/dataplane"
 	"github.com/278946647/sip-proxy/gfc-client/internal/stats"
 	"github.com/278946647/sip-proxy/gfc-client/internal/store"
 )
+
+// DirectModeSource reports whether proxy tunnel interfaces should be skipped.
+type DirectModeSource interface {
+	IsDirectMode() bool
+}
 
 type ifaceState struct {
 	lastRx, lastTx uint64
@@ -26,11 +30,12 @@ func NewRecorder(st *store.Store) *Recorder {
 	}
 }
 
-func (r *Recorder) Run(engine *dataplane.Engine) {
+func (r *Recorder) Run(mode DirectModeSource) {
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 	for range ticker.C {
-		ifaces := DiscoverMonitorIfaces(!engine.IsDirectMode())
+		includeTunnel := mode == nil || !mode.IsDirectMode()
+		ifaces := DiscoverMonitorIfaces(includeTunnel)
 		active := map[string]struct{}{}
 		for _, iface := range ifaces {
 			active[iface] = struct{}{}
