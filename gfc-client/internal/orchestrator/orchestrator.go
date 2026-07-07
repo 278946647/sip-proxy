@@ -11,6 +11,7 @@ import (
 
 	"github.com/278946647/sip-proxy/gfc-client/internal/config"
 	"github.com/278946647/sip-proxy/gfc-client/internal/dnslists"
+	"github.com/278946647/sip-proxy/gfc-client/internal/payload"
 	"github.com/278946647/sip-proxy/gfc-client/internal/platform"
 	"github.com/278946647/sip-proxy/gfc-client/internal/render/unbound"
 	"github.com/278946647/sip-proxy/gfc-client/internal/render/singbox"
@@ -89,16 +90,70 @@ func (o *Orchestrator) BootstrapIdle() (bool, string) {
 	return true, joinMsgs(msgs)
 }
 
-func (o *Orchestrator) ApplyPayload(payload map[string]any, version string, restart bool) (bool, string) {
-	return o.applyPayload(payload, version, restart, true)
+func (o *Orchestrator) ApplyDirect(directPayload map[string]any, version string, restart bool) (bool, string) {
+	var msgs []string
+	if line := traffic.RemoveShaping(o.cfg.Paths.Root); line != "" {
+		msgs = append(msgs, line)
+	}
+	_ = o.dnsLists.EnsureDefaults()
+
+	if err := o.unbound.Render(nil); err != nil {
+		return false, "unbound: " + err.Error()
+	}
+	if err := unbound.CheckConfig(o.cfg.Paths.UnboundConfig); err != nil {
+		return false, "unbound check: " + err.Error()
+	}
+	msgs = append(msgs, "unbound direct ok")
+
+	idle := o.singbox.IdleConfig()
+	if err := singbox.WriteConfig(o.cfg.Paths.SingboxConfig, idle); err != nil {
+		return false, err.Error()
+	}
+	if err := singbox.CheckConfig(o.cfg.Paths.SingboxConfig); err != nil {
+		return false, "sing-box idle: " + err.Error()
+	}
+	msgs = append(msgs, "sing-box idle ok")
+
+	if err := o.saveBundle(directPayload); err != nil {
+		return false, err.Error()
+	}
+	o.writeMode("direct", false)
+	msgs = append(msgs, o.postDirectRepair()...)
+	if restart {
+		o.purgeStaleTun()
+		msgs = append(msgs, o.restartDirectServices()...)
+	}
+	return true, joinMsgs(msgs)
 }
 
-func (o *Orchestrator) applyPayload(payload map[string]any, version string, restart, snapshot bool) (bool, string) {
-	node, _ := payload["node"].(map[string]any)
+func (o *Orchestrator) IsDirectMode() bool {
+	data, err := os.ReadFile(o.cfg.Paths.DataplaneMode)
+	if err != nil {
+		return false
+	}
+	var m map[string]any
+	if json.Unmarshal(data, &m) != nil {
+		return false
+	}
+	mode, _ := m["mode"].(string)
+	return strings.EqualFold(strings.TrimSpace(mode), "direct")
+}
+
+func (o *Orchestrator) ApplyPayload(p map[string]any, version string, restart bool) (bool, string) {
+	if payload.IsDirect(p) {
+		return o.ApplyDirect(p, version, restart)
+	}
+	return o.applyPayload(p, version, restart, true)
+}
+
+func (o *Orchestrator) applyPayload(p map[string]any, version string, restart, snapshot bool) (bool, string) {
+	node, _ := p["node"].(map[string]any)
 	addr, _ := node["address"].(string)
 	if strings.TrimSpace(addr) == "" {
-		return o.BootstrapIdle()
+		return o.ApplyDirect(p, version, restart)
 	}
+
+	wasDirect := o.IsDirectMode()
 
 	if snapshot {
 		if err := o.snapshotBefore(version); err != nil {
@@ -110,7 +165,7 @@ func (o *Orchestrator) applyPayload(payload map[string]any, version string, rest
 	_ = o.dnsLists.EnsureDefaults()
 	o.rules.EnsureLocal(true)
 
-	if err := o.unbound.Render(payload); err != nil {
+	if err := o.unbound.Render(p); err != nil {
 		o.rollbackQuiet()
 		return false, "unbound: " + err.Error()
 	}
@@ -121,7 +176,7 @@ func (o *Orchestrator) applyPayload(payload map[string]any, version string, rest
 	msgs = append(msgs, "unbound ok")
 
 	ruleSets := o.rules.Entries()
-	cfg, err := o.singbox.RenderActive(payload, ruleSets)
+	cfg, err := o.singbox.RenderActive(p, ruleSets)
 	if err != nil {
 		o.rollbackQuiet()
 		return false, err.Error()
@@ -136,7 +191,7 @@ func (o *Orchestrator) applyPayload(payload map[string]any, version string, rest
 	}
 	msgs = append(msgs, "sing-box active ok")
 
-	if err := o.saveBundle(payload); err != nil {
+	if err := o.saveBundle(p); err != nil {
 		o.rollbackQuiet()
 		return false, err.Error()
 	}
@@ -146,6 +201,11 @@ func (o *Orchestrator) applyPayload(payload map[string]any, version string, rest
 		msgs = append(msgs, o.restartDataplaneServices()...)
 	}
 	msgs = append(msgs, o.applyTrafficShaping()...)
+	if wasDirect {
+		if line := unbound.FlushCache(o.cfg.Paths.UnboundConfig); line != "" {
+			msgs = append(msgs, line)
+		}
+	}
 	return true, joinMsgs(msgs)
 }
 
@@ -197,16 +257,56 @@ func (o *Orchestrator) LoadBundle() map[string]any {
 }
 
 func (o *Orchestrator) ReapplyLocal(restart bool) (bool, string) {
-	payload := o.LoadBundle()
-	if payload == nil {
+	p := o.LoadBundle()
+	if p == nil {
 		return o.BootstrapIdle()
 	}
-	node, _ := payload["node"].(map[string]any)
+	if payload.IsDirect(p) {
+		return o.ApplyDirect(p, "local", restart)
+	}
+	node, _ := p["node"].(map[string]any)
 	addr, _ := node["address"].(string)
 	if strings.TrimSpace(addr) == "" {
-		return o.BootstrapIdle()
+		return o.ApplyDirect(p, "local", restart)
 	}
-	return o.applyPayload(payload, "local", restart, false)
+	return o.applyPayload(p, "local", restart, false)
+}
+
+func (o *Orchestrator) postDirectRepair() []string {
+	var msgs []string
+	if strings.TrimSpace(os.Getenv("GFC_SKIP_DATAPLANE_REPAIR")) == "1" {
+		return append(msgs, "direct repair skipped")
+	}
+	root := o.cfg.Paths.Root
+	shell := "/bin/bash"
+	script := filepath.Join(root, "deploy", "gfc-routing.sh")
+	if platform.IsOpenWrt() {
+		shell = "/bin/sh"
+		script = filepath.Join(root, "deploy", "immortalwrt", "gfc-routing.sh")
+	}
+	if _, err := os.Stat(script); err != nil {
+		return msgs
+	}
+	cmd := exec.Command(shell, script, "direct")
+	out, err := cmd.CombinedOutput()
+	line := strings.TrimSpace(string(out))
+	if err != nil {
+		msgs = append(msgs, fmt.Sprintf("gfc-routing-direct: %s", line))
+		return msgs
+	}
+	if line != "" {
+		msgs = append(msgs, line)
+	} else {
+		msgs = append(msgs, "gfc-routing-direct: ok")
+	}
+	return msgs
+}
+
+func (o *Orchestrator) restartDirectServices() []string {
+	return []string{
+		o.restartUnit(config.ServiceUnbound),
+		o.restartUnit(config.ServiceSingbox),
+	}
 }
 
 func (o *Orchestrator) postDataplaneRepair() []string {

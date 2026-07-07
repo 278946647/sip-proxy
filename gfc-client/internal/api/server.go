@@ -8,7 +8,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -25,6 +27,7 @@ import (
 	"github.com/278946647/sip-proxy/gfc-client/internal/rules"
 	"github.com/278946647/sip-proxy/gfc-client/internal/stats"
 	"github.com/278946647/sip-proxy/gfc-client/internal/store"
+	"github.com/278946647/sip-proxy/gfc-client/internal/traffic"
 	"github.com/278946647/sip-proxy/gfc-client/internal/unboundmgr"
 	"github.com/278946647/sip-proxy/gfc-client/internal/upgrade"
 )
@@ -117,6 +120,8 @@ func (s *Server) Router() *gin.Engine {
 
 		v1.GET("/network", s.getNetwork)
 		v1.GET("/network/interfaces", s.getInterfaces)
+		v1.GET("/network/traffic/history", s.getTrafficHistory)
+		v1.GET("/network/traffic/interfaces", s.getTrafficInterfaces)
 		v1.GET("/network/bridge", s.getBridge)
 		v1.PUT("/network/bridge", s.putBridge)
 		v1.GET("/network/wan", s.getWAN)
@@ -213,6 +218,86 @@ func (s *Server) getHealth(c *gin.Context) {
 
 func (s *Server) getMetrics(c *gin.Context) {
 	s.ok(c, readJSONFile(s.cfg.Paths.StatusFile))
+}
+
+func (s *Server) getTrafficHistory(c *gin.Context) {
+	iface := strings.TrimSpace(c.Query("iface"))
+	if iface == "" {
+		iface = config.TunInterface
+	}
+	hours := 24
+	if raw := strings.TrimSpace(c.Query("hours")); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil && v > 0 && v <= 48 {
+			hours = v
+		}
+	}
+	since := time.Now().UTC().Add(-time.Duration(hours) * time.Hour)
+	samples, err := s.store.ListTrafficSamples(iface, since)
+	if err != nil {
+		s.fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	totalIn, totalOut, peakIn, peakOut, _ := s.store.TrafficSummary(iface, since)
+	rows := make([]map[string]any, 0, len(samples))
+	for _, sample := range samples {
+		rows = append(rows, map[string]any{
+			"ts":           time.Unix(sample.TS, 0).UTC().Format(time.RFC3339),
+			"bytes_in":     sample.BytesIn,
+			"bytes_out":    sample.BytesOut,
+			"rate_in_bps":  sample.BytesIn * 8 / 60,
+			"rate_out_bps": sample.BytesOut * 8 / 60,
+		})
+	}
+	s.ok(c, map[string]any{
+		"iface":             iface,
+		"hours":             hours,
+		"interval_seconds":  60,
+		"retention_hours":   48,
+		"samples":           rows,
+		"summary": map[string]any{
+			"total_in":     totalIn,
+			"total_out":    totalOut,
+			"peak_in_bps":  peakIn * 8 / 60,
+			"peak_out_bps": peakOut * 8 / 60,
+		},
+	})
+}
+
+func (s *Server) getTrafficInterfaces(c *gin.Context) {
+	includeTunnel := true
+	if raw := strings.TrimSpace(c.Query("include_tunnel")); raw == "0" || strings.EqualFold(raw, "false") {
+		includeTunnel = false
+	}
+	since := time.Now().UTC().Add(-trafficRetentionHours())
+	stored, _ := s.store.ListTrafficInterfaces(since)
+	ifaces := traffic.MergeIfaceNames(
+		traffic.DiscoverMonitorIfaces(includeTunnel),
+		stored,
+	)
+	defaultIface := config.TunInterface
+	if len(ifaces) > 0 {
+		hasTun := false
+		for _, name := range ifaces {
+			if name == config.TunInterface {
+				hasTun = true
+				break
+			}
+		}
+		if !hasTun {
+			defaultIface = ifaces[0]
+		}
+	}
+	s.ok(c, map[string]any{
+		"interfaces":        ifaces,
+		"default":           defaultIface,
+		"retention_hours":   48,
+		"interval_seconds":  60,
+		"include_tunnel":    includeTunnel,
+	})
+}
+
+func trafficRetentionHours() time.Duration {
+	return 49 * time.Hour
 }
 
 func (s *Server) getAlerts(c *gin.Context) {

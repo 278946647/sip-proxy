@@ -5,17 +5,22 @@ import datetime as dt
 import json
 import logging
 import secrets
+from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from .client_config import build_client_payload, client_payload_version
+from .client_config import (
+    build_client_disabled_payload,
+    build_client_payload,
+    client_payload_version,
+)
 from .line_code import decode_line_code as _decode_line_code
 from .db import get_session
-from .models import ClientDevice, ClientToken, ConfigBundle, Line
+from .models import ClientDevice, ClientToken, ConfigBundle, FlowStat, Line
 from .schemas import (
     ClientActivateIn,
     ClientActivateResponse,
@@ -93,8 +98,8 @@ async def activate_client(
         .options(selectinload(Line.node), selectinload(Line.client_device))
     )
     line = (await session.execute(stmt)).scalars().first()
-    if not line or not line.is_enabled or line.status != "active":
-        raise HTTPException(400, "line not found or inactive")
+    if not line or not line.is_enabled:
+        raise HTTPException(400, "line not found or disabled")
     if line.client_uuid and payload.get("uuid") and line.client_uuid != payload.get("uuid"):
         raise HTTPException(400, "line code uuid mismatch")
 
@@ -180,6 +185,48 @@ async def activate_client(
     )
 
 
+async def _record_tunnel_flow(
+    session: AsyncSession,
+    device: ClientDevice,
+    metrics: dict[str, Any] | None,
+) -> None:
+    if not metrics or not device.line_id:
+        return
+    tunnel = metrics.get("tunnel_traffic")
+    if not isinstance(tunnel, dict):
+        return
+    try:
+        bytes_in = int(tunnel.get("bytes_in") or 0)
+        bytes_out = int(tunnel.get("bytes_out") or 0)
+        window_seconds = int(tunnel.get("window_seconds") or 10)
+        active_conns = int(tunnel.get("active_conns") or 0)
+    except (TypeError, ValueError):
+        return
+    if bytes_in < 0 or bytes_out < 0:
+        return
+    if bytes_in == 0 and bytes_out == 0 and active_conns == 0:
+        return
+
+    line = await session.get(Line, device.line_id)
+    if not line:
+        return
+
+    now = utc_now()
+    session.add(
+        FlowStat(
+            node_id=line.node_id,
+            line_id=line.id,
+            window_start=now,
+            window_seconds=max(1, window_seconds),
+            bytes_in=bytes_in,
+            bytes_out=bytes_out,
+            active_conns=active_conns,
+        )
+    )
+    cutoff = now - dt.timedelta(hours=25)
+    await session.execute(delete(FlowStat).where(FlowStat.window_start < cutoff))
+
+
 @router.post("/heartbeat", response_model=ClientHeartbeatResponse)
 async def client_heartbeat(
     body: ClientHeartbeatRequest,
@@ -198,6 +245,7 @@ async def client_heartbeat(
         device.proxy_mode = body.proxy_mode
     if body.metrics is not None:
         device.last_metrics_json = json.dumps(body.metrics, ensure_ascii=False)
+        await _record_tunnel_flow(session, device, body.metrics)
     session.add(device)
     await session.commit()
     return ClientHeartbeatResponse(server_time=utc_now())
@@ -209,17 +257,25 @@ async def client_config(
     authorization: str | None = Header(default=None),
 ) -> ConfigBundleOut:
     device = await _auth_client(session, authorization)
-    if not device.line_id:
-        raise HTTPException(400, "device not bound to a line")
 
-    stmt = (
-        select(Line)
-        .where(Line.id == device.line_id)
-        .options(selectinload(Line.node), selectinload(Line.socks_profile))
-    )
-    line = (await session.execute(stmt)).scalars().first()
-    if not line or not line.node:
-        raise HTTPException(400, "line or node missing")
+    line: Line | None = None
+    if device.line_id:
+        stmt = (
+            select(Line)
+            .where(Line.id == device.line_id)
+            .options(selectinload(Line.node), selectinload(Line.socks_profile))
+        )
+        line = (await session.execute(stmt)).scalars().first()
+
+    if not device.line_id or not line or not line.node or not line.is_enabled:
+        reason = "line_unbound"
+        if line and not line.is_enabled:
+            reason = "line_disabled"
+        elif device.line_id and not line:
+            reason = "line_deleted"
+        payload = build_client_disabled_payload(device, reason)
+        version = client_payload_version(payload)
+        return ConfigBundleOut(version=version, payload=payload)
 
     payload = build_client_payload(device, line, line.node, line.socks_profile)
     version = client_payload_version(payload)

@@ -236,3 +236,29 @@ func findBinary(name string) string {
 	}
 	return p
 }
+
+// FlushCache clears resolver message/RRset caches after proxy re-enable.
+func FlushCache(confPath string) string {
+	if confPath == "" {
+		confPath = "/etc/unbound/unbound.conf"
+	}
+	bin := findBinary("unbound-control")
+	if bin == "" {
+		return ""
+	}
+	specs := [][]string{
+		{bin, "-c", confPath, "flush"},
+		{bin, "flush"},
+	}
+	for _, args := range specs {
+		cmd := exec.Command(args[0], args[1:]...)
+		if out, err := cmd.CombinedOutput(); err == nil {
+			line := strings.TrimSpace(string(out))
+			if line == "" {
+				return "unbound cache flushed"
+			}
+			return line
+		}
+	}
+	return ""
+}

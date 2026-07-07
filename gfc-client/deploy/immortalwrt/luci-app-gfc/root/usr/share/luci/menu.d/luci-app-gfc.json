@@ -40,6 +40,14 @@
       "path": "gfc/services"
     }
   },
+  "admin/gfc/status/traffic": {
+    "title": "接口流量",
+    "order": 40,
+    "action": {
+      "type": "view",
+      "path": "gfc/traffic"
+    }
+  },
   "admin/gfc/config": {
     "title": "业务配置",
     "order": 20,

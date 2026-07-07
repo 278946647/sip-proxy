@@ -62,6 +62,22 @@ def encode_platform_bootstrap_code() -> str:
     return encode_line_code(build_platform_bootstrap_payload())
 
 
+def build_client_disabled_payload(
+    device: ClientDevice,
+    reason: str = "line_disabled",
+) -> dict[str, Any]:
+    """Direct-egress mode: keep DNS hijack + SNAT, disable proxy dataplane."""
+    return {
+        "deviceId": device.id,
+        "deviceName": device.name,
+        "lineId": device.line_id,
+        "dataplaneMode": "direct",
+        "reason": reason,
+        "proxyMode": device.proxy_mode or "gateway",
+        "node": {"address": ""},
+    }
+
+
 def build_client_payload(
     device: ClientDevice,
     line: Line,
@@ -86,6 +102,7 @@ def build_client_payload(
         "deviceName": device.name,
         "lineId": line.id,
         "tid": line.tid,
+        "dataplaneMode": "proxy",
         "proxyMode": device.proxy_mode or "gateway",
         "node": {
             "id": node.id,

@@ -11,6 +11,7 @@ const NetworkDnsUpstreamPage = () => import('@/views/network/dns-upstream/index.
 const NetworkRoutesPage = () => import('@/views/network/routes/index.vue')
 const NetworkVlanPage = () => import('@/views/network/vlan/index.vue')
 const NetworkInterfacesPage = () => import('@/views/network/interfaces/index.vue')
+const NetworkTrafficPage = () => import('@/views/network/traffic/index.vue')
 const PolicySummaryPage = () => import('@/views/policy/summary/index.vue')
 const PolicyDnsListsPage = () => import('@/views/policy/dns-lists/index.vue')
 const PolicyProxyGroupsPage = () => import('@/views/policy/proxy-groups/index.vue')
@@ -65,6 +66,7 @@ export const asyncRoutes: AppRouteRecord[] = [
       { path: 'routes', name: 'NetworkRoutes', component: NetworkRoutesPage, meta: { title: '静态路由', auths: ['network:routes:read'] } },
       { path: 'vlan', name: 'NetworkVlan', component: NetworkVlanPage, meta: { title: 'VLAN', auths: ['network:vlan:read'] } },
       { path: 'interfaces', name: 'NetworkInterfaces', component: NetworkInterfacesPage, meta: { title: '接口管理', auths: ['network:interfaces:read'] } },
+      { path: 'traffic', name: 'NetworkTraffic', component: NetworkTrafficPage, meta: { title: '接口流量', auths: ['network:read'] } },
     ],
   },
   {

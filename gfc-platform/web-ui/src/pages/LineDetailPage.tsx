@@ -8,17 +8,27 @@ import {
   Popconfirm,
   Row,
   Space,
+  Switch,
   Tag,
   Typography,
   message,
 } from "antd";
 import { ArrowLeftOutlined } from "@ant-design/icons";
 import { LineCodeField } from "../components/LineCodeField";
+import { TrafficChart } from "../components/TrafficChart";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import dayjs from "dayjs";
 import { apiDelete, apiGet, apiPatch, apiPost } from "../api/client";
-import { mapLineDetail, type LineDetail } from "../types";
+import { mapLineDetail, type FlowStat, type LineDetail } from "../types";
+
+function formatTrafficTotal(stats: FlowStat[]) {
+  const total = stats.reduce((sum, s) => sum + s.bytesIn + s.bytesOut, 0);
+  if (total < 1024) return `${total} B`;
+  if (total < 1024 ** 2) return `${(total / 1024).toFixed(1)} KB`;
+  if (total < 1024 ** 3) return `${(total / 1024 ** 2).toFixed(1)} MB`;
+  return `${(total / 1024 ** 3).toFixed(2)} GB`;
+}
 
 export function LineDetailPage() {
   const { id } = useParams();
@@ -28,6 +38,8 @@ export function LineDetailPage() {
   const [saving, setSaving] = useState(false);
   const [bandwidthDraft, setBandwidthDraft] = useState<number | null>(null);
   const [bandwidthSaving, setBandwidthSaving] = useState(false);
+  const [enableSaving, setEnableSaving] = useState(false);
+  const [flowStats, setFlowStats] = useState<FlowStat[]>([]);
   const [lineCode, setLineCode] = useState("");
   const [codeMeta, setCodeMeta] = useState<{ fingerprint?: string; lineId?: string }>({});
   const [codeLoading, setCodeLoading] = useState(false);
@@ -67,6 +79,19 @@ export function LineDetailPage() {
       setLineCode("");
       setCodeMeta({});
     }
+    const flow = await apiGet<Record<string, unknown>[]>(`/admin/lines/${id}/flow-stats?hours=24`);
+    setFlowStats(
+      flow.map((x) => ({
+        id: x.id as number,
+        nodeId: x.node_id as number,
+        lineId: x.line_id as number | null,
+        windowStart: x.window_start as string,
+        windowSeconds: x.window_seconds as number,
+        bytesIn: x.bytes_in as number,
+        bytesOut: x.bytes_out as number,
+        activeConns: x.active_conns as number,
+      }))
+    );
   };
 
   useEffect(() => {
@@ -74,7 +99,43 @@ export function LineDetailPage() {
     setLineCode("");
     setCodeMeta({});
     void load().catch((e) => message.error(String(e)));
+    const timer = window.setInterval(() => {
+      if (!id) return;
+      void apiGet<Record<string, unknown>[]>(`/admin/lines/${id}/flow-stats?hours=24`)
+        .then((flow) =>
+          setFlowStats(
+            flow.map((x) => ({
+              id: x.id as number,
+              nodeId: x.node_id as number,
+              lineId: x.line_id as number | null,
+              windowStart: x.window_start as string,
+              windowSeconds: x.window_seconds as number,
+              bytesIn: x.bytes_in as number,
+              bytesOut: x.bytes_out as number,
+              activeConns: x.active_conns as number,
+            }))
+          )
+        )
+        .catch(() => undefined);
+    }, 10000);
+    return () => window.clearInterval(timer);
   }, [id]);
+
+  const toggleEnabled = async (checked: boolean) => {
+    if (!id) return;
+    setEnableSaving(true);
+    try {
+      await apiPatch(`/admin/lines/${id}?operator=${localStorage.getItem("gfc_user") || "admin"}`, {
+        is_enabled: checked,
+      });
+      message.success(checked ? "线路已启用，客户端将在下次拉取配置后恢复代理" : "线路已禁用，客户端将切换为直连模式");
+      await load();
+    } catch (e) {
+      message.error(String(e));
+    } finally {
+      setEnableSaving(false);
+    }
+  };
 
   const saveBandwidth = async () => {
     if (!id || bandwidthDraft == null) return;
@@ -184,9 +245,16 @@ export function LineDetailPage() {
             <Tag>{line.lineType === "forward" ? "转发线路" : "客户端线路"}</Tag>
           </Descriptions.Item>
           <Descriptions.Item label="状态">
-            <Tag color={line.status === "active" ? "green" : "default"}>
-              {line.status === "active" ? "激活" : "停用"}
-            </Tag>
+            <Space>
+              <Switch
+                checked={line.isEnabled}
+                loading={enableSaving}
+                checkedChildren="启用"
+                unCheckedChildren="禁用"
+                onChange={(checked) => void toggleEnabled(checked)}
+              />
+              <Tag color={line.isEnabled ? "green" : "default"}>{line.isEnabled ? "代理可用" : "已停用代理"}</Tag>
+            </Space>
           </Descriptions.Item>
           <Descriptions.Item label="带宽">
             <Space>
@@ -275,6 +343,17 @@ export function LineDetailPage() {
               <Button loading={codeLoading}>换新 UUID 并重生线路码</Button>
             </Popconfirm>
           </div>
+        </div>
+      )}
+
+      {line.lineType === "client" && (
+        <div className="line-detail-section">
+          <Typography.Title level={5}>流量统计（最近 24 小时）</Typography.Title>
+          <Space style={{ marginBottom: 12 }}>
+            <Typography.Text type="secondary">24h 总流量 {formatTrafficTotal(flowStats)}</Typography.Text>
+            <Typography.Text type="secondary">更新于 {dayjs().format("YYYY-MM-DD HH:mm:ss")}</Typography.Text>
+          </Space>
+          <TrafficChart stats={flowStats} />
         </div>
       )}
 

@@ -13,4 +13,8 @@ export const networkApi = {
   updateRoutes: (payload: Record<string, unknown>) => put<Record<string, unknown>>('/network/routes', payload),
   vlan: () => get<Record<string, unknown>>('/network/vlan'),
   updateVlan: (payload: Record<string, unknown>) => put<Record<string, unknown>>('/network/vlan', payload),
+  trafficHistory: (hours = 24, iface = 'gfctun') =>
+    get<Record<string, unknown>>(`/network/traffic/history?hours=${hours}&iface=${encodeURIComponent(iface)}`),
+  trafficInterfaces: (includeTunnel = true) =>
+    get<Record<string, unknown>>(`/network/traffic/interfaces?include_tunnel=${includeTunnel ? '1' : '0'}`),
 }

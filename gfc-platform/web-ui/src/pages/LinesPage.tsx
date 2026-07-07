@@ -44,6 +44,7 @@ export function LinesPage() {
     nodeId: undefined as number | undefined,
     country: undefined as string | undefined,
     status: undefined as string | undefined,
+    enabled: undefined as string | undefined,
     bandwidthMbps: undefined as number | undefined,
     search: "",
     page: 1,
@@ -56,7 +57,8 @@ export function LinesPage() {
       const q = new URLSearchParams();
       if (filters.nodeId) q.set("node_id", String(filters.nodeId));
       if (filters.country) q.set("country", filters.country);
-      if (filters.status) q.set("status", filters.status);
+      if (filters.enabled === "enabled") q.set("is_enabled", "true");
+      if (filters.enabled === "disabled") q.set("is_enabled", "false");
       if (filters.bandwidthMbps) q.set("bandwidth_mbps", String(filters.bandwidthMbps));
       if (filters.search) q.set("search", filters.search);
       q.set("page", String(filters.page));
@@ -154,15 +156,15 @@ export function LinesPage() {
             onChange={(v) => setFilters((f) => ({ ...f, country: v, page: 1 }))}
           />
           <Select
-            placeholder="状态"
+            placeholder="启用状态"
             allowClear
             style={{ width: 120 }}
             options={[
-              { label: "激活", value: "active" },
-              { label: "停用", value: "inactive" },
+              { label: "已启用", value: "enabled" },
+              { label: "已禁用", value: "disabled" },
             ]}
-            value={filters.status}
-            onChange={(v) => setFilters((f) => ({ ...f, status: v, page: 1 }))}
+            value={filters.enabled}
+            onChange={(v) => setFilters((f) => ({ ...f, enabled: v, page: 1 }))}
           />
           <Select
             placeholder="带宽等级"
@@ -224,24 +226,22 @@ export function LinesPage() {
           },
           { title: "备注", dataIndex: "remark", ellipsis: true },
           {
-            title: "活跃",
+            title: "启用",
             dataIndex: "isEnabled",
             render: (v: boolean, r) => (
               <Switch
                 checked={v}
                 size="small"
+                checkedChildren="开"
+                unCheckedChildren="关"
                 onChange={async (checked) => {
-                  await apiPatch(`/admin/lines/${r.id}`, { is_enabled: checked });
+                  await apiPatch(`/admin/lines/${r.id}?operator=${localStorage.getItem("gfc_user") || "admin"}`, {
+                    is_enabled: checked,
+                  });
+                  message.success(checked ? "线路已启用" : "线路已禁用，绑定客户端将切换直连");
                   void load();
                 }}
               />
-            ),
-          },
-          {
-            title: "状态",
-            dataIndex: "status",
-            render: (s: string) => (
-              <Tag color={s === "active" ? "green" : "default"}>{s === "active" ? "激活" : "停用"}</Tag>
             ),
           },
           {

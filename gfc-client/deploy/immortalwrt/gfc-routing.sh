@@ -84,6 +84,23 @@ CN_LIST="${GFC_CN_IP_LIST:-$GFC_ROOT/share/easymosdns/rules/china_ip_list.txt}"
 [ -f "$CN_LIST" ] || CN_LIST="$GFC_ETC/rules/china_ip_list.txt"
 [ -f "$CN_LIST" ] || CN_LIST="$GFC_ROOT/share/easymosdns/rules/china_ip_list.txt"
 
+stop_proxy_only() {
+	ip -4 rule del fwmark "$MARK" table "$TABLE" 2>/dev/null || true
+	ip -4 route flush table "$TABLE" 2>/dev/null || true
+	nft delete table inet gfc 2>/dev/null || true
+	nft delete table inet gfc_client_mangle 2>/dev/null || true
+	[ -x "$GFC_ROOT/deploy/apply-tc-htb.sh" ] && sh "$GFC_ROOT/deploy/apply-tc-htb.sh" remove 2>/dev/null || true
+}
+
+start_direct() {
+	stop_proxy_only
+	nft delete table inet gfc_dns_hijack 2>/dev/null || true
+	nft delete table inet nat 2>/dev/null || true
+	apply_wan_nat
+	apply_dns_hijack
+	echo "gfc routing: direct mode (dns hijack + snat, proxy disabled)"
+}
+
 stop_rules() {
 	ip -4 rule del fwmark "$MARK" table "$TABLE" 2>/dev/null || true
 	ip -4 route flush table "$TABLE" 2>/dev/null || true
@@ -432,6 +449,7 @@ start_rules() {
 
 case "$ACTION" in
 	start) start_rules ;;
+	direct) start_direct ;;
 	stop) stop_rules ;;
 	restart) stop_rules; start_rules ;;
 	status)
@@ -449,5 +467,5 @@ case "$ACTION" in
 		ip -4 rule list | grep "$TABLE" || true
 		ip -4 route show table "$TABLE" 2>/dev/null || true
 		;;
-	*) echo "usage: $0 {start|stop|restart|status}" >&2; exit 2 ;;
+	*) echo "usage: $0 {start|direct|stop|restart|status}" >&2; exit 2 ;;
 esac

@@ -104,6 +104,14 @@ CREATE TABLE IF NOT EXISTS audit_log (
     detail_json TEXT,
     result TEXT
 );
+CREATE TABLE IF NOT EXISTS traffic_samples (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts INTEGER NOT NULL,
+    iface TEXT NOT NULL,
+    bytes_in INTEGER NOT NULL DEFAULT 0,
+    bytes_out INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_traffic_iface_ts ON traffic_samples(iface, ts);
 `
 	if _, err := s.db.Exec(schema); err != nil {
 		return err

@@ -37,8 +37,19 @@ stop() {
   teardown_policy_routing
 }
 
+direct() {
+  echo "==> gfc-routing direct"
+  teardown_gfc_nft_policy 2>/dev/null || true
+  teardown_policy_routing 2>/dev/null || true
+  if [[ -x "$SCRIPT_DIR/apply-tc-htb.sh" ]]; then
+    bash "$SCRIPT_DIR/apply-tc-htb.sh" remove 2>/dev/null || true
+  fi
+  echo "==> gfc-routing direct done (proxy disabled; re-run start after proxy enable)"
+}
+
 case "${1:-start}" in
   start) start ;;
+  direct) direct ;;
   stop) stop ;;
-  *) echo "usage: $0 {start|stop}"; exit 1 ;;
+  *) echo "usage: $0 {start|direct|stop}"; exit 1 ;;
 esac

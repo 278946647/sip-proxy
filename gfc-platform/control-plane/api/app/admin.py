@@ -274,7 +274,7 @@ async def dashboard(session: AsyncSession = Depends(get_session)) -> DashboardOu
     )
 
     lines = (await session.execute(select(Line))).scalars().all()
-    line_active = sum(1 for l in lines if l.status == "active" and l.is_enabled)
+    line_active = sum(1 for l in lines if l.is_enabled)
 
     socks_rows = (await session.execute(select(SocksProfile))).scalars().all()
     socks_total = len(socks_rows)
@@ -513,7 +513,7 @@ async def export_vyos_vpn_config(
     lines = (await session.execute(select(Line).where(Line.node_id == node.id))).scalars().all()
     line_cidrs: list[str] = []
     for line in lines:
-        if not line.is_enabled or line.status != "active":
+        if not line.is_enabled:
             continue
         line_cidrs.extend(c.strip() for c in line.source_cidrs.split(",") if c.strip())
     text = render_vyos_openvpn_server(
@@ -644,6 +644,7 @@ async def list_lines(
     node_id: int | None = None,
     country: str | None = None,
     status: str | None = None,
+    is_enabled: bool | None = None,
     bandwidth_mbps: int | None = None,
     search: str | None = None,
     page: int = Query(1, ge=1),
@@ -661,6 +662,8 @@ async def list_lines(
         stmt = stmt.where(Line.country == country)
     if status:
         stmt = stmt.where(Line.status == status)
+    if is_enabled is not None:
+        stmt = stmt.where(Line.is_enabled == is_enabled)
     if bandwidth_mbps:
         stmt = stmt.where(Line.bandwidth_mbps == bandwidth_mbps)
     if search:
@@ -676,6 +679,8 @@ async def list_lines(
         count_base = count_base.where(Line.country == country)
     if status:
         count_base = count_base.where(Line.status == status)
+    if is_enabled is not None:
+        count_base = count_base.where(Line.is_enabled == is_enabled)
     if bandwidth_mbps:
         count_base = count_base.where(Line.bandwidth_mbps == bandwidth_mbps)
     if search:
@@ -794,6 +799,8 @@ async def update_line(
     data = body.model_dump(exclude_unset=True)
     if "source_cidrs" in data and data["source_cidrs"] is not None:
         data["source_cidrs"] = ",".join(data["source_cidrs"])
+    if "is_enabled" in data:
+        data["status"] = "active" if data["is_enabled"] else "inactive"
     for k, v in data.items():
         setattr(line, k, v)
     session.add(line)
@@ -946,6 +953,38 @@ async def list_alerts(
             created_at=a.created_at,
         )
         for a in hist
+    ]
+
+
+@router.get("/lines/{line_id}/flow-stats", response_model=list[FlowStatOut])
+async def line_flow_stats(
+    line_id: int,
+    session: AsyncSession = Depends(get_session),
+    hours: int = Query(24, ge=1, le=168),
+) -> list[FlowStatOut]:
+    line = await session.get(Line, line_id)
+    if not line:
+        raise HTTPException(404, "line not found")
+    cutoff = utc_now() - dt.timedelta(hours=hours)
+    rows = (
+        await session.execute(
+            select(FlowStat)
+            .where(FlowStat.line_id == line_id, FlowStat.window_start >= cutoff)
+            .order_by(FlowStat.window_start.asc())
+        )
+    ).scalars().all()
+    return [
+        FlowStatOut(
+            id=f.id,
+            node_id=f.node_id,
+            line_id=f.line_id,
+            window_start=f.window_start,
+            window_seconds=f.window_seconds,
+            bytes_in=f.bytes_in,
+            bytes_out=f.bytes_out,
+            active_conns=f.active_conns,
+        )
+        for f in rows
     ]
 
 

@@ -14,8 +14,11 @@ import (
 	"github.com/278946647/sip-proxy/gfc-client/internal/dataplane"
 	"github.com/278946647/sip-proxy/gfc-client/internal/linecode"
 	"github.com/278946647/sip-proxy/gfc-client/internal/metrics"
+	"github.com/278946647/sip-proxy/gfc-client/internal/payload"
 	"github.com/278946647/sip-proxy/gfc-client/internal/reversessh"
+	"github.com/278946647/sip-proxy/gfc-client/internal/stats"
 	"github.com/278946647/sip-proxy/gfc-client/internal/store"
+	"github.com/278946647/sip-proxy/gfc-client/internal/traffic"
 )
 
 type Runner struct {
@@ -38,6 +41,9 @@ func NewRunner(cfg *config.Config, st *store.Store) *Runner {
 }
 
 func (r *Runner) Run() {
+	rec := traffic.NewRecorder(r.store)
+	go rec.Run(r.engine)
+
 	if ok, msg := r.engine.ReapplyLocal(true); !ok {
 		fmt.Printf("bootstrap dataplane failed: %s\n", msg)
 	} else {
@@ -103,6 +109,11 @@ func (r *Runner) tick() {
 
 	reachable := client.CheckReachable()
 	m := metrics.Collect(r.cfg, client.ActiveServer(), reachable)
+	if r.engine.IsDirectMode() {
+		stats.ResetTunnelSampler()
+	} else if tunnel := stats.SampleTunnel(config.TunInterface, r.cfg.PollSeconds); tunnel != nil {
+		m["tunnel_traffic"] = tunnel
+	}
 	m["agent_state"] = "active"
 	device := map[string]any{"device_key": state.DeviceKey, "line_id": state.LineID, "tid": state.TID}
 	_ = metrics.WriteStatus(r.cfg.Paths.StatusFile, m, device)
@@ -168,15 +179,21 @@ func (r *Runner) syncNode(payload map[string]any) {
 	_ = r.store.UpsertNode(id, name, addr, port, uuid, cfg)
 }
 
-func (r *Runner) configMatches(payload map[string]any) bool {
+func (r *Runner) configMatches(p map[string]any) bool {
+	if payload.IsDirect(p) {
+		return r.engine.IsDirectMode()
+	}
+	if r.engine.IsDirectMode() {
+		return false
+	}
 	old := r.engine.LoadBundle()
 	if old == nil {
 		return false
 	}
-	if fmt.Sprint(old["proxyMode"]) != fmt.Sprint(payload["proxyMode"]) {
+	if fmt.Sprint(old["proxyMode"]) != fmt.Sprint(p["proxyMode"]) {
 		return false
 	}
-	return r.currentSingboxMatches(payload)
+	return r.currentSingboxMatches(p)
 }
 
 func (r *Runner) currentSingboxMatches(payload map[string]any) bool {

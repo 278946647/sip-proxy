@@ -14,6 +14,14 @@ func New(cfg *config.Config) *Engine {
 	return &Engine{Orchestrator: orchestrator.New(cfg)}
 }
 
+func (e *Engine) ApplyDirect(p map[string]any, version string, restart bool) (bool, string) {
+	return e.Orchestrator.ApplyDirect(p, version, restart)
+}
+
+func (e *Engine) IsDirectMode() bool {
+	return e.Orchestrator.IsDirectMode()
+}
+
 func (e *Engine) ApplyPayload(payload map[string]any, version string, restart bool) (bool, string) {
 	return e.Orchestrator.ApplyPayload(payload, version, restart)
 }

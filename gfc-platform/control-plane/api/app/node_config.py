@@ -15,7 +15,7 @@ def _collect_line_cidrs(lines: list[Line]) -> list[str]:
     out: list[str] = []
     seen: set[str] = set()
     for line in lines:
-        if not line.is_enabled or line.status != "active":
+        if not line.is_enabled:
             continue
         if (line.line_type or "client") == "client":
             continue
@@ -62,7 +62,7 @@ def _build_forward_rules(
 ) -> list[dict[str, Any]]:
     rules: list[dict[str, Any]] = []
     for line in lines:
-        if not line.is_enabled or line.status != "active":
+        if not line.is_enabled:
             continue
         if (line.line_type or "client") == "client":
             continue
@@ -95,7 +95,7 @@ def _build_client_ingress(
 ) -> dict[str, Any]:
     users: list[dict[str, Any]] = []
     for line in lines:
-        if not line.is_enabled or line.status != "active":
+        if not line.is_enabled:
             continue
         if (line.line_type or "forward") != "client":
             continue
@@ -143,7 +143,7 @@ def _collect_bypass_cidrs_for_node(
         except ValueError:
             pass
     for line in lines:
-        if not line.is_enabled or line.status != "active":
+        if not line.is_enabled:
             continue
         if line.socks_profile_id is None:
             continue
