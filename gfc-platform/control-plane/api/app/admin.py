@@ -961,11 +961,82 @@ async def list_alerts(
     ]
 
 
+def _bucket_flow_stats(rows: list[FlowStat], *, max_points: int = 120) -> list[FlowStatOut]:
+    """Downsample dense heartbeats so the chart API stays browser-safe."""
+    if not rows:
+        return []
+    if len(rows) <= max_points:
+        return [
+            FlowStatOut(
+                id=f.id,
+                node_id=f.node_id,
+                line_id=f.line_id,
+                window_start=f.window_start,
+                window_seconds=f.window_seconds,
+                bytes_in=f.bytes_in,
+                bytes_out=f.bytes_out,
+                active_conns=f.active_conns,
+            )
+            for f in rows
+        ]
+
+    first = ensure_utc(rows[0].window_start) or rows[0].window_start
+    last = ensure_utc(rows[-1].window_start) or rows[-1].window_start
+    span = max(1.0, (last - first).total_seconds())
+    bucket_seconds = max(60, int(span / max_points))
+
+    buckets: list[FlowStatOut] = []
+    cur_start = first
+    cur_end = first + dt.timedelta(seconds=bucket_seconds)
+    acc_in = 0
+    acc_out = 0
+    acc_conns = 0
+    first_id = rows[0].id
+    node_id = rows[0].node_id
+    line_id = rows[0].line_id
+
+    def flush() -> None:
+        nonlocal acc_in, acc_out, acc_conns, first_id
+        buckets.append(
+            FlowStatOut(
+                id=first_id,
+                node_id=node_id,
+                line_id=line_id,
+                window_start=cur_start,
+                window_seconds=bucket_seconds,
+                bytes_in=acc_in,
+                bytes_out=acc_out,
+                active_conns=acc_conns,
+            )
+        )
+        acc_in = 0
+        acc_out = 0
+        acc_conns = 0
+
+    for f in rows:
+        ts = ensure_utc(f.window_start) or f.window_start
+        while ts >= cur_end:
+            flush()
+            cur_start = cur_end
+            cur_end = cur_start + dt.timedelta(seconds=bucket_seconds)
+            first_id = f.id
+        if acc_in == 0 and acc_out == 0 and acc_conns == 0:
+            first_id = f.id
+        acc_in += int(f.bytes_in or 0)
+        acc_out += int(f.bytes_out or 0)
+        acc_conns = max(acc_conns, int(f.active_conns or 0))
+
+    if acc_in or acc_out or acc_conns or not buckets:
+        flush()
+    return buckets[: max(1, max_points)]
+
+
 @router.get("/lines/{line_id}/flow-stats", response_model=list[FlowStatOut])
 async def line_flow_stats(
     line_id: int,
     session: AsyncSession = Depends(get_session),
     hours: int = Query(24, ge=1, le=168),
+    max_points: int = Query(120, ge=24, le=288),
 ) -> list[FlowStatOut]:
     line = await session.get(Line, line_id)
     if not line:
@@ -978,19 +1049,7 @@ async def line_flow_stats(
             .order_by(FlowStat.window_start.asc())
         )
     ).scalars().all()
-    return [
-        FlowStatOut(
-            id=f.id,
-            node_id=f.node_id,
-            line_id=f.line_id,
-            window_start=f.window_start,
-            window_seconds=f.window_seconds,
-            bytes_in=f.bytes_in,
-            bytes_out=f.bytes_out,
-            active_conns=f.active_conns,
-        )
-        for f in rows
-    ]
+    return _bucket_flow_stats(list(rows), max_points=max_points)
 
 
 @router.get("/flow-stats", response_model=list[FlowStatOut])

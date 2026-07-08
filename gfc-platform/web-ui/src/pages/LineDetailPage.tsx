@@ -82,9 +82,14 @@ export function LineDetailPage() {
     });
     if (d.lineType === "client") {
       await loadLineCode();
-      const flow = await apiGet<Record<string, unknown>[]>(`/admin/lines/${id}/flow-stats?hours=24`);
-      setFlowStats(mapFlowRows(flow));
-      setFlowUpdatedAt(dayjs().format("YYYY-MM-DD HH:mm:ss"));
+      try {
+        const flow = await apiGet<Record<string, unknown>[]>(`/admin/lines/${id}/flow-stats?hours=24`);
+        setFlowStats(mapFlowRows(flow));
+        setFlowUpdatedAt(dayjs().format("YYYY-MM-DD HH:mm:ss"));
+      } catch (e) {
+        console.warn("flow-stats load failed", e);
+        setFlowStats([]);
+      }
     } else {
       setLineCode("");
       setCodeMeta({});
