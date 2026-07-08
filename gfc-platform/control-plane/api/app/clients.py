@@ -208,7 +208,7 @@ async def _record_tunnel_flow(
         return
 
     line = await session.get(Line, device.line_id)
-    if not line or not line.flow_stats_enabled:
+    if not line:
         return
 
     now = utc_now()

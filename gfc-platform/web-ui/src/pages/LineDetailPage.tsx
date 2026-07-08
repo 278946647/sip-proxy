@@ -16,7 +16,7 @@ import {
 import { ArrowLeftOutlined } from "@ant-design/icons";
 import { LineCodeField } from "../components/LineCodeField";
 import { TrafficStatsPanel } from "../components/TrafficStatsPanel";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import dayjs from "dayjs";
 import { apiDelete, apiGet, apiPatch, apiPost } from "../api/client";
@@ -47,10 +47,6 @@ export function LineDetailPage() {
   const [enableSaving, setEnableSaving] = useState(false);
   const [flowStats, setFlowStats] = useState<FlowStat[]>([]);
   const [flowUpdatedAt, setFlowUpdatedAt] = useState(dayjs().format("YYYY-MM-DD HH:mm:ss"));
-  const [flowPaused, setFlowPaused] = useState(false);
-  const [flowStatsSaving, setFlowStatsSaving] = useState(false);
-  const flowStatsEnabledRef = useRef(true);
-  const flowPausedRef = useRef(false);
   const [lineCode, setLineCode] = useState("");
   const [codeMeta, setCodeMeta] = useState<{ fingerprint?: string; lineId?: string }>({});
   const [codeLoading, setCodeLoading] = useState(false);
@@ -86,14 +82,9 @@ export function LineDetailPage() {
     });
     if (d.lineType === "client") {
       await loadLineCode();
-      flowStatsEnabledRef.current = d.flowStatsEnabled;
-      if (d.flowStatsEnabled) {
-        const flow = await apiGet<Record<string, unknown>[]>(`/admin/lines/${id}/flow-stats?hours=24`);
-        setFlowStats(mapFlowRows(flow));
-        setFlowUpdatedAt(dayjs().format("YYYY-MM-DD HH:mm:ss"));
-      } else {
-        setFlowStats([]);
-      }
+      const flow = await apiGet<Record<string, unknown>[]>(`/admin/lines/${id}/flow-stats?hours=24`);
+      setFlowStats(mapFlowRows(flow));
+      setFlowUpdatedAt(dayjs().format("YYYY-MM-DD HH:mm:ss"));
     } else {
       setLineCode("");
       setCodeMeta({});
@@ -102,7 +93,7 @@ export function LineDetailPage() {
   };
 
   const refreshFlowStats = async () => {
-    if (!id || !flowStatsEnabledRef.current) return;
+    if (!id) return;
     const flow = await apiGet<Record<string, unknown>[]>(`/admin/lines/${id}/flow-stats?hours=24`);
     setFlowStats(mapFlowRows(flow));
     setFlowUpdatedAt(dayjs().format("YYYY-MM-DD HH:mm:ss"));
@@ -112,13 +103,11 @@ export function LineDetailPage() {
     setLine(null);
     setLineCode("");
     setCodeMeta({});
-    setFlowPaused(false);
-    flowPausedRef.current = false;
     void load().catch((e) => message.error(String(e)));
     const timer = window.setInterval(() => {
-      if (!id || flowPausedRef.current || !flowStatsEnabledRef.current) return;
+      if (!id) return;
       void refreshFlowStats().catch(() => undefined);
-    }, 10000);
+    }, 15_000);
     return () => window.clearInterval(timer);
   }, [id]);
 
@@ -209,32 +198,6 @@ export function LineDetailPage() {
     } finally {
       setCodeLoading(false);
     }
-  };
-
-  const toggleFlowStats = async (checked: boolean) => {
-    if (!id) return;
-    setFlowStatsSaving(true);
-    try {
-      await apiPatch(`/admin/lines/${id}?operator=${localStorage.getItem("gfc_user") || "admin"}`, {
-        flow_stats_enabled: checked,
-      });
-      flowStatsEnabledRef.current = checked;
-      message.success(checked ? "已开启流量统计" : "已关闭流量统计，不再记录新数据");
-      await load();
-      if (checked) await refreshFlowStats();
-    } catch (e) {
-      message.error(String(e));
-    } finally {
-      setFlowStatsSaving(false);
-    }
-  };
-
-  const toggleFlowPaused = () => {
-    setFlowPaused((prev) => {
-      const next = !prev;
-      flowPausedRef.current = next;
-      return next;
-    });
   };
 
   if (!line) return null;
@@ -375,23 +338,6 @@ export function LineDetailPage() {
         </div>
       )}
 
-      {line.lineType === "client" && (
-        <div className="line-detail-section">
-          <Typography.Title level={5} style={{ marginTop: 0 }}>
-            流量统计
-          </Typography.Title>
-          <TrafficStatsPanel
-            stats={flowStats}
-            enabled={line.flowStatsEnabled}
-            paused={flowPaused}
-            updatedAt={flowUpdatedAt}
-            saving={flowStatsSaving}
-            onToggleEnabled={(checked) => void toggleFlowStats(checked)}
-            onTogglePause={toggleFlowPaused}
-          />
-        </div>
-      )}
-
       <div className="line-detail-section">
         <Typography.Title level={5}>编辑备注</Typography.Title>
         <Form form={form} layout="vertical">
@@ -431,6 +377,12 @@ export function LineDetailPage() {
           <Link to="/proxies">在代理配置中编辑 SOCKS →</Link>
         </div>
       </div>
+
+      {line.lineType === "client" && (
+        <div className="line-detail-section">
+          <TrafficStatsPanel stats={flowStats} updatedAt={flowUpdatedAt} />
+        </div>
+      )}
     </div>
   );
 }

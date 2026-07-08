@@ -32,7 +32,7 @@ function downsamplePoints(points: ChartPoint[], maxPoints: number): ChartPoint[]
   return out;
 }
 
-export function TrafficChart({ stats, height = 160, maxPoints = 120 }: Props) {
+export function TrafficChart({ stats, height = 120, maxPoints = 120 }: Props) {
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
   const points = useMemo(() => {
@@ -49,7 +49,7 @@ export function TrafficChart({ stats, height = 160, maxPoints = 120 }: Props) {
   }
 
   const max = Math.max(...points.map((p) => p.total), 1);
-  const pad = { top: 12, right: 12, bottom: 32, left: 56 };
+  const pad = { top: 10, right: 12, bottom: 28, left: 56 };
   const innerW = VIEW_WIDTH - pad.left - pad.right;
   const innerH = height - pad.top - pad.bottom;
 
@@ -62,12 +62,32 @@ export function TrafficChart({ stats, height = 160, maxPoints = 120 }: Props) {
   });
 
   const polyline = coords.map((c) => `${c.x},${c.y}`).join(" ");
+  const area =
+    `${pad.left},${pad.top + innerH} ` +
+    coords.map((c) => `${c.x},${c.y}`).join(" ") +
+    ` ${pad.left + innerW},${pad.top + innerH}`;
   const hover = hoverIdx != null ? coords[hoverIdx] : null;
 
-  const xLabelCount = Math.min(8, points.length);
+  const xLabelCount = Math.min(6, points.length);
   const xLabelIdx = Array.from({ length: xLabelCount }, (_, i) =>
     Math.round((i / Math.max(xLabelCount - 1, 1)) * (points.length - 1))
   );
+
+  const pickHover = (clientX: number, svg: SVGSVGElement) => {
+    const rect = svg.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    const xInView = ((clientX - rect.left) / rect.width) * VIEW_WIDTH;
+    let best = 0;
+    let bestDist = Number.POSITIVE_INFINITY;
+    coords.forEach((c, i) => {
+      const d = Math.abs(c.x - xInView);
+      if (d < bestDist) {
+        bestDist = d;
+        best = i;
+      }
+    });
+    setHoverIdx(best);
+  };
 
   return (
     <div className="traffic-chart">
@@ -77,7 +97,16 @@ export function TrafficChart({ stats, height = 160, maxPoints = 120 }: Props) {
         height={height}
         preserveAspectRatio="none"
         onMouseLeave={() => setHoverIdx(null)}
+        onMouseMove={(e) => pickHover(e.clientX, e.currentTarget)}
       >
+        {/* full-width hit area so hover works anywhere on the chart */}
+        <rect
+          x={pad.left}
+          y={pad.top}
+          width={innerW}
+          height={innerH}
+          fill="transparent"
+        />
         {[0, 0.5, 1].map((ratio) => {
           const y = pad.top + innerH * (1 - ratio);
           const val = max * ratio;
@@ -100,45 +129,36 @@ export function TrafficChart({ stats, height = 160, maxPoints = 120 }: Props) {
           const x = coords[idx]?.x ?? pad.left;
           return (
             <g key={idx}>
-              <line x1={x} x2={x} y1={pad.top} y2={pad.top + innerH} stroke="#f1f5f9" />
-              <text x={x} y={height - 8} textAnchor="middle" fontSize="10" fill="#94a3b8">
+              <text x={x} y={height - 6} textAnchor="middle" fontSize="10" fill="#94a3b8">
                 {points[idx]?.label}
               </text>
             </g>
           );
         })}
+        <polygon fill="rgba(59,130,246,0.08)" points={area} />
         <polyline fill="none" stroke="#3b82f6" strokeWidth="2" points={polyline} />
-        {coords.map((c, i) => (
-          <circle
-            key={`${c.p.id}-${i}`}
-            cx={c.x}
-            cy={c.y}
-            r={hoverIdx === i ? 5 : 0}
-            fill="#1d4ed8"
-            onMouseEnter={() => setHoverIdx(i)}
-          />
-        ))}
         {hover ? (
-          <line
-            x1={hover.x}
-            x2={hover.x}
-            y1={pad.top}
-            y2={pad.top + innerH}
-            stroke="#94a3b8"
-            strokeDasharray="4 4"
-          />
+          <>
+            <line
+              x1={hover.x}
+              x2={hover.x}
+              y1={pad.top}
+              y2={pad.top + innerH}
+              stroke="#94a3b8"
+              strokeDasharray="4 4"
+            />
+            <circle cx={hover.x} cy={hover.y} r={4} fill="#1d4ed8" />
+          </>
         ) : null}
       </svg>
       {hover ? (
         <div className="traffic-chart-hover">
           <strong>{hover.p.label}</strong>
-          {" · "}总流量 {formatBytes(hover.p.total)}
-          {" · "}下行 {formatBytes(hover.p.bytesIn)}
-          {" · "}上行 {formatBytes(hover.p.bytesOut)}
+          {" · "}总 {formatBytes(hover.p.total)}
+          {" · "}下 {formatBytes(hover.p.bytesIn)}
+          {" · "}上 {formatBytes(hover.p.bytesOut)}
         </div>
-      ) : (
-        <div className="traffic-chart-hint">鼠标悬停折线查看该时段详情（展示已抽样，最多 {maxPoints} 点）</div>
-      )}
+      ) : null}
     </div>
   );
 }
