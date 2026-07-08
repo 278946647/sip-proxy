@@ -26,14 +26,19 @@ if [[ -d .git ]]; then
   git pull --ff-only origin main 2>/dev/null || git pull --ff-only 2>/dev/null || true
 fi
 
-echo "==> 重建 API 镜像"
-"${COMPOSE[@]}" build --no-cache api
+echo "==> 重建 API / Web 镜像"
+"${COMPOSE[@]}" build --no-cache api web
 
 echo "==> 安全重启（先删容器再 up，避免 ContainerConfig）"
 install -m 755 "$ROOT/deploy/control/gfc-compose.sh" /usr/local/bin/gfc-compose 2>/dev/null || true
-gfc_compose_safe_up "$ROOT" 1
+gfc_compose_safe_up "$ROOT" 0
 
-gfc_compose_wait_api "${GFC_PUBLIC_PORT:-8080}" 30 || true
+if ! gfc_compose_wait_api "${GFC_PUBLIC_PORT:-8080}" 30; then
+  echo ""
+  echo "==> API 未就绪，最近日志:"
+  "${COMPOSE[@]}" logs --tail=100 api || true
+  exit 1
+fi
 
 echo ""
 "${COMPOSE[@]}" ps

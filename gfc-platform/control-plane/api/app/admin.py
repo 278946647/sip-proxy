@@ -47,7 +47,6 @@ from .schemas import (
     LineUpdateIn,
     NodeTrafficBillingIn,
     NodeTrafficOverviewOut,
-    NodeUpdateIn,
     NodeVpnConfigIn,
     OperationLogOut,
     ClientDeviceDetailOut,
@@ -1040,10 +1039,17 @@ async def update_node_traffic_billing(
     if not node:
         raise HTTPException(404, "node not found")
     data = body.model_dump(exclude_unset=True)
+    field_map = {
+        "billing_cycle_start_at": "traffic_billing_start_at",
+        "billing_cycle_days": "traffic_billing_cycle_days",
+        "monthly_quota_gb": "traffic_monthly_quota_gb",
+        "correction_bytes": "traffic_correction_bytes",
+    }
     if "monitor_iface" in data:
         node.traffic_monitor_iface = data.pop("monitor_iface")
     for key, val in data.items():
-        setattr(node, key, val)
+        attr = field_map.get(key, key)
+        setattr(node, attr, val)
     ensure_billing_defaults(node)
     session.add(node)
     await _log_op(session, operator, "update_node_traffic_billing", node.name)

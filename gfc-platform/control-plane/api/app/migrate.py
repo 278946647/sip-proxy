@@ -72,6 +72,7 @@ def _migrate_sync(sync_conn: Connection) -> None:
         for col, sql in node_cols.items():
             if col not in existing:
                 sync_conn.execute(text(sql))
+        existing = _cols(sync_conn, "nodes")
         for col, sql in node_traffic_cols.items():
             if col not in existing:
                 sync_conn.execute(text(sql))
@@ -167,6 +168,13 @@ def _migrate_sync(sync_conn: Connection) -> None:
                 """
             )
         )
+        sync_conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS idx_node_traffic_node_ts "
+                "ON node_traffic_samples(node_id, sampled_at)"
+            )
+        )
+    elif _table_exists(sync_conn, "node_traffic_samples"):
         sync_conn.execute(
             text(
                 "CREATE INDEX IF NOT EXISTS idx_node_traffic_node_ts "

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import json
+import logging
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -35,11 +36,17 @@ from .schemas import (
 from .security import hash_password, hash_token, load_token_secrets, new_token
 from .settings import settings
 
+logger = logging.getLogger(__name__)
+
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    await migrate_sqlite(engine)
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        await migrate_sqlite(engine)
+    except Exception:
+        logger.exception("database bootstrap failed")
+        raise
     async with async_session_factory() as session:
         result = await session.execute(select(PlatformUser).limit(1))
         admin = result.scalar_one_or_none()
