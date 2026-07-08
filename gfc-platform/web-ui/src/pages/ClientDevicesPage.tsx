@@ -85,7 +85,7 @@ export function ClientDevicesPage() {
   const [loading, setLoading] = useState(false);
   const [drafts, setDrafts] = useState<Record<number, RowDraft>>({});
   const [lastRefresh, setLastRefresh] = useState(dayjs());
-  const [activeTab, setActiveTab] = useState<DeviceTab>("attention");
+  const [activeTab, setActiveTab] = useState<DeviceTab>("all");
   const [lineCodeModal, setLineCodeModal] = useState<{ open: boolean; code: string; tid: string }>({
     open: false,
     code: "",
@@ -228,10 +228,10 @@ export function ClientDevicesPage() {
         activeKey={activeTab}
         onChange={(key) => setActiveTab(key as DeviceTab)}
         items={[
+          { key: "all", label: `全部 (${counts.all})` },
           { key: "attention", label: `需关注 (${counts.attention})` },
           { key: "active", label: `在线 · 业务正常 (${counts.active})` },
           { key: "suspended", label: `在线 · 业务关停 (${counts.suspended})` },
-          { key: "all", label: `全部 (${counts.all})` },
         ]}
       />
 

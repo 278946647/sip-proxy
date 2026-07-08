@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import dayjs from "dayjs";
 import type { FlowStat } from "../types";
 
@@ -15,7 +15,19 @@ function formatBytes(n: number) {
 }
 
 export function TrafficChart({ stats, height = 240 }: Props) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [chartWidth, setChartWidth] = useState(0);
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const update = () => setChartWidth(Math.max(el.clientWidth, 1));
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const points = useMemo(
     () =>
@@ -31,9 +43,9 @@ export function TrafficChart({ stats, height = 240 }: Props) {
     return <div className="traffic-chart-empty">暂无流量数据</div>;
   }
 
+  const width = chartWidth > 0 ? chartWidth : 1;
   const max = Math.max(...points.map((p) => p.total), 1);
-  const width = 900;
-  const pad = { top: 16, right: 16, bottom: 36, left: 56 };
+  const pad = { top: 16, right: 8, bottom: 36, left: 52 };
   const innerW = width - pad.left - pad.right;
   const innerH = height - pad.top - pad.bottom;
 
@@ -52,7 +64,7 @@ export function TrafficChart({ stats, height = 240 }: Props) {
   );
 
   return (
-    <div className="traffic-chart">
+    <div className="traffic-chart" ref={containerRef}>
       <svg
         viewBox={`0 0 ${width} ${height}`}
         width="100%"
@@ -65,7 +77,7 @@ export function TrafficChart({ stats, height = 240 }: Props) {
           return (
             <g key={ratio}>
               <line x1={pad.left} x2={width - pad.right} y1={y} y2={y} stroke="#e2e8f0" />
-              <text x={pad.left - 8} y={y + 4} textAnchor="end" fontSize="11" fill="#64748b">
+              <text x={pad.left - 6} y={y + 4} textAnchor="end" fontSize="11" fill="#64748b">
                 {formatBytes(val)}
               </text>
             </g>
