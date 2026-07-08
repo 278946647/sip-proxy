@@ -47,6 +47,7 @@ from .schemas import (
     LineUpdateIn,
     NodeTrafficBillingIn,
     NodeTrafficOverviewOut,
+    NodeUpdateIn,
     NodeVpnConfigIn,
     OperationLogOut,
     ClientDeviceDetailOut,
