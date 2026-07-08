@@ -116,8 +116,7 @@ body,
   display: block;
   width: 100%;
   max-width: 100%;
-  height: auto;
-  max-height: 240px;
+  max-height: 180px;
 }
 
 .traffic-chart-empty {
