@@ -2,7 +2,6 @@ import {
   Alert,
   Button,
   Input,
-  Modal,
   Popconfirm,
   Select,
   Space,
@@ -12,13 +11,12 @@ import {
   Typography,
   message,
 } from "antd";
-import { LineCodeField } from "../components/LineCodeField";
 import { DeleteOutlined, EyeOutlined, ReloadOutlined } from "@ant-design/icons";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import dayjs from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
-import { apiDelete, apiGet, apiPatch, apiPost } from "../api/client";
+import { apiDelete, apiGet, apiPatch } from "../api/client";
 import { openRemoteTarget } from "../lib/openRemote";
 import { mapClientDevice, type ClientDeviceListItem, type LineListItem } from "../types";
 import { mapLineItem } from "../types";
@@ -85,12 +83,6 @@ export function ClientDevicesPage() {
   const [drafts, setDrafts] = useState<Record<number, RowDraft>>({});
   const [lastRefresh, setLastRefresh] = useState(dayjs());
   const [activeTab, setActiveTab] = useState<DeviceTab>("all");
-  const [lineCodeModal, setLineCodeModal] = useState<{ open: boolean; code: string; tid: string }>({
-    open: false,
-    code: "",
-    tid: "",
-  });
-  const [codeLoading, setCodeLoading] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -169,32 +161,6 @@ export function ClientDevicesPage() {
       void load();
     } catch (e) {
       message.error(String(e));
-    }
-  };
-
-  const showLineCode = async (lineId: number | null) => {
-    if (!lineId) {
-      message.warning("请先关联线路");
-      return;
-    }
-    setCodeLoading(true);
-    try {
-      let res: { line_code_b32: string };
-      try {
-        res = await apiPost(`/admin/lines/${lineId}/line-code/refresh?operator=admin`, {});
-      } catch {
-        res = await apiGet(`/admin/lines/${lineId}/line-code`);
-      }
-      const ln = lines.find((l) => l.id === lineId);
-      setLineCodeModal({
-        open: true,
-        code: res.line_code_b32 || "",
-        tid: ln?.tid || `#${lineId}`,
-      });
-    } catch (e) {
-      message.error(String(e));
-    } finally {
-      setCodeLoading(false);
     }
   };
 
@@ -333,9 +299,6 @@ export function ClientDevicesPage() {
                 <Button size="small" type="primary" onClick={() => void saveRow(row)}>
                   保存
                 </Button>
-                <Button size="small" onClick={() => void showLineCode(getDraft(row).lineId ?? row.lineId)}>
-                  线路码
-                </Button>
                 <Button
                   size="small"
                   type="primary"
@@ -382,17 +345,6 @@ export function ClientDevicesPage() {
       <div style={{ marginTop: 8 }}>
         尚无设备？请在线路详情页复制 <Link to="/lines">线路码</Link> 刷入客户端盒子。
       </div>
-
-      <Modal
-        title={`线路码 — ${lineCodeModal.tid}`}
-        open={lineCodeModal.open}
-        onCancel={() => setLineCodeModal((m) => ({ ...m, open: false }))}
-        footer={null}
-        width={720}
-        destroyOnClose
-      >
-        <LineCodeField value={lineCodeModal.code} loading={codeLoading} rows={5} />
-      </Modal>
     </div>
   );
 }

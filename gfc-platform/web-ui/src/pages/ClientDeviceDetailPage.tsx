@@ -149,34 +149,6 @@ export function ClientDeviceDetailPage() {
             <Statistic value={m.connectionCount ?? 0} suffix="条" />
           </Card>
         </Col>
-        <Col xs={24} md={12}>
-          <Card title="网络速率">
-            <Row gutter={16}>
-              <Col span={12}>
-                <Statistic
-                  title="上行"
-                  value={pct(m.uploadMbps)}
-                  precision={2}
-                  suffix="Mbps"
-                />
-                <Typography.Text type="secondary">
-                  峰值 {pct(m.uploadPeakMbps).toFixed(2)} Mbps
-                </Typography.Text>
-              </Col>
-              <Col span={12}>
-                <Statistic
-                  title="下行"
-                  value={pct(m.downloadMbps)}
-                  precision={2}
-                  suffix="Mbps"
-                />
-                <Typography.Text type="secondary">
-                  峰值 {pct(m.downloadPeakMbps).toFixed(2)} Mbps
-                </Typography.Text>
-              </Col>
-            </Row>
-          </Card>
-        </Col>
       </Row>
     </div>
   );
