@@ -442,7 +442,7 @@ class ReverseSSHPortsOut(BaseModel):
 class ReverseSSHCommandOut(BaseModel):
     enabled: bool = False
     host: str | None = None
-    port: int = 211
+    port: int = 212
     user: str | None = None
     expires_at: dt.datetime | None = None
     ports: ReverseSSHPortsOut | None = None

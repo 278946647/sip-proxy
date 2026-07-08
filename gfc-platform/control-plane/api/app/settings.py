@@ -39,8 +39,7 @@ class Settings(BaseSettings):
     client_offline_threshold_seconds: int = 120
 
     # Reverse SSH: control platform sshd port (clients autossh inbound)
-    # If your control-plane already uses 212 for its own sshd, switch this to 211.
-    reverse_ssh_sshd_port: int = 211
+    reverse_ssh_sshd_port: int = 212
     reverse_ssh_user: str = "gfc-reverse"
     reverse_ssh_session_ttl_seconds: int = 1800
     reverse_ssh_connect_timeout_seconds: int = 90
