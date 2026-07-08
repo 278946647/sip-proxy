@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import ClientDevice
 from .settings import settings
-from .timeutil import utc_now
+from .timeutil import ensure_utc, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -80,9 +80,10 @@ async def allocate_reverse_ports(session: AsyncSession) -> tuple[int, int]:
 
 
 def session_active(device: ClientDevice) -> bool:
-    exp = device.reverse_ssh_session_expires_at
+    exp = ensure_utc(device.reverse_ssh_session_expires_at)
     if exp is None:
         return False
+    # SQLite may return naive UTC; never compare aware vs naive (TypeError → 500 on list).
     return utc_now() < exp
 
 

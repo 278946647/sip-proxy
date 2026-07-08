@@ -1611,7 +1611,8 @@ async def get_reverse_ssh_session(
     device = await session.get(ClientDevice, device_id)
     if not device:
         raise HTTPException(404, "client device not found")
-    if device.reverse_ssh_session_expires_at and utc_now() >= device.reverse_ssh_session_expires_at:
+    exp = ensure_utc(device.reverse_ssh_session_expires_at)
+    if exp is not None and utc_now() >= exp:
         device.reverse_ssh_session_expires_at = None
         device.reverse_ssh_tunnel_reported_at = None
         session.add(device)
