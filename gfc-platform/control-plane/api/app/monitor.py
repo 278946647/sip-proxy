@@ -10,16 +10,12 @@ from .alerts import send_email
 from .db import async_session_factory
 from .models import Node, SocksProfile
 from .node_health import emit_alert
+from .node_online import node_is_online
 from .settings import settings
 from .socks_probe import probe_socks, socks_profile_fields
-from .timeutil import ensure_utc, seconds_ago
+from .timeutil import ensure_utc
 
 logger = logging.getLogger(__name__)
-
-
-def node_is_online(node: Node) -> bool:
-    ago = seconds_ago(node.last_seen_at)
-    return ago is not None and ago < settings.node_offline_threshold_seconds
 
 
 async def check_nodes_offline(

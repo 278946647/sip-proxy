@@ -34,7 +34,7 @@ from .reality_util import default_reality_config
 from .security import hash_password
 from .timeutil import ensure_utc, parse_json_field, seconds_ago, utc_now
 from .metrics_util import sanitize_last_metrics
-from .monitor import node_is_online
+from .node_online import node_is_online
 from .node_config import build_node_payload
 from .node_traffic import build_node_traffic_overview, ensure_billing_defaults
 from .schemas import (

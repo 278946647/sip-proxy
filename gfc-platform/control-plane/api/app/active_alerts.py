@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import Node, SocksProfile
-from .monitor import node_is_online
+from .node_online import node_is_online
 from .socks_parse import format_socks_address
 from .timeutil import ensure_utc, utc_now
 
