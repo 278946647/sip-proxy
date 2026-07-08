@@ -107,6 +107,31 @@ def _migrate_sync(sync_conn: Connection) -> None:
             if col not in existing:
                 sync_conn.execute(text(sql))
 
+    client_device_cols = {
+        "reverse_http_port": "ALTER TABLE client_devices ADD COLUMN reverse_http_port INTEGER",
+        "ssh_public_key": "ALTER TABLE client_devices ADD COLUMN ssh_public_key TEXT",
+        "reverse_ssh_session_expires_at": (
+            "ALTER TABLE client_devices ADD COLUMN reverse_ssh_session_expires_at DATETIME"
+        ),
+        "reverse_ssh_session_targets": (
+            "ALTER TABLE client_devices ADD COLUMN reverse_ssh_session_targets TEXT"
+        ),
+        "reverse_ssh_tunnel_reported_at": (
+            "ALTER TABLE client_devices ADD COLUMN reverse_ssh_tunnel_reported_at DATETIME"
+        ),
+    }
+    if _table_exists(sync_conn, "client_devices"):
+        existing = _cols(sync_conn, "client_devices")
+        for col, sql in client_device_cols.items():
+            if col not in existing:
+                sync_conn.execute(text(sql))
+        sync_conn.execute(
+            text(
+                "UPDATE client_devices SET reverse_http_port = reverse_ssh_port + 1 "
+                "WHERE reverse_ssh_port IS NOT NULL AND reverse_http_port IS NULL"
+            )
+        )
+
     if not _table_exists(sync_conn, "client_devices"):
         sync_conn.execute(
             text(
@@ -119,6 +144,11 @@ def _migrate_sync(sync_conn: Connection) -> None:
                     device_id VARCHAR(32),
                     line_id INTEGER,
                     reverse_ssh_port INTEGER,
+                    reverse_http_port INTEGER,
+                    ssh_public_key TEXT,
+                    reverse_ssh_session_expires_at DATETIME,
+                    reverse_ssh_session_targets TEXT,
+                    reverse_ssh_tunnel_reported_at DATETIME,
                     proxy_mode VARCHAR(32) DEFAULT 'gateway',
                     agent_version VARCHAR(32),
                     last_seen_at DATETIME,

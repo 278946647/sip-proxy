@@ -118,11 +118,29 @@ func (r *Runner) tick() {
 	device := map[string]any{"device_key": state.DeviceKey, "line_id": state.LineID, "tid": state.TID}
 	_ = metrics.WriteStatus(r.cfg.Paths.StatusFile, m, device)
 
-	sshPort := reversessh.Port(state.DeviceKey, 0)
-	reverseSSH := &sshPort
-	_ = client.Heartbeat(m, r.cfg.DeviceName, reverseSSH, r.cfg.ProxyMode, config.Version)
-	if ok, msg := r.revSSH.Sync(state.DeviceKey); ok {
-		fmt.Printf("reverse ssh: %s\n", msg)
+	pubKey, _ := r.revSSH.EnsureKeypair()
+	hb, err := client.Heartbeat(m, r.cfg.DeviceName, nil, nil, pubKey, nil, r.cfg.ProxyMode, config.Version)
+	if err != nil {
+		fmt.Printf("heartbeat: %v\n", err)
+	} else {
+		cmd := reversessh.ParseCommand(nil)
+		if hb != nil {
+			cmd = reversessh.ParseCommand(hb.ReverseSSH)
+		}
+		ok, msg, active := r.syncReverseSSH(cmd)
+		status := map[string]any{"active": active}
+		if !active && ok && msg == "reverse ssh disabled" {
+			status["active"] = false
+		}
+		if active {
+			status["active"] = true
+		}
+		if _, err := client.Heartbeat(m, r.cfg.DeviceName, intPtr(cmdSSHPort(cmd)), intPtr(cmdHTTPPort(cmd)), "", status, r.cfg.ProxyMode, config.Version); err != nil {
+			fmt.Printf("heartbeat status: %v\n", err)
+		}
+		if msg != "" {
+			fmt.Printf("reverse ssh: %s\n", msg)
+		}
 	}
 
 	bundle, err := client.PullConfig()
@@ -275,4 +293,31 @@ func (r *Runner) envServers() []string {
 		}
 	}
 	return urls
+}
+
+func intPtr(v int) *int {
+	if v <= 0 {
+		return nil
+	}
+	return &v
+}
+
+func cmdSSHPort(cmd *reversessh.Command) int {
+	if cmd == nil {
+		return 0
+	}
+	return cmd.SSHPort
+}
+
+func cmdHTTPPort(cmd *reversessh.Command) int {
+	if cmd == nil {
+		return 0
+	}
+	return cmd.HTTPPort
+}
+
+func (r *Runner) syncReverseSSH(cmd *reversessh.Command) (bool, string, bool) {
+	ok, msg := r.revSSH.SyncCommand(cmd)
+	active := r.revSSH.Status()["active"] == "active"
+	return ok, msg, active
 }

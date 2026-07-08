@@ -34,7 +34,8 @@ fi
 
 if [ -d "$WWW_SRC" ]; then
 	cp -f "$WWW_SRC/cgi-bin/gfc-activation" /www/cgi-bin/gfc-activation
-	chmod +x /www/cgi-bin/gfc-activation
+	cp -f "$WWW_SRC/cgi-bin/gfc-api-proxy" /www/cgi-bin/gfc-api-proxy
+	chmod +x /www/cgi-bin/gfc-activation /www/cgi-bin/gfc-api-proxy
 	cp -f "$WWW_SRC/gfc/"* /www/gfc/
 	cp -f "$WWW_SRC/index.html" /www/index.html
 fi

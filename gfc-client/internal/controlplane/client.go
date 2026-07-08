@@ -84,7 +84,18 @@ func (c *Client) Activate(lineCode, deviceName, lanMAC, deviceID, proxyMode, age
 	return &resp, nil
 }
 
-func (c *Client) Heartbeat(metrics map[string]any, deviceName string, reverseSSHPort *int, proxyMode, agentVersion string) error {
+type HeartbeatResult struct {
+	ReverseSSH map[string]any `json:"reverse_ssh"`
+}
+
+func (c *Client) Heartbeat(
+	metrics map[string]any,
+	deviceName string,
+	reverseSSHPort, reverseHTTPPort *int,
+	sshPublicKey string,
+	reverseSSHStatus map[string]any,
+	proxyMode, agentVersion string,
+) (*HeartbeatResult, error) {
 	body := map[string]any{
 		"metrics":       metrics,
 		"device_name":   deviceName,
@@ -94,7 +105,20 @@ func (c *Client) Heartbeat(metrics map[string]any, deviceName string, reverseSSH
 	if reverseSSHPort != nil {
 		body["reverse_ssh_port"] = *reverseSSHPort
 	}
-	return c.requestJSON("POST", "/clients/heartbeat", body, true, nil)
+	if reverseHTTPPort != nil {
+		body["reverse_http_port"] = *reverseHTTPPort
+	}
+	if strings.TrimSpace(sshPublicKey) != "" {
+		body["ssh_public_key"] = strings.TrimSpace(sshPublicKey)
+	}
+	if reverseSSHStatus != nil {
+		body["reverse_ssh_status"] = reverseSSHStatus
+	}
+	var resp HeartbeatResult
+	if err := c.requestJSON("POST", "/clients/heartbeat", body, true, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }
 
 func (c *Client) PullConfig() (*ConfigBundle, error) {

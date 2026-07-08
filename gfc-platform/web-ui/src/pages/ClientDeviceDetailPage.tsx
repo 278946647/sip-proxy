@@ -5,6 +5,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import dayjs from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
 import { apiDelete, apiGet } from "../api/client";
+import { openRemoteTarget } from "../lib/openRemote";
 import { mapClientDeviceDetail, type ClientDeviceDetail } from "../types";
 
 dayjs.extend(relativeTime);
@@ -79,10 +80,14 @@ export function ClientDeviceDetailPage() {
             <Button type="link">查看关联线路</Button>
           </Link>
         )}
-        {device.reverseSshPort && (
-          <Button type="primary" onClick={() => message.info(`SSH 反代端口：${device.reverseSshPort}`)}>
-            远程连接
-          </Button>
+        {device.reverseSshPort && device.sshPublicKeyRegistered && device.managementState === "online" && (
+          <Space>
+            <Button type="primary" onClick={() => void openRemoteTarget(device.id, "ssh", device.name)}>
+              远程 SSH
+            </Button>
+            <Button onClick={() => void openRemoteTarget(device.id, "web", device.name)}>Web 管理</Button>
+            <Button onClick={() => void openRemoteTarget(device.id, "flash", device.name)}>刷码协助</Button>
+          </Space>
         )}
         <Popconfirm
           title="删除此客户端？"

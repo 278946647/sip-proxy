@@ -13,7 +13,12 @@ export default defineConfig({
       "/api": {
         target: apiTarget,
         changeOrigin: true,
+        ws: true,
         rewrite: (p) => p.replace(/^\/api/, ""),
+      },
+      "/remote": {
+        target: apiTarget,
+        changeOrigin: true,
       },
     },
   },

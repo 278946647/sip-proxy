@@ -16,6 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .admin import router as admin_router
 from .clients import router as clients_router
 from .auth_routes import router as auth_router
+from .remote_proxy import router as remote_router
+from .webssh import router as webssh_router
 from .email_settings import load_smtp_settings
 from .platform_secrets import ensure_platform_secrets, get_bootstrap_tokens
 from .db import async_session_factory, engine, get_session
@@ -87,6 +89,8 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(clients_router)
+app.include_router(remote_router)
+app.include_router(webssh_router)
 
 
 @app.get("/health")

@@ -38,8 +38,20 @@ class Settings(BaseSettings):
     # Client device offline threshold
     client_offline_threshold_seconds: int = 120
 
-    # SSH reverse tunnel base port on bastion (device port = base + device_id)
-    client_ssh_port_base: int = 6000
+    # Reverse SSH: control platform sshd port (clients autossh inbound)
+    # If your control-plane already uses 212 for its own sshd, switch this to 211.
+    reverse_ssh_sshd_port: int = 211
+    reverse_ssh_user: str = "gfc-reverse"
+    reverse_ssh_session_ttl_seconds: int = 1800
+    reverse_ssh_connect_timeout_seconds: int = 90
+    reverse_ssh_authorized_keys_path: str = "./data/reverse-ssh/authorized_keys"
+    reverse_ssh_client_shell_user: str = "root"
+    reverse_ssh_client_shell_password: str = ""
+
+    # Reverse tunnel local port pool on control platform (127.0.0.1)
+    client_ssh_port_base: int = 6001
+    client_ssh_port_max: int = 7999
+    client_ports_per_device: int = 2
 
 
 settings = Settings()

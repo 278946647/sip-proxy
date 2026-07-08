@@ -427,12 +427,32 @@ class ClientHeartbeatRequest(BaseModel):
     device_name: str | None = Field(default=None, max_length=128)
     agent_version: str | None = None
     reverse_ssh_port: int | None = None
+    reverse_http_port: int | None = None
+    ssh_public_key: str | None = None
+    ssh_key_rotate: bool = False
+    reverse_ssh_status: dict[str, Any] | None = None
     proxy_mode: str | None = Field(default=None, pattern="^(gateway|bypass|transparent)$")
+
+
+class ReverseSSHPortsOut(BaseModel):
+    ssh: int | None = None
+    http: int | None = None
+
+
+class ReverseSSHCommandOut(BaseModel):
+    enabled: bool = False
+    host: str | None = None
+    port: int = 211
+    user: str | None = None
+    expires_at: dt.datetime | None = None
+    ports: ReverseSSHPortsOut | None = None
+    targets: list[str] = Field(default_factory=list)
 
 
 class ClientHeartbeatResponse(BaseModel):
     ok: bool = True
     server_time: dt.datetime
+    reverse_ssh: ReverseSSHCommandOut | None = None
 
 
 class ClientConfigAckIn(BaseModel):
@@ -458,6 +478,9 @@ class ClientDeviceListItem(BaseModel):
     line_id: int | None
     line_tid: str | None
     reverse_ssh_port: int | None
+    reverse_http_port: int | None = None
+    ssh_public_key_registered: bool = False
+    reverse_ssh_session_state: str = "idle"
     proxy_mode: str
     online: bool
     management_state: str = "offline"
@@ -474,6 +497,23 @@ class ClientDeviceDetailOut(ClientDeviceListItem):
     line_name: str | None = None
     node_name: str | None = None
     ssh_connect_url: str | None = None
+    web_remote_url: str | None = None
+    flash_remote_url: str | None = None
+
+
+class ReverseSSHSessionIn(BaseModel):
+    targets: list[str] = Field(default_factory=lambda: ["ssh"])
+    ttl_seconds: int | None = Field(default=None, ge=60, le=7200)
+
+
+class ReverseSSHSessionOut(BaseModel):
+    state: str
+    expires_at: dt.datetime | None = None
+    tunnel_ready: bool = False
+    ports: ReverseSSHPortsOut | None = None
+    targets: list[str] = Field(default_factory=list)
+    urls: dict[str, str | None] = Field(default_factory=dict)
+    message: str | None = None
 
 
 class PaginatedClientDevices(BaseModel):

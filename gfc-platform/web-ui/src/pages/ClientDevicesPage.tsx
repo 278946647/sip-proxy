@@ -2,7 +2,6 @@ import {
   Alert,
   Button,
   Input,
-  InputNumber,
   Modal,
   Popconfirm,
   Select,
@@ -20,6 +19,7 @@ import { Link, useNavigate } from "react-router-dom";
 import dayjs from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
 import { apiDelete, apiGet, apiPatch, apiPost } from "../api/client";
+import { openRemoteTarget } from "../lib/openRemote";
 import { mapClientDevice, type ClientDeviceListItem, type LineListItem } from "../types";
 import { mapLineItem } from "../types";
 
@@ -28,7 +28,6 @@ dayjs.extend(relativeTime);
 type RowDraft = {
   name: string;
   lineId: number | undefined;
-  reverseSshPort: number | undefined;
 };
 
 type DeviceTab = "attention" | "active" | "suspended" | "all";
@@ -134,7 +133,6 @@ export function ClientDevicesPage() {
     drafts[row.id] ?? {
       name: row.name,
       lineId: row.lineId ?? undefined,
-      reverseSshPort: row.reverseSshPort ?? undefined,
     };
 
   const setDraft = (id: number, patch: Partial<RowDraft>) => {
@@ -165,7 +163,6 @@ export function ClientDevicesPage() {
         {
           name: draft.name,
           line_id: draft.lineId ?? null,
-          reverse_ssh_port: draft.reverseSshPort ?? null,
         }
       );
       message.success("已保存，客户端将在下次拉取配置后生效");
@@ -293,15 +290,19 @@ export function ClientDevicesPage() {
               ),
           },
           {
-            title: "反向端口",
+            title: "反代端口",
             render: (_, row) => (
-              <InputNumber
-                min={1}
-                max={65535}
-                value={getDraft(row).reverseSshPort}
-                onChange={(v) => setDraft(row.id, { reverseSshPort: v ?? undefined })}
-                style={{ width: 100 }}
-              />
+              <Space direction="vertical" size={0}>
+                <Typography.Text code>SSH {row.reverseSshPort ?? "-"}</Typography.Text>
+                <Typography.Text code type="secondary">
+                  HTTP {row.reverseHttpPort ?? "-"}
+                </Typography.Text>
+                {!row.sshPublicKeyRegistered ? (
+                  <Typography.Text type="warning" style={{ fontSize: 12 }}>
+                    公钥未注册
+                  </Typography.Text>
+                ) : null}
+              </Space>
             ),
           },
           {
@@ -339,15 +340,24 @@ export function ClientDevicesPage() {
                   size="small"
                   type="primary"
                   ghost
-                  disabled={!row.reverseSshPort}
-                  onClick={() => {
-                    if (row.reverseSshPort) {
-                      window.open(`/#/client-devices/${row.id}`, "_blank");
-                      message.info(`SSH 反代端口：${row.reverseSshPort}（需配置 WebSSH 网关）`);
-                    }
-                  }}
+                  disabled={!row.online || !row.sshPublicKeyRegistered}
+                  onClick={() => void openRemoteTarget(row.id, "ssh", row.name)}
                 >
-                  SSH 连接
+                  远程 SSH
+                </Button>
+                <Button
+                  size="small"
+                  disabled={!row.online || !row.sshPublicKeyRegistered}
+                  onClick={() => void openRemoteTarget(row.id, "web", row.name)}
+                >
+                  Web 管理
+                </Button>
+                <Button
+                  size="small"
+                  disabled={!row.online || !row.sshPublicKeyRegistered}
+                  onClick={() => void openRemoteTarget(row.id, "flash", row.name)}
+                >
+                  刷码协助
                 </Button>
                 <Button
                   size="small"

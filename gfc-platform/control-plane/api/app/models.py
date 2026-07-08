@@ -149,7 +149,16 @@ class ClientDevice(Base):
     line_id: Mapped[int | None] = mapped_column(
         ForeignKey("lines.id", ondelete="SET NULL"), nullable=True, unique=True
     )
-    reverse_ssh_port: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    reverse_ssh_port: Mapped[int | None] = mapped_column(Integer, nullable=True, unique=True)
+    reverse_http_port: Mapped[int | None] = mapped_column(Integer, nullable=True, unique=True)
+    ssh_public_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reverse_ssh_session_expires_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    reverse_ssh_session_targets: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reverse_ssh_tunnel_reported_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     proxy_mode: Mapped[str] = mapped_column(String(32), default="gateway")
     agent_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
     last_seen_at: Mapped[dt.datetime | None] = mapped_column(

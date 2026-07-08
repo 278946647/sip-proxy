@@ -8,6 +8,7 @@ import { DashboardPage } from "./pages/DashboardPage";
 import { LinesPage } from "./pages/LinesPage";
 import { ClientDevicesPage } from "./pages/ClientDevicesPage";
 import { ClientDeviceDetailPage } from "./pages/ClientDeviceDetailPage";
+import { ClientWebSSHPage } from "./pages/ClientWebSSHPage";
 import { LineDetailPage } from "./pages/LineDetailPage";
 import { TrafficPage } from "./pages/TrafficPage";
 import { HealthPage } from "./pages/HealthPage";
@@ -47,6 +48,7 @@ export function App() {
               <Route path="lines/:id" element={<LineDetailPage />} />
               <Route path="client-devices" element={<ClientDevicesPage />} />
               <Route path="client-devices/:id" element={<ClientDeviceDetailPage />} />
+              <Route path="client-devices/:id/ssh" element={<ClientWebSSHPage />} />
               <Route path="traffic" element={<TrafficPage />} />
               <Route path="health" element={<HealthPage />} />
               <Route path="proxies" element={<ProxiesPage />} />

@@ -28,6 +28,15 @@ from .schemas import (
     ClientHeartbeatRequest,
     ClientHeartbeatResponse,
     ConfigBundleOut,
+    ReverseSSHCommandOut,
+    ReverseSSHPortsOut,
+)
+from .reverse_ssh import (
+    allocate_reverse_ports,
+    build_reverse_ssh_command,
+    session_active,
+    sync_authorized_keys,
+    validate_ssh_public_key,
 )
 from .security import hash_token, load_token_secrets, new_token
 from .settings import settings
@@ -70,12 +79,12 @@ def _device_key_from_mac(lan_mac: str | None, device_id: str | None) -> str:
     return secrets.token_hex(8).upper()
 
 
-def _reverse_ssh_port(device_key: str) -> int:
-    try:
-        offset = int(device_key[:4], 16) % 1000
-    except ValueError:
-        offset = secrets.randbelow(1000)
-    return settings.client_ssh_port_base + offset
+async def _ensure_reverse_ports(session: AsyncSession, device: ClientDevice) -> None:
+    if device.reverse_ssh_port and device.reverse_http_port:
+        return
+    ssh_port, http_port = await allocate_reverse_ports(session)
+    device.reverse_ssh_port = ssh_port
+    device.reverse_http_port = http_port
 
 
 @router.post("/activate", response_model=ClientActivateResponse)
@@ -127,6 +136,7 @@ async def activate_client(
         device.proxy_mode = body.proxy_mode
         device.agent_version = body.agent_version
         device.is_active = True
+        await _ensure_reverse_ports(session, device)
     else:
         device = ClientDevice(
             device_key=device_key,
@@ -136,10 +146,10 @@ async def activate_client(
             line_id=line.id,
             proxy_mode=body.proxy_mode,
             agent_version=body.agent_version,
-            reverse_ssh_port=_reverse_ssh_port(device_key),
         )
         session.add(device)
         await session.flush()
+        await _ensure_reverse_ports(session, device)
 
     raw_token = new_token("client")
     secrets_cfg = load_token_secrets()
@@ -241,14 +251,49 @@ async def client_heartbeat(
         device.agent_version = body.agent_version
     if body.reverse_ssh_port is not None:
         device.reverse_ssh_port = body.reverse_ssh_port
+    if body.reverse_http_port is not None:
+        device.reverse_http_port = body.reverse_http_port
     if body.proxy_mode:
         device.proxy_mode = body.proxy_mode
+
+    key_updated = False
+    if body.ssh_public_key:
+        try:
+            device.ssh_public_key = validate_ssh_public_key(body.ssh_public_key)
+            key_updated = True
+        except ValueError as exc:
+            logger.warning("invalid ssh public key from device %s: %s", device.id, exc)
+
+    if body.reverse_ssh_status and isinstance(body.reverse_ssh_status, dict):
+        if body.reverse_ssh_status.get("active"):
+            device.reverse_ssh_tunnel_reported_at = utc_now()
+        elif session_active(device):
+            device.reverse_ssh_tunnel_reported_at = None
+
+    if not session_active(device):
+        device.reverse_ssh_tunnel_reported_at = None
+
     if body.metrics is not None:
         device.last_metrics_json = json.dumps(body.metrics, ensure_ascii=False)
         await _record_tunnel_flow(session, device, body.metrics)
     session.add(device)
     await session.commit()
-    return ClientHeartbeatResponse(server_time=utc_now())
+    if key_updated:
+        await sync_authorized_keys(session)
+
+    cmd = build_reverse_ssh_command(device)
+    reverse_ssh = None
+    if cmd:
+        reverse_ssh = ReverseSSHCommandOut(
+            enabled=cmd["enabled"],
+            host=cmd["host"],
+            port=cmd.get("port", settings.reverse_ssh_sshd_port),
+            user=cmd["user"],
+            expires_at=device.reverse_ssh_session_expires_at,
+            ports=ReverseSSHPortsOut(**cmd["ports"]) if cmd.get("ports") else None,
+            targets=cmd.get("targets") or [],
+        )
+    return ClientHeartbeatResponse(server_time=utc_now(), reverse_ssh=reverse_ssh)
 
 
 @router.get("/me/config", response_model=ConfigBundleOut)

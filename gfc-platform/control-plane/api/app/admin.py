@@ -30,7 +30,11 @@ from .platform_secrets import (
 )
 from .client_config import encode_platform_bootstrap_code, line_code_fingerprint, refresh_line_code
 from .models import AlertEvent, ClientDevice, FlowStat, Line, Node, OperationLog, PlatformUser, SocksProfile
-from .reality_util import default_reality_config
+from .reverse_ssh import (
+    session_active,
+    session_state,
+    tunnel_ready,
+)
 from .security import hash_password
 from .timeutil import ensure_utc, parse_json_field, seconds_ago, utc_now
 from .metrics_util import sanitize_last_metrics
@@ -55,6 +59,9 @@ from .schemas import (
     ClientDeviceUpdateIn,
     PaginatedLines,
     PaginatedClientDevices,
+    ReverseSSHPortsOut,
+    ReverseSSHSessionIn,
+    ReverseSSHSessionOut,
     SocksProfileIn,
     SocksProfileOut,
     SocksProfileUpdate,
@@ -1356,6 +1363,56 @@ def _derive_client_device_states(
     return management_state, "active", None, True
 
 
+def _reverse_session_urls(device: ClientDevice) -> dict[str, str | None]:
+    urls: dict[str, str | None] = {
+        "ssh": None,
+        "web": None,
+        "flash": None,
+    }
+    if device.reverse_ssh_port:
+        urls["ssh"] = f"ssh://127.0.0.1:{device.reverse_ssh_port}"
+    if device.id:
+        urls["web"] = f"/remote/{device.id}/luci/admin/gfc/status/overview"
+        urls["flash"] = f"/remote/{device.id}/flash/"
+    return urls
+
+
+def _reverse_session_out(device: ClientDevice) -> ReverseSSHSessionOut:
+    state = session_state(device)
+    ready = tunnel_ready(device) if session_active(device) else False
+    if session_active(device) and not ready:
+        state = "connecting"
+    if ready:
+        state = "ready"
+    ports = None
+    if device.reverse_ssh_port or device.reverse_http_port:
+        ports = ReverseSSHPortsOut(
+            ssh=device.reverse_ssh_port,
+            http=device.reverse_http_port,
+        )
+    targets: list[str] = []
+    raw = device.reverse_ssh_session_targets or ""
+    if raw:
+        try:
+            targets = json.loads(raw)
+        except json.JSONDecodeError:
+            targets = [t.strip() for t in raw.split(",") if t.strip()]
+    msg = None
+    if not device.ssh_public_key:
+        msg = "设备尚未注册 SSH 公钥"
+    elif not device.reverse_ssh_port:
+        msg = "未分配反代端口"
+    return ReverseSSHSessionOut(
+        state=state,
+        expires_at=device.reverse_ssh_session_expires_at,
+        tunnel_ready=ready,
+        ports=ports,
+        targets=targets,
+        urls=_reverse_session_urls(device),
+        message=msg,
+    )
+
+
 def _client_device_list_item(device: ClientDevice) -> ClientDeviceListItem:
     line = device.line
     management_state, service_state, service_reason, line_enabled = _derive_client_device_states(device)
@@ -1368,6 +1425,9 @@ def _client_device_list_item(device: ClientDevice) -> ClientDeviceListItem:
         line_id=device.line_id,
         line_tid=line.tid if line else None,
         reverse_ssh_port=device.reverse_ssh_port,
+        reverse_http_port=device.reverse_http_port,
+        ssh_public_key_registered=bool(device.ssh_public_key),
+        reverse_ssh_session_state=session_state(device),
         proxy_mode=device.proxy_mode or "gateway",
         online=_client_device_online(device),
         management_state=management_state,
@@ -1438,8 +1498,13 @@ async def get_client_device(
 
     line = device.line
     ssh_url = None
+    web_url = None
+    flash_url = None
     if device.reverse_ssh_port:
         ssh_url = f"ssh://127.0.0.1:{device.reverse_ssh_port}"
+    if device.id:
+        web_url = f"/remote/{device.id}/luci/admin/gfc/status/overview"
+        flash_url = f"/remote/{device.id}/flash/"
 
     return ClientDeviceDetailOut(
         **base.model_dump(),
@@ -1447,6 +1512,8 @@ async def get_client_device(
         line_name=line.name if line else None,
         node_name=line.node.name if line and line.node else None,
         ssh_connect_url=ssh_url,
+        web_remote_url=web_url,
+        flash_remote_url=flash_url,
     )
 
 
@@ -1503,6 +1570,71 @@ async def delete_client_device(
         "ok": True,
         "message": "设备记录已删除；客户端仍在线时会通过线路码自动重新注册",
     }
+
+
+@router.post("/client-devices/{device_id}/reverse-ssh/session", response_model=ReverseSSHSessionOut)
+async def start_reverse_ssh_session(
+    device_id: int,
+    body: ReverseSSHSessionIn,
+    session: AsyncSession = Depends(get_session),
+    operator: str = Query("admin"),
+) -> ReverseSSHSessionOut:
+    device = await session.get(ClientDevice, device_id)
+    if not device:
+        raise HTTPException(404, "client device not found")
+    if not _client_device_online(device):
+        raise HTTPException(400, "device offline")
+    if not device.ssh_public_key:
+        raise HTTPException(400, "device ssh public key not registered")
+    if not device.reverse_ssh_port or not device.reverse_http_port:
+        raise HTTPException(400, "reverse ports not allocated")
+
+    targets = [t.strip().lower() for t in (body.targets or ["ssh"]) if t.strip()]
+    allowed = {"ssh", "web", "flash"}
+    targets = [t for t in targets if t in allowed] or ["ssh"]
+
+    ttl = body.ttl_seconds or settings.reverse_ssh_session_ttl_seconds
+    device.reverse_ssh_session_expires_at = utc_now() + dt.timedelta(seconds=ttl)
+    device.reverse_ssh_session_targets = json.dumps(targets)
+    device.reverse_ssh_tunnel_reported_at = None
+    session.add(device)
+    await _log_op(session, operator, "reverse_ssh_session_start", device.device_key, ",".join(targets))
+    await session.commit()
+    return _reverse_session_out(device)
+
+
+@router.get("/client-devices/{device_id}/reverse-ssh/session", response_model=ReverseSSHSessionOut)
+async def get_reverse_ssh_session(
+    device_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> ReverseSSHSessionOut:
+    device = await session.get(ClientDevice, device_id)
+    if not device:
+        raise HTTPException(404, "client device not found")
+    if device.reverse_ssh_session_expires_at and utc_now() >= device.reverse_ssh_session_expires_at:
+        device.reverse_ssh_session_expires_at = None
+        device.reverse_ssh_tunnel_reported_at = None
+        session.add(device)
+        await session.commit()
+    return _reverse_session_out(device)
+
+
+@router.delete("/client-devices/{device_id}/reverse-ssh/session", response_model=ReverseSSHSessionOut)
+async def stop_reverse_ssh_session(
+    device_id: int,
+    session: AsyncSession = Depends(get_session),
+    operator: str = Query("admin"),
+) -> ReverseSSHSessionOut:
+    device = await session.get(ClientDevice, device_id)
+    if not device:
+        raise HTTPException(404, "client device not found")
+    device.reverse_ssh_session_expires_at = None
+    device.reverse_ssh_tunnel_reported_at = None
+    device.reverse_ssh_session_targets = None
+    session.add(device)
+    await _log_op(session, operator, "reverse_ssh_session_stop", device.device_key)
+    await session.commit()
+    return _reverse_session_out(device)
 
 
 @router.get("/lines/{line_id}/line-code")

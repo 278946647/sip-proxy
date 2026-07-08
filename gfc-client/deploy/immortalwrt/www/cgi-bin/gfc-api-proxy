@@ -1,0 +1,56 @@
+#!/bin/sh
+# LuCI same-origin proxy to gfc-api (127.0.0.1:8080) for remote browser access.
+set -eu
+
+API="${GFC_API_URL:-http://127.0.0.1:8080/api/v1}"
+TIMEOUT="${GFC_API_TIMEOUT:-30}"
+
+print_headers() {
+	printf 'Content-Type: application/json\r\n'
+	printf 'Cache-Control: no-store\r\n'
+	printf 'Access-Control-Allow-Origin: *\r\n'
+	printf '\r\n'
+}
+
+json_error() {
+	print_headers
+	printf '%s\n' "{\"ok\":false,\"error\":{\"message\":\"$1\"}}"
+	exit 0
+}
+
+read_body() {
+	if [ -n "${CONTENT_LENGTH:-}" ] && [ "$CONTENT_LENGTH" -gt 0 ] 2>/dev/null; then
+		dd bs=1 count="$CONTENT_LENGTH" 2>/dev/null
+	fi
+}
+
+PATH_INFO="${PATH_INFO:-}"
+PATH_INFO="${PATH_INFO#/}"
+TARGET="${API}/${PATH_INFO}"
+if [ -n "${QUERY_STRING:-}" ]; then
+	TARGET="${TARGET}?${QUERY_STRING}"
+fi
+
+case "${REQUEST_METHOD:-GET}" in
+GET|HEAD)
+	print_headers
+	wget -qO- -T "$TIMEOUT" --method="${REQUEST_METHOD}" "$TARGET" 2>/dev/null \
+		|| printf '{"ok":false,"error":{"message":"api unavailable"}}'
+	;;
+POST|PUT|PATCH|DELETE)
+	BODY="$(read_body)"
+	print_headers
+	if [ -n "$BODY" ]; then
+		printf '%s' "$BODY" | wget -qO- -T "$TIMEOUT" \
+			--header='Content-Type: application/json' \
+			--post-data=@- "$TARGET" 2>/dev/null \
+			|| printf '{"ok":false,"error":{"message":"api unavailable"}}'
+	else
+		wget -qO- -T "$TIMEOUT" --method="${REQUEST_METHOD}" "$TARGET" 2>/dev/null \
+			|| printf '{"ok":false,"error":{"message":"api unavailable"}}'
+	fi
+	;;
+*)
+	json_error "method not allowed"
+	;;
+esac

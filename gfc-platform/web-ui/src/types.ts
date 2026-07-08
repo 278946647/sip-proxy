@@ -72,6 +72,9 @@ export type ClientDeviceListItem = {
   lineId: number | null;
   lineTid: string | null;
   reverseSshPort: number | null;
+  reverseHttpPort: number | null;
+  sshPublicKeyRegistered: boolean;
+  reverseSshSessionState: string;
   proxyMode: string;
   online: boolean;
   managementState: "online" | "offline";
@@ -88,6 +91,8 @@ export type ClientDeviceDetail = ClientDeviceListItem & {
   lineName: string | null;
   nodeName: string | null;
   sshConnectUrl: string | null;
+  webRemoteUrl: string | null;
+  flashRemoteUrl: string | null;
 };
 
 export type ClientDeviceMetrics = {
@@ -256,6 +261,9 @@ export function mapClientDevice(raw: Record<string, unknown>): ClientDeviceListI
     lineId: (raw.line_id as number | null) ?? null,
     lineTid: (raw.line_tid as string | null) ?? null,
     reverseSshPort: (raw.reverse_ssh_port as number | null) ?? null,
+    reverseHttpPort: (raw.reverse_http_port as number | null) ?? null,
+    sshPublicKeyRegistered: Boolean(raw.ssh_public_key_registered),
+    reverseSshSessionState: String(raw.reverse_ssh_session_state || "idle"),
     proxyMode: (raw.proxy_mode as string) || "gateway",
     online: raw.online as boolean,
     managementState: (raw.management_state as ClientDeviceListItem["managementState"]) || (raw.online ? "online" : "offline"),
@@ -276,6 +284,8 @@ export function mapClientDeviceDetail(raw: Record<string, unknown>): ClientDevic
     lineName: (raw.line_name as string | null) ?? null,
     nodeName: (raw.node_name as string | null) ?? null,
     sshConnectUrl: (raw.ssh_connect_url as string | null) ?? null,
+    webRemoteUrl: (raw.web_remote_url as string | null) ?? null,
+    flashRemoteUrl: (raw.flash_remote_url as string | null) ?? null,
   };
 }
 
