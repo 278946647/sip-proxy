@@ -9,7 +9,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import Node, NodeTrafficSample
 from .monitor import node_is_online
-from .settings import settings
 from .timeutil import ensure_utc, utc_now
 
 SAMPLE_INTERVAL_SECONDS = 300  # 5 minutes — matches UI collection cadence
