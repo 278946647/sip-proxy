@@ -43,6 +43,16 @@ def _migrate_sync(sync_conn: Connection) -> None:
         "line_code_b32": "ALTER TABLE lines ADD COLUMN line_code_b32 TEXT",
         "flow_stats_enabled": "ALTER TABLE lines ADD COLUMN flow_stats_enabled BOOLEAN DEFAULT 1",
     }
+    node_traffic_cols = {
+        "traffic_monitor_iface": "ALTER TABLE nodes ADD COLUMN traffic_monitor_iface VARCHAR(64)",
+        "traffic_billing_start_at": "ALTER TABLE nodes ADD COLUMN traffic_billing_start_at DATETIME",
+        "traffic_billing_cycle_days": "ALTER TABLE nodes ADD COLUMN traffic_billing_cycle_days INTEGER DEFAULT 30",
+        "traffic_monthly_quota_gb": "ALTER TABLE nodes ADD COLUMN traffic_monthly_quota_gb INTEGER",
+        "traffic_correction_bytes": "ALTER TABLE nodes ADD COLUMN traffic_correction_bytes INTEGER DEFAULT 0",
+        "traffic_pending_bytes_in": "ALTER TABLE nodes ADD COLUMN traffic_pending_bytes_in INTEGER DEFAULT 0",
+        "traffic_pending_bytes_out": "ALTER TABLE nodes ADD COLUMN traffic_pending_bytes_out INTEGER DEFAULT 0",
+        "traffic_last_sample_at": "ALTER TABLE nodes ADD COLUMN traffic_last_sample_at DATETIME",
+    }
     socks_cols = {
         "remark": "ALTER TABLE socks_profiles ADD COLUMN remark TEXT",
         "country": "ALTER TABLE socks_profiles ADD COLUMN country VARCHAR(128)",
@@ -60,6 +70,9 @@ def _migrate_sync(sync_conn: Connection) -> None:
     if _table_exists(sync_conn, "nodes"):
         existing = _cols(sync_conn, "nodes")
         for col, sql in node_cols.items():
+            if col not in existing:
+                sync_conn.execute(text(sql))
+        for col, sql in node_traffic_cols.items():
             if col not in existing:
                 sync_conn.execute(text(sql))
 
@@ -134,6 +147,30 @@ def _migrate_sync(sync_conn: Connection) -> None:
                     UNIQUE (token_hash)
                 )
                 """
+            )
+        )
+
+    if not _table_exists(sync_conn, "node_traffic_samples"):
+        sync_conn.execute(
+            text(
+                """
+                CREATE TABLE node_traffic_samples (
+                    id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                    node_id INTEGER NOT NULL,
+                    sampled_at DATETIME NOT NULL,
+                    window_seconds INTEGER DEFAULT 300,
+                    bytes_in INTEGER DEFAULT 0,
+                    bytes_out INTEGER DEFAULT 0,
+                    iface VARCHAR(64),
+                    FOREIGN KEY(node_id) REFERENCES nodes (id) ON DELETE CASCADE
+                )
+                """
+            )
+        )
+        sync_conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS idx_node_traffic_node_ts "
+                "ON node_traffic_samples(node_id, sampled_at)"
             )
         )
 

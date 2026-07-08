@@ -44,6 +44,19 @@ class Node(Base):
     static_routes_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     reality_config_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    traffic_monitor_iface: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    traffic_billing_start_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    traffic_billing_cycle_days: Mapped[int] = mapped_column(Integer, default=30)
+    traffic_monthly_quota_gb: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    traffic_correction_bytes: Mapped[int] = mapped_column(Integer, default=0)
+    traffic_pending_bytes_in: Mapped[int] = mapped_column(Integer, default=0)
+    traffic_pending_bytes_out: Mapped[int] = mapped_column(Integer, default=0)
+    traffic_last_sample_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     tokens: Mapped[list["NodeToken"]] = relationship(
         back_populates="node", cascade="all, delete-orphan"
     )
@@ -220,6 +233,18 @@ class FlowStat(Base):
     bytes_in: Mapped[int] = mapped_column(Integer, default=0)
     bytes_out: Mapped[int] = mapped_column(Integer, default=0)
     active_conns: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class NodeTrafficSample(Base):
+    __tablename__ = "node_traffic_samples"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    node_id: Mapped[int] = mapped_column(ForeignKey("nodes.id", ondelete="CASCADE"), index=True)
+    sampled_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), index=True)
+    window_seconds: Mapped[int] = mapped_column(Integer, default=300)
+    bytes_in: Mapped[int] = mapped_column(Integer, default=0)
+    bytes_out: Mapped[int] = mapped_column(Integer, default=0)
+    iface: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class PlatformUser(Base):

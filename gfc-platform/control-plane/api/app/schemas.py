@@ -285,6 +285,34 @@ class FlowStatOut(BaseModel):
     active_conns: int
 
 
+class NodeTrafficBillingIn(BaseModel):
+    billing_cycle_start_at: dt.datetime | None = None
+    billing_cycle_days: int | None = Field(default=None, ge=1, le=365)
+    monthly_quota_gb: int | None = Field(default=None, ge=1, le=102400)
+    correction_bytes: int | None = None
+    monitor_iface: str | None = Field(default=None, max_length=64)
+
+
+class NodeTrafficOverviewOut(BaseModel):
+    node_id: int
+    node_name: str
+    country: str | None
+    public_ip: str | None
+    online: bool
+    last_24h_bytes: int
+    recent_increment_bytes: int
+    billing_period_bytes: int
+    billing_cycle_start_at: dt.datetime | None
+    billing_cycle_end_at: dt.datetime | None
+    billing_cycle_days: int
+    monthly_quota_gb: int | None
+    quota_used_percent: float | None
+    correction_bytes: int
+    monitor_iface: str | None
+    status: str
+    last_sample_at: dt.datetime | None
+
+
 class LoginIn(BaseModel):
     username: str = Field(min_length=1, max_length=64)
     password: str = Field(min_length=1)

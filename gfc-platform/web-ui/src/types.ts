@@ -146,6 +146,48 @@ export type FlowStat = {
   activeConns: number;
 };
 
+export type NodeTrafficOverview = {
+  nodeId: number;
+  nodeName: string;
+  country: string | null;
+  publicIp: string | null;
+  online: boolean;
+  last24hBytes: number;
+  recentIncrementBytes: number;
+  billingPeriodBytes: number;
+  billingCycleStartAt: string | null;
+  billingCycleEndAt: string | null;
+  billingCycleDays: number;
+  monthlyQuotaGb: number | null;
+  quotaUsedPercent: number | null;
+  correctionBytes: number;
+  monitorIface: string | null;
+  status: string;
+  lastSampleAt: string | null;
+};
+
+export function mapNodeTrafficOverview(raw: Record<string, unknown>): NodeTrafficOverview {
+  return {
+    nodeId: raw.node_id as number,
+    nodeName: raw.node_name as string,
+    country: (raw.country as string | null) ?? null,
+    publicIp: (raw.public_ip as string | null) ?? null,
+    online: raw.online as boolean,
+    last24hBytes: raw.last_24h_bytes as number,
+    recentIncrementBytes: raw.recent_increment_bytes as number,
+    billingPeriodBytes: raw.billing_period_bytes as number,
+    billingCycleStartAt: (raw.billing_cycle_start_at as string | null) ?? null,
+    billingCycleEndAt: (raw.billing_cycle_end_at as string | null) ?? null,
+    billingCycleDays: raw.billing_cycle_days as number,
+    monthlyQuotaGb: (raw.monthly_quota_gb as number | null) ?? null,
+    quotaUsedPercent: (raw.quota_used_percent as number | null) ?? null,
+    correctionBytes: raw.correction_bytes as number,
+    monitorIface: (raw.monitor_iface as string | null) ?? null,
+    status: raw.status as string,
+    lastSampleAt: (raw.last_sample_at as string | null) ?? null,
+  };
+}
+
 export type PlatformUser = {
   id: number;
   username: string;

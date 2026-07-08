@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .alerts import send_email
 from .models import AlertEvent, Node
+from .node_traffic import record_node_network_traffic
 from .settings import settings
 from .timeutil import utc_now
 
@@ -60,6 +61,8 @@ async def process_heartbeat_metrics(
 
     node.last_metrics_json = json.dumps(metrics, ensure_ascii=False)
     session.add(node)
+
+    await record_node_network_traffic(session, node, metrics.get("network_traffic"))
 
     services = metrics.get("services") or {}
     for svc, info in services.items():

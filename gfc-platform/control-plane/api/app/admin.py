@@ -36,6 +36,7 @@ from .timeutil import ensure_utc, parse_json_field, seconds_ago, utc_now
 from .metrics_util import sanitize_last_metrics
 from .monitor import node_is_online
 from .node_config import build_node_payload
+from .node_traffic import build_node_traffic_overview, ensure_billing_defaults
 from .schemas import (
     AlertOut,
     DashboardOut,
@@ -44,6 +45,8 @@ from .schemas import (
     LineDetailOut,
     LineListItem,
     LineUpdateIn,
+    NodeTrafficBillingIn,
+    NodeTrafficOverviewOut,
     NodeUpdateIn,
     NodeVpnConfigIn,
     OperationLogOut,
@@ -1011,6 +1014,62 @@ async def list_flow_stats(
         )
         for f in rows
     ]
+
+
+@router.get("/node-traffic/overview", response_model=list[NodeTrafficOverviewOut])
+async def node_traffic_overview(
+    session: AsyncSession = Depends(get_session),
+) -> list[NodeTrafficOverviewOut]:
+    nodes = (await session.execute(select(Node).order_by(Node.id.asc()))).scalars().all()
+    items: list[NodeTrafficOverviewOut] = []
+    for node in nodes:
+        row = await build_node_traffic_overview(session, node)
+        items.append(NodeTrafficOverviewOut(**row))
+    await session.commit()
+    return items
+
+
+@router.patch("/nodes/{node_id}/traffic-billing", response_model=NodeTrafficOverviewOut)
+async def update_node_traffic_billing(
+    node_id: int,
+    body: NodeTrafficBillingIn,
+    session: AsyncSession = Depends(get_session),
+    operator: str = Query("admin"),
+) -> NodeTrafficOverviewOut:
+    node = await session.get(Node, node_id)
+    if not node:
+        raise HTTPException(404, "node not found")
+    data = body.model_dump(exclude_unset=True)
+    if "monitor_iface" in data:
+        node.traffic_monitor_iface = data.pop("monitor_iface")
+    for key, val in data.items():
+        setattr(node, key, val)
+    ensure_billing_defaults(node)
+    session.add(node)
+    await _log_op(session, operator, "update_node_traffic_billing", node.name)
+    await session.commit()
+    row = await build_node_traffic_overview(session, node)
+    return NodeTrafficOverviewOut(**row)
+
+
+@router.post("/nodes/{node_id}/traffic-billing/reset-cycle", response_model=NodeTrafficOverviewOut)
+async def reset_node_traffic_billing_cycle(
+    node_id: int,
+    session: AsyncSession = Depends(get_session),
+    operator: str = Query("admin"),
+) -> NodeTrafficOverviewOut:
+    node = await session.get(Node, node_id)
+    if not node:
+        raise HTTPException(404, "node not found")
+    node.traffic_billing_start_at = utc_now()
+    node.traffic_correction_bytes = 0
+    node.traffic_pending_bytes_in = 0
+    node.traffic_pending_bytes_out = 0
+    session.add(node)
+    await _log_op(session, operator, "reset_node_traffic_cycle", node.name)
+    await session.commit()
+    row = await build_node_traffic_overview(session, node)
+    return NodeTrafficOverviewOut(**row)
 
 
 @router.get("/settings/email")

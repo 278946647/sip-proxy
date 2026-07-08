@@ -1,64 +1,247 @@
-import { Card, Empty, Table, Typography, message } from "antd";
-import { useEffect, useState } from "react";
+import {
+  Button,
+  Card,
+  DatePicker,
+  Form,
+  Input,
+  InputNumber,
+  Modal,
+  Progress,
+  Space,
+  Table,
+  Tag,
+  Typography,
+  message,
+} from "antd";
+import { ReloadOutlined, SettingOutlined } from "@ant-design/icons";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import dayjs from "dayjs";
-import { apiGet } from "../api/client";
-import type { FlowStat } from "../types";
+import { apiGet, apiPatch, apiPost } from "../api/client";
+import { formatBytes } from "../components/TrafficChart";
+import { mapNodeTrafficOverview, type NodeTrafficOverview } from "../types";
 
-function formatBytes(n: number) {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 ** 2) return `${(n / 1024).toFixed(1)} KB`;
-  if (n < 1024 ** 3) return `${(n / 1024 ** 2).toFixed(1)} MB`;
-  return `${(n / 1024 ** 3).toFixed(2)} GB`;
+function maskIp(ip: string | null) {
+  if (!ip) return "-";
+  const parts = ip.split(".");
+  if (parts.length !== 4) return ip;
+  return `${parts[0]}.${parts[1]}.***.***`;
+}
+
+function statusTag(status: string) {
+  if (status === "active") return <Tag color="green">活跃</Tag>;
+  if (status === "offline") return <Tag color="red">离线</Tag>;
+  return <Tag>无数据</Tag>;
 }
 
 export function TrafficPage() {
-  const [stats, setStats] = useState<FlowStat[]>([]);
+  const [rows, setRows] = useState<NodeTrafficOverview[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [lastRefresh, setLastRefresh] = useState(dayjs());
+  const [editOpen, setEditOpen] = useState(false);
+  const [editing, setEditing] = useState<NodeTrafficOverview | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [form] = Form.useForm();
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await apiGet<Record<string, unknown>[]>("/admin/node-traffic/overview");
+      setRows(res.map(mapNodeTrafficOverview));
+      setLastRefresh(dayjs());
+    } catch (e) {
+      message.error(String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    void apiGet<Record<string, unknown>[]>("/admin/flow-stats")
-      .then((rows) =>
-        setStats(
-          rows.map((x) => ({
-            id: x.id as number,
-            nodeId: x.node_id as number,
-            lineId: x.line_id as number | null,
-            windowStart: x.window_start as string,
-            windowSeconds: x.window_seconds as number,
-            bytesIn: x.bytes_in as number,
-            bytesOut: x.bytes_out as number,
-            activeConns: x.active_conns as number,
-          }))
-        )
-      )
-      .catch((e) => message.error(String(e)));
-  }, []);
+    void load();
+    const timer = window.setInterval(() => void load(), 60_000);
+    return () => window.clearInterval(timer);
+  }, [load]);
+
+  const lastCollectAt = useMemo(() => {
+    const times = rows.map((r) => r.lastSampleAt).filter(Boolean) as string[];
+    if (times.length === 0) return null;
+    return times.sort().at(-1) ?? null;
+  }, [rows]);
+
+  const openEdit = (row: NodeTrafficOverview) => {
+    setEditing(row);
+    form.setFieldsValue({
+      billingCycleStartAt: row.billingCycleStartAt ? dayjs(row.billingCycleStartAt) : dayjs(),
+      billingCycleDays: row.billingCycleDays,
+      monthlyQuotaGb: row.monthlyQuotaGb ?? undefined,
+      correctionBytes: row.correctionBytes,
+      monitorIface: row.monitorIface ?? undefined,
+    });
+    setEditOpen(true);
+  };
+
+  const saveBilling = async () => {
+    if (!editing) return;
+    const v = await form.validateFields();
+    setSaving(true);
+    try {
+      await apiPatch(
+        `/admin/nodes/${editing.nodeId}/traffic-billing?operator=${localStorage.getItem("gfc_user") || "admin"}`,
+        {
+          billing_cycle_start_at: dayjs(v.billingCycleStartAt).toISOString(),
+          billing_cycle_days: v.billingCycleDays,
+          monthly_quota_gb: v.monthlyQuotaGb ?? null,
+          correction_bytes: v.correctionBytes ?? 0,
+          monitor_iface: v.monitorIface || null,
+        }
+      );
+      message.success("计费配置已保存");
+      setEditOpen(false);
+      await load();
+    } catch (e) {
+      message.error(String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const resetCycle = async () => {
+    if (!editing) return;
+    setSaving(true);
+    try {
+      await apiPost(
+        `/admin/nodes/${editing.nodeId}/traffic-billing/reset-cycle?operator=${localStorage.getItem("gfc_user") || "admin"}`,
+        {}
+      );
+      message.success("已开启新计费周期，用量从零累计");
+      setEditOpen(false);
+      await load();
+    } catch (e) {
+      message.error(String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <div>
-      <Typography.Title level={4}>流量统计</Typography.Title>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16 }}>
+        <div>
+          <Typography.Title level={4} style={{ margin: 0 }}>
+            端口流量概览
+          </Typography.Title>
+          <Typography.Text type="secondary">
+            数据每 5 分钟自动采集
+            {lastCollectAt ? ` | 最后采集：${dayjs(lastCollectAt).format("YYYY-MM-DD HH:mm:ss")}` : ""}
+          </Typography.Text>
+        </div>
+        <Button icon={<ReloadOutlined />} onClick={() => void load()}>
+          刷新
+        </Button>
+      </div>
+
       <Card>
-        {stats.length === 0 ? (
-          <Empty description="暂无流量数据。节点 Agent 上报后将在此展示（按线路/时间窗聚合）。" />
-        ) : (
-          <Table
-            rowKey="id"
-            dataSource={stats}
-            columns={[
-              { title: "节点 ID", dataIndex: "nodeId" },
-              { title: "线路 ID", dataIndex: "lineId", render: (v) => v ?? "-" },
-              {
-                title: "窗口",
-                dataIndex: "windowStart",
-                render: (v, r) =>
-                  `${dayjs(v).format("MM-DD HH:mm")} (${r.windowSeconds}s)`,
-              },
-              { title: "入站", dataIndex: "bytesIn", render: formatBytes },
-              { title: "出站", dataIndex: "bytesOut", render: formatBytes },
-              { title: "活跃连接", dataIndex: "activeConns" },
-            ]}
-          />
-        )}
+        <Table
+          rowKey="nodeId"
+          loading={loading}
+          dataSource={rows}
+          pagination={false}
+          columns={[
+            { title: "节点", dataIndex: "nodeName" },
+            { title: "国家", dataIndex: "country", render: (v: string | null) => v || "-" },
+            {
+              title: "公网 IP",
+              dataIndex: "publicIp",
+              render: (v: string | null) => maskIp(v),
+            },
+            {
+              title: "最近 24 小时",
+              dataIndex: "last24hBytes",
+              render: (v: number) => formatBytes(v),
+            },
+            {
+              title: "最近增量 (7分钟)",
+              dataIndex: "recentIncrementBytes",
+              render: (v: number) => formatBytes(v),
+            },
+            {
+              title: "计费周期用量",
+              dataIndex: "billingPeriodBytes",
+              render: (v: number, row) => (
+                <Space direction="vertical" size={0}>
+                  <span>{formatBytes(v)}</span>
+                  {row.monthlyQuotaGb ? (
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      配额 {row.monthlyQuotaGb} GB
+                      {row.quotaUsedPercent != null ? ` · ${row.quotaUsedPercent}%` : ""}
+                    </Typography.Text>
+                  ) : null}
+                </Space>
+              ),
+            },
+            {
+              title: "状态",
+              dataIndex: "status",
+              render: (v: string) => statusTag(v),
+            },
+            {
+              title: "操作",
+              render: (_, row) => (
+                <Button size="small" icon={<SettingOutlined />} onClick={() => openEdit(row)}>
+                  计费设置
+                </Button>
+              ),
+            },
+          ]}
+        />
       </Card>
+
+      <Modal
+        title={editing ? `计费设置 — ${editing.nodeName}` : "计费设置"}
+        open={editOpen}
+        onCancel={() => setEditOpen(false)}
+        onOk={() => void saveBilling()}
+        confirmLoading={saving}
+        width={560}
+        destroyOnClose
+        footer={(_, { OkBtn, CancelBtn }) => (
+          <Space style={{ width: "100%", justifyContent: "space-between" }}>
+            <Button danger onClick={() => void resetCycle()} loading={saving}>
+              开启新计费周期
+            </Button>
+            <Space>
+              <CancelBtn />
+              <OkBtn />
+            </Space>
+          </Space>
+        )}
+      >
+        <Form form={form} layout="vertical">
+          <Form.Item name="billingCycleStartAt" label="计费开始时间" rules={[{ required: true }]}>
+            <DatePicker showTime style={{ width: "100%" }} />
+          </Form.Item>
+          <Form.Item name="billingCycleDays" label="计费周期（天）" rules={[{ required: true }]}>
+            <InputNumber min={1} max={365} style={{ width: "100%" }} />
+          </Form.Item>
+          <Form.Item name="monthlyQuotaGb" label="月流量配额 (GB)">
+            <InputNumber min={1} max={102400} placeholder="例如 5120 (=5TB)" style={{ width: "100%" }} />
+          </Form.Item>
+          <Form.Item
+            name="correctionBytes"
+            label="流量校正 (字节)"
+            extra="用于补偿云厂商账单与采集偏差，计入当前计费周期"
+          >
+            <InputNumber style={{ width: "100%" }} />
+          </Form.Item>
+          <Form.Item name="monitorIface" label="监控网卡（可选）">
+            <Input placeholder="留空则由节点 Agent 自动探测 WAN/TPROXY 网卡" />
+          </Form.Item>
+          {editing?.monthlyQuotaGb && editing.quotaUsedPercent != null ? (
+            <Form.Item label="配额使用">
+              <Progress percent={editing.quotaUsedPercent} status={editing.quotaUsedPercent >= 90 ? "exception" : "active"} />
+            </Form.Item>
+          ) : null}
+        </Form>
+      </Modal>
     </div>
   );
 }

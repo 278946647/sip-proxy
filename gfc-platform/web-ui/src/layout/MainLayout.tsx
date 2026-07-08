@@ -26,7 +26,7 @@ const menuItems = [
   { key: "/nodes", icon: <ClusterOutlined />, label: "转发节点" },
   { key: "/lines", icon: <GlobalOutlined />, label: "线路管理" },
   { key: "/client-devices", icon: <MobileOutlined />, label: "客户端管理" },
-  { key: "/traffic", icon: <LineChartOutlined />, label: "流量" },
+  { key: "/traffic", icon: <LineChartOutlined />, label: "节点流量" },
   { key: "/health", icon: <HeartOutlined />, label: "健康检查" },
   { key: "/proxies", icon: <CloudServerOutlined />, label: "代理配置" },
   { key: "/settings", icon: <SettingOutlined />, label: "系统设置" },

@@ -5,6 +5,7 @@ import type { FlowStat } from "../types";
 type Props = {
   stats: FlowStat[];
   height?: number;
+  maxPoints?: number;
 };
 
 function formatBytes(n: number) {
@@ -14,7 +15,22 @@ function formatBytes(n: number) {
   return `${(n / 1024 ** 3).toFixed(2)} GB`;
 }
 
-export function TrafficChart({ stats, height = 240 }: Props) {
+type ChartPoint = FlowStat & { total: number; label: string };
+
+function downsamplePoints(points: ChartPoint[], maxPoints: number): ChartPoint[] {
+  if (points.length <= maxPoints) return points;
+  const bucket = points.length / maxPoints;
+  const out: ChartPoint[] = [];
+  for (let i = 0; i < maxPoints; i += 1) {
+    const start = Math.floor(i * bucket);
+    const end = Math.max(start + 1, Math.floor((i + 1) * bucket));
+    const slice = points.slice(start, end);
+    out.push(slice.reduce((best, p) => (p.total > best.total ? p : best), slice[0]));
+  }
+  return out;
+}
+
+export function TrafficChart({ stats, height = 220, maxPoints = 120 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [chartWidth, setChartWidth] = useState(0);
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
@@ -29,15 +45,14 @@ export function TrafficChart({ stats, height = 240 }: Props) {
     return () => ro.disconnect();
   }, []);
 
-  const points = useMemo(
-    () =>
-      stats.map((s) => ({
-        ...s,
-        total: s.bytesIn + s.bytesOut,
-        label: dayjs(s.windowStart).format("MM-DD HH:mm"),
-      })),
-    [stats]
-  );
+  const points = useMemo(() => {
+    const raw = stats.map((s) => ({
+      ...s,
+      total: s.bytesIn + s.bytesOut,
+      label: dayjs(s.windowStart).format("MM-DD HH:mm"),
+    }));
+    return downsamplePoints(raw, maxPoints);
+  }, [stats, maxPoints]);
 
   if (points.length === 0) {
     return <div className="traffic-chart-empty">暂无流量数据</div>;
@@ -46,7 +61,7 @@ export function TrafficChart({ stats, height = 240 }: Props) {
   const width = chartWidth > 0 ? chartWidth : 1;
   const max = Math.max(...points.map((p) => p.total), 1);
   const pad = { top: 16, right: 8, bottom: 36, left: 52 };
-  const innerW = width - pad.left - pad.right;
+  const innerW = Math.max(width - pad.left - pad.right, 1);
   const innerH = height - pad.top - pad.bottom;
 
   const coords = points.map((p, i) => {
@@ -97,7 +112,7 @@ export function TrafficChart({ stats, height = 240 }: Props) {
         <polyline fill="none" stroke="#3b82f6" strokeWidth="1.75" points={polyline} />
         {coords.map((c, i) => (
           <circle
-            key={c.p.id}
+            key={`${c.p.id}-${i}`}
             cx={c.x}
             cy={c.y}
             r={hoverIdx === i ? 4 : 0}
@@ -124,7 +139,7 @@ export function TrafficChart({ stats, height = 240 }: Props) {
           {" · "}上行 {formatBytes(hover.p.bytesOut)}
         </div>
       ) : (
-        <div className="traffic-chart-hint">鼠标悬停折线查看该时段详情（采样间隔约 10 秒）</div>
+        <div className="traffic-chart-hint">鼠标悬停折线查看该时段详情（展示已抽样，最多 {maxPoints} 点）</div>
       )}
     </div>
   );

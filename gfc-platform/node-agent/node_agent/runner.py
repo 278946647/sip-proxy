@@ -137,7 +137,9 @@ def run_loop(args: argparse.Namespace) -> None:
     while True:
         try:
             reachable = client.check_reachable()
-            metrics = collect_metrics(client.server, reachable, Path(args.config_dir))
+            metrics = collect_metrics(
+                client.server, reachable, Path(args.config_dir), args.poll_seconds
+            )
             client.heartbeat(metrics, args.node_name, detect_public_ip())
 
             cfg = client.pull_config()

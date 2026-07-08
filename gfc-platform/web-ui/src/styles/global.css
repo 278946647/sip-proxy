@@ -108,14 +108,16 @@ body,
 
 .traffic-chart {
   width: 100%;
+  max-width: 100%;
   overflow: hidden;
 }
 
 .traffic-chart svg {
   display: block;
   width: 100%;
+  max-width: 100%;
   height: auto;
-  vertical-align: top;
+  max-height: 240px;
 }
 
 .traffic-chart-empty {
