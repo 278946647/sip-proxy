@@ -15,19 +15,25 @@ import {
 } from "antd";
 import { ArrowLeftOutlined } from "@ant-design/icons";
 import { LineCodeField } from "../components/LineCodeField";
-import { TrafficChart } from "../components/TrafficChart";
-import { useEffect, useState } from "react";
+import { TrafficStatsPanel } from "../components/TrafficStatsPanel";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import dayjs from "dayjs";
 import { apiDelete, apiGet, apiPatch, apiPost } from "../api/client";
+import { confirmLineEnableChange } from "../utils/lineEnableConfirm";
 import { mapLineDetail, type FlowStat, type LineDetail } from "../types";
 
-function formatTrafficTotal(stats: FlowStat[]) {
-  const total = stats.reduce((sum, s) => sum + s.bytesIn + s.bytesOut, 0);
-  if (total < 1024) return `${total} B`;
-  if (total < 1024 ** 2) return `${(total / 1024).toFixed(1)} KB`;
-  if (total < 1024 ** 3) return `${(total / 1024 ** 2).toFixed(1)} MB`;
-  return `${(total / 1024 ** 3).toFixed(2)} GB`;
+function mapFlowRows(flow: Record<string, unknown>[]) {
+  return flow.map((x) => ({
+    id: x.id as number,
+    nodeId: x.node_id as number,
+    lineId: x.line_id as number | null,
+    windowStart: x.window_start as string,
+    windowSeconds: x.window_seconds as number,
+    bytesIn: x.bytes_in as number,
+    bytesOut: x.bytes_out as number,
+    activeConns: x.active_conns as number,
+  }));
 }
 
 export function LineDetailPage() {
@@ -40,6 +46,11 @@ export function LineDetailPage() {
   const [bandwidthSaving, setBandwidthSaving] = useState(false);
   const [enableSaving, setEnableSaving] = useState(false);
   const [flowStats, setFlowStats] = useState<FlowStat[]>([]);
+  const [flowUpdatedAt, setFlowUpdatedAt] = useState(dayjs().format("YYYY-MM-DD HH:mm:ss"));
+  const [flowPaused, setFlowPaused] = useState(false);
+  const [flowStatsSaving, setFlowStatsSaving] = useState(false);
+  const flowStatsEnabledRef = useRef(true);
+  const flowPausedRef = useRef(false);
   const [lineCode, setLineCode] = useState("");
   const [codeMeta, setCodeMeta] = useState<{ fingerprint?: string; lineId?: string }>({});
   const [codeLoading, setCodeLoading] = useState(false);
@@ -75,66 +86,58 @@ export function LineDetailPage() {
     });
     if (d.lineType === "client") {
       await loadLineCode();
+      flowStatsEnabledRef.current = d.flowStatsEnabled;
+      if (d.flowStatsEnabled) {
+        const flow = await apiGet<Record<string, unknown>[]>(`/admin/lines/${id}/flow-stats?hours=24`);
+        setFlowStats(mapFlowRows(flow));
+        setFlowUpdatedAt(dayjs().format("YYYY-MM-DD HH:mm:ss"));
+      } else {
+        setFlowStats([]);
+      }
     } else {
       setLineCode("");
       setCodeMeta({});
+      setFlowStats([]);
     }
+  };
+
+  const refreshFlowStats = async () => {
+    if (!id || !flowStatsEnabledRef.current) return;
     const flow = await apiGet<Record<string, unknown>[]>(`/admin/lines/${id}/flow-stats?hours=24`);
-    setFlowStats(
-      flow.map((x) => ({
-        id: x.id as number,
-        nodeId: x.node_id as number,
-        lineId: x.line_id as number | null,
-        windowStart: x.window_start as string,
-        windowSeconds: x.window_seconds as number,
-        bytesIn: x.bytes_in as number,
-        bytesOut: x.bytes_out as number,
-        activeConns: x.active_conns as number,
-      }))
-    );
+    setFlowStats(mapFlowRows(flow));
+    setFlowUpdatedAt(dayjs().format("YYYY-MM-DD HH:mm:ss"));
   };
 
   useEffect(() => {
     setLine(null);
     setLineCode("");
     setCodeMeta({});
+    setFlowPaused(false);
+    flowPausedRef.current = false;
     void load().catch((e) => message.error(String(e)));
     const timer = window.setInterval(() => {
-      if (!id) return;
-      void apiGet<Record<string, unknown>[]>(`/admin/lines/${id}/flow-stats?hours=24`)
-        .then((flow) =>
-          setFlowStats(
-            flow.map((x) => ({
-              id: x.id as number,
-              nodeId: x.node_id as number,
-              lineId: x.line_id as number | null,
-              windowStart: x.window_start as string,
-              windowSeconds: x.window_seconds as number,
-              bytesIn: x.bytes_in as number,
-              bytesOut: x.bytes_out as number,
-              activeConns: x.active_conns as number,
-            }))
-          )
-        )
-        .catch(() => undefined);
+      if (!id || flowPausedRef.current || !flowStatsEnabledRef.current) return;
+      void refreshFlowStats().catch(() => undefined);
     }, 10000);
     return () => window.clearInterval(timer);
   }, [id]);
 
-  const toggleEnabled = async (checked: boolean) => {
-    if (!id) return;
-    setEnableSaving(true);
-    try {
-      await apiPatch(`/admin/lines/${id}?operator=${localStorage.getItem("gfc_user") || "admin"}`, {
-        is_enabled: checked,
-      });
-      message.success(checked ? "线路已启用，客户端将在下次拉取配置后恢复代理" : "线路已禁用，客户端将切换为直连模式");
-      await load();
-    } catch (e) {
-      message.error(String(e));
-    } finally {
-      setEnableSaving(false);
-    }
+  const toggleEnabled = (checked: boolean) => {
+    if (!id || !line) return;
+    confirmLineEnableChange(checked, line.tid, async () => {
+      setEnableSaving(true);
+      try {
+        await apiPatch(`/admin/lines/${id}?operator=${localStorage.getItem("gfc_user") || "admin"}`, {
+          is_enabled: checked,
+        });
+        message.success(checked ? "线路已启用，客户端将在下次拉取配置后恢复代理" : "线路已禁用，客户端将切换为直连模式");
+        await load();
+      } catch (e) {
+        message.error(String(e));
+      } finally {
+        setEnableSaving(false);
+      }
+    });
   };
 
   const saveBandwidth = async () => {
@@ -208,6 +211,32 @@ export function LineDetailPage() {
     }
   };
 
+  const toggleFlowStats = async (checked: boolean) => {
+    if (!id) return;
+    setFlowStatsSaving(true);
+    try {
+      await apiPatch(`/admin/lines/${id}?operator=${localStorage.getItem("gfc_user") || "admin"}`, {
+        flow_stats_enabled: checked,
+      });
+      flowStatsEnabledRef.current = checked;
+      message.success(checked ? "已开启流量统计" : "已关闭流量统计，不再记录新数据");
+      await load();
+      if (checked) await refreshFlowStats();
+    } catch (e) {
+      message.error(String(e));
+    } finally {
+      setFlowStatsSaving(false);
+    }
+  };
+
+  const toggleFlowPaused = () => {
+    setFlowPaused((prev) => {
+      const next = !prev;
+      flowPausedRef.current = next;
+      return next;
+    });
+  };
+
   if (!line) return null;
 
   const socksUri =
@@ -251,7 +280,7 @@ export function LineDetailPage() {
                 loading={enableSaving}
                 checkedChildren="启用"
                 unCheckedChildren="禁用"
-                onChange={(checked) => void toggleEnabled(checked)}
+                onChange={(checked) => toggleEnabled(checked)}
               />
               <Tag color={line.isEnabled ? "green" : "default"}>{line.isEnabled ? "代理可用" : "已停用代理"}</Tag>
             </Space>
@@ -348,12 +377,18 @@ export function LineDetailPage() {
 
       {line.lineType === "client" && (
         <div className="line-detail-section">
-          <Typography.Title level={5}>流量统计（最近 24 小时）</Typography.Title>
-          <Space style={{ marginBottom: 12 }}>
-            <Typography.Text type="secondary">24h 总流量 {formatTrafficTotal(flowStats)}</Typography.Text>
-            <Typography.Text type="secondary">更新于 {dayjs().format("YYYY-MM-DD HH:mm:ss")}</Typography.Text>
-          </Space>
-          <TrafficChart stats={flowStats} />
+          <Typography.Title level={5} style={{ marginTop: 0 }}>
+            流量统计
+          </Typography.Title>
+          <TrafficStatsPanel
+            stats={flowStats}
+            enabled={line.flowStatsEnabled}
+            paused={flowPaused}
+            updatedAt={flowUpdatedAt}
+            saving={flowStatsSaving}
+            onToggleEnabled={(checked) => void toggleFlowStats(checked)}
+            onTogglePause={toggleFlowPaused}
+          />
         </div>
       )}
 

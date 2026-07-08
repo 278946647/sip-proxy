@@ -60,6 +60,7 @@ export type LineDetail = LineListItem & {
   currentConfigVersion: string | null;
   clientUuid: string | null;
   lineCodeB32: string | null;
+  flowStatsEnabled: boolean;
 };
 
 export type ClientDeviceListItem = {
@@ -73,6 +74,10 @@ export type ClientDeviceListItem = {
   reverseSshPort: number | null;
   proxyMode: string;
   online: boolean;
+  managementState: "online" | "offline";
+  serviceState: "active" | "suspended" | "unbound" | "degraded" | "unknown";
+  serviceReason: string | null;
+  lineEnabled: boolean | null;
   lastSeenAt: string | null;
   agentVersion: string | null;
   createdAt: string;
@@ -195,6 +200,7 @@ export function mapLineDetail(raw: Record<string, unknown>): LineDetail {
     currentConfigVersion: raw.current_config_version as string | null,
     clientUuid: (raw.client_uuid as string | null) ?? null,
     lineCodeB32: (raw.line_code_b32 as string | null) ?? null,
+    flowStatsEnabled: raw.flow_stats_enabled !== false,
   };
 }
 
@@ -210,6 +216,10 @@ export function mapClientDevice(raw: Record<string, unknown>): ClientDeviceListI
     reverseSshPort: (raw.reverse_ssh_port as number | null) ?? null,
     proxyMode: (raw.proxy_mode as string) || "gateway",
     online: raw.online as boolean,
+    managementState: (raw.management_state as ClientDeviceListItem["managementState"]) || (raw.online ? "online" : "offline"),
+    serviceState: (raw.service_state as ClientDeviceListItem["serviceState"]) || "unknown",
+    serviceReason: (raw.service_reason as string | null) ?? null,
+    lineEnabled: (raw.line_enabled as boolean | null) ?? null,
     lastSeenAt: (raw.last_seen_at as string | null) ?? null,
     agentVersion: (raw.agent_version as string | null) ?? null,
     createdAt: raw.created_at as string,

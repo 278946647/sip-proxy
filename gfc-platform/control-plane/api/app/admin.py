@@ -34,6 +34,7 @@ from .reality_util import default_reality_config
 from .security import hash_password
 from .timeutil import ensure_utc, parse_json_field, seconds_ago, utc_now
 from .metrics_util import sanitize_last_metrics
+from .monitor import node_is_online
 from .node_config import build_node_payload
 from .schemas import (
     AlertOut,
@@ -728,6 +729,7 @@ async def get_line(line_id: int, session: AsyncSession = Depends(get_session)) -
         current_config_version=node.current_config_version if node else None,
         client_uuid=line.client_uuid,
         line_code_b32=line.line_code_b32,
+        flow_stats_enabled=line.flow_stats_enabled,
     )
 
 
@@ -1197,8 +1199,41 @@ def _client_device_online(device: ClientDevice) -> bool:
     return seconds_ago(device.last_seen_at) <= settings.client_offline_threshold_seconds
 
 
+def _derive_client_device_states(
+    device: ClientDevice,
+) -> tuple[str, str, str | None, bool | None]:
+    online = _client_device_online(device)
+    management_state = "online" if online else "offline"
+    if not online:
+        return management_state, "unknown", None, None
+
+    line = device.line
+    if device.line_id is None:
+        return management_state, "unbound", "line_unbound", None
+    if line is None:
+        return management_state, "suspended", "line_deleted", None
+    if not line.is_enabled:
+        return management_state, "suspended", "line_disabled", False
+
+    node = line.node
+    if node and not node_is_online(node):
+        return management_state, "degraded", "node_offline", True
+
+    if device.last_metrics_json:
+        try:
+            metrics = json.loads(device.last_metrics_json)
+            agent_state = str(metrics.get("agent_state") or "").strip()
+            if agent_state and agent_state != "active":
+                return management_state, "degraded", "agent_not_active", True
+        except json.JSONDecodeError:
+            pass
+
+    return management_state, "active", None, True
+
+
 def _client_device_list_item(device: ClientDevice) -> ClientDeviceListItem:
     line = device.line
+    management_state, service_state, service_reason, line_enabled = _derive_client_device_states(device)
     return ClientDeviceListItem(
         id=device.id,
         name=device.name,
@@ -1210,6 +1245,10 @@ def _client_device_list_item(device: ClientDevice) -> ClientDeviceListItem:
         reverse_ssh_port=device.reverse_ssh_port,
         proxy_mode=device.proxy_mode or "gateway",
         online=_client_device_online(device),
+        management_state=management_state,
+        service_state=service_state,
+        service_reason=service_reason,
+        line_enabled=line_enabled,
         last_seen_at=device.last_seen_at,
         agent_version=device.agent_version,
         created_at=device.created_at,
@@ -1224,7 +1263,9 @@ async def list_client_devices(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
 ) -> PaginatedClientDevices:
-    stmt = select(ClientDevice).options(selectinload(ClientDevice.line))
+    stmt = select(ClientDevice).options(
+        selectinload(ClientDevice.line).selectinload(Line.node)
+    )
     count_base = select(func.count(ClientDevice.id))
 
     if search:

@@ -195,6 +195,7 @@ class LineUpdateIn(BaseModel):
     socks_profile_id: int | None = None
     node_id: int | None = None
     name: str | None = None
+    flow_stats_enabled: bool | None = None
 
 
 class LineListItem(BaseModel):
@@ -228,6 +229,7 @@ class LineDetailOut(LineListItem):
     current_config_version: str | None = None
     client_uuid: str | None = None
     line_code_b32: str | None = None
+    flow_stats_enabled: bool = True
 
 
 class LineOut(BaseModel):
@@ -430,6 +432,10 @@ class ClientDeviceListItem(BaseModel):
     reverse_ssh_port: int | None
     proxy_mode: str
     online: bool
+    management_state: str = "offline"
+    service_state: str = "unknown"
+    service_reason: str | None = None
+    line_enabled: bool | None = None
     last_seen_at: dt.datetime | None
     agent_version: str | None
     created_at: dt.datetime

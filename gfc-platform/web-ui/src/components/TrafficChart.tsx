@@ -14,7 +14,7 @@ function formatBytes(n: number) {
   return `${(n / 1024 ** 3).toFixed(2)} GB`;
 }
 
-export function TrafficChart({ stats, height = 220 }: Props) {
+export function TrafficChart({ stats, height = 240 }: Props) {
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
   const points = useMemo(
@@ -28,12 +28,12 @@ export function TrafficChart({ stats, height = 220 }: Props) {
   );
 
   if (points.length === 0) {
-    return <div style={{ color: "#64748b", padding: "24px 0" }}>暂无流量数据</div>;
+    return <div className="traffic-chart-empty">暂无流量数据</div>;
   }
 
   const max = Math.max(...points.map((p) => p.total), 1);
   const width = 900;
-  const pad = { top: 16, right: 16, bottom: 28, left: 56 };
+  const pad = { top: 16, right: 16, bottom: 36, left: 56 };
   const innerW = width - pad.left - pad.right;
   const innerH = height - pad.top - pad.bottom;
 
@@ -46,8 +46,13 @@ export function TrafficChart({ stats, height = 220 }: Props) {
   const polyline = coords.map((c) => `${c.x},${c.y}`).join(" ");
   const hover = hoverIdx != null ? coords[hoverIdx] : null;
 
+  const xLabelCount = Math.min(8, points.length);
+  const xLabelIdx = Array.from({ length: xLabelCount }, (_, i) =>
+    Math.round((i / Math.max(xLabelCount - 1, 1)) * (points.length - 1))
+  );
+
   return (
-    <div>
+    <div className="traffic-chart">
       <svg
         viewBox={`0 0 ${width} ${height}`}
         width="100%"
@@ -66,35 +71,51 @@ export function TrafficChart({ stats, height = 220 }: Props) {
             </g>
           );
         })}
-        <polyline fill="none" stroke="#3b82f6" strokeWidth="2" points={polyline} />
+        {xLabelIdx.map((idx) => {
+          const x = coords[idx]?.x ?? pad.left;
+          return (
+            <g key={idx}>
+              <line x1={x} x2={x} y1={pad.top} y2={pad.top + innerH} stroke="#f1f5f9" />
+              <text x={x} y={height - 10} textAnchor="middle" fontSize="10" fill="#94a3b8">
+                {points[idx]?.label}
+              </text>
+            </g>
+          );
+        })}
+        <polyline fill="none" stroke="#3b82f6" strokeWidth="1.75" points={polyline} />
         {coords.map((c, i) => (
           <circle
             key={c.p.id}
             cx={c.x}
             cy={c.y}
-            r={hoverIdx === i ? 5 : 3}
-            fill={hoverIdx === i ? "#1d4ed8" : "#3b82f6"}
+            r={hoverIdx === i ? 4 : 0}
+            fill="#1d4ed8"
             onMouseEnter={() => setHoverIdx(i)}
           />
         ))}
         {hover ? (
-          <g>
-            <line x1={hover.x} x2={hover.x} y1={pad.top} y2={pad.top + innerH} stroke="#94a3b8" strokeDasharray="4 4" />
-          </g>
+          <line
+            x1={hover.x}
+            x2={hover.x}
+            y1={pad.top}
+            y2={pad.top + innerH}
+            stroke="#94a3b8"
+            strokeDasharray="4 4"
+          />
         ) : null}
       </svg>
       {hover ? (
-        <div style={{ marginTop: 8, fontSize: 13, color: "#334155" }}>
+        <div className="traffic-chart-hover">
           <strong>{hover.p.label}</strong>
           {" · "}总流量 {formatBytes(hover.p.total)}
           {" · "}下行 {formatBytes(hover.p.bytesIn)}
           {" · "}上行 {formatBytes(hover.p.bytesOut)}
         </div>
       ) : (
-        <div style={{ marginTop: 8, fontSize: 12, color: "#64748b" }}>
-          鼠标悬停数据点查看该时段详情（采样间隔约 10 秒）
-        </div>
+        <div className="traffic-chart-hint">鼠标悬停折线查看该时段详情（采样间隔约 10 秒）</div>
       )}
     </div>
   );
 }
+
+export { formatBytes };

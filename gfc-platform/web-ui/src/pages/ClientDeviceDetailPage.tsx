@@ -3,8 +3,31 @@ import { Button, Card, Col, Popconfirm, Progress, Row, Space, Statistic, Tag, Ty
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import dayjs from "dayjs";
+import relativeTime from "dayjs/plugin/relativeTime";
 import { apiDelete, apiGet } from "../api/client";
 import { mapClientDeviceDetail, type ClientDeviceDetail } from "../types";
+
+dayjs.extend(relativeTime);
+
+const SERVICE_REASON_LABEL: Record<string, string> = {
+  line_disabled: "线路已禁用",
+  line_deleted: "线路已删除",
+  line_unbound: "未绑线",
+  node_offline: "节点离线",
+  agent_not_active: "Agent 未就绪",
+};
+
+function serviceTag(item: ClientDeviceDetail) {
+  const map: Record<ClientDeviceDetail["serviceState"], { color: string; label: string }> = {
+    active: { color: "green", label: "业务正常" },
+    suspended: { color: "orange", label: "业务关停" },
+    unbound: { color: "default", label: "未绑线" },
+    degraded: { color: "volcano", label: "业务异常" },
+    unknown: { color: "default", label: "—" },
+  };
+  const meta = map[item.serviceState] ?? map.unknown;
+  return <Tag color={meta.color}>{meta.label}</Tag>;
+}
 
 function pct(n: number | undefined, fallback = 0) {
   return typeof n === "number" && !Number.isNaN(n) ? n : fallback;
@@ -74,15 +97,22 @@ export function ClientDeviceDetailPage() {
 
       <Typography.Title level={4}>
         {device.name}{" "}
-        <Tag color={device.online ? "green" : "red"} style={{ verticalAlign: "middle" }}>
-          {device.online ? "在线" : "离线"}
+        <Tag color={device.managementState === "online" ? "green" : "red"} style={{ verticalAlign: "middle" }}>
+          {device.managementState === "online" ? "在线" : "离线"}
         </Tag>
+        {serviceTag(device)}
       </Typography.Title>
 
       <Typography.Paragraph type="secondary">
         设备 ID：{device.deviceId || device.deviceKey} | MAC：{device.lanMac || "-"} | 代理模式：
         {device.proxyMode} | 节点：{device.nodeName || "-"} | 最后在线：
-        {device.lastSeenAt ? dayjs(device.lastSeenAt).format("YYYY-MM-DD HH:mm:ss") : "-"}
+        {device.lastSeenAt ? `${dayjs(device.lastSeenAt).format("YYYY-MM-DD HH:mm:ss")} (${dayjs(device.lastSeenAt).fromNow()})` : "-"}
+        {device.serviceReason ? (
+          <>
+            {" "}
+            | 关停原因：{SERVICE_REASON_LABEL[device.serviceReason] ?? device.serviceReason}
+          </>
+        ) : null}
       </Typography.Paragraph>
 
       <Row gutter={[16, 16]}>

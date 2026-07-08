@@ -41,6 +41,7 @@ def _migrate_sync(sync_conn: Connection) -> None:
         "line_type": "ALTER TABLE lines ADD COLUMN line_type VARCHAR(32) DEFAULT 'client'",
         "client_uuid": "ALTER TABLE lines ADD COLUMN client_uuid VARCHAR(64)",
         "line_code_b32": "ALTER TABLE lines ADD COLUMN line_code_b32 TEXT",
+        "flow_stats_enabled": "ALTER TABLE lines ADD COLUMN flow_stats_enabled BOOLEAN DEFAULT 1",
     }
     socks_cols = {
         "remark": "ALTER TABLE socks_profiles ADD COLUMN remark TEXT",

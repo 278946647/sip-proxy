@@ -18,6 +18,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import dayjs from "dayjs";
 import { apiDelete, apiGet, apiPatch, apiPost } from "../api/client";
+import { confirmLineEnableChange } from "../utils/lineEnableConfirm";
 import {
   mapLineItem,
   mapNode,
@@ -234,12 +235,14 @@ export function LinesPage() {
                 size="small"
                 checkedChildren="开"
                 unCheckedChildren="关"
-                onChange={async (checked) => {
-                  await apiPatch(`/admin/lines/${r.id}?operator=${localStorage.getItem("gfc_user") || "admin"}`, {
-                    is_enabled: checked,
+                onChange={(checked) => {
+                  confirmLineEnableChange(checked, r.tid, async () => {
+                    await apiPatch(`/admin/lines/${r.id}?operator=${localStorage.getItem("gfc_user") || "admin"}`, {
+                      is_enabled: checked,
+                    });
+                    message.success(checked ? "线路已启用" : "线路已禁用，绑定客户端将切换直连");
+                    void load();
                   });
-                  message.success(checked ? "线路已启用" : "线路已禁用，绑定客户端将切换直连");
-                  void load();
                 }}
               />
             ),

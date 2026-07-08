@@ -8,24 +8,75 @@ import {
   Select,
   Space,
   Table,
+  Tabs,
   Tag,
   Typography,
   message,
 } from "antd";
 import { LineCodeField } from "../components/LineCodeField";
 import { DeleteOutlined, EyeOutlined, ReloadOutlined } from "@ant-design/icons";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import dayjs from "dayjs";
+import relativeTime from "dayjs/plugin/relativeTime";
 import { apiDelete, apiGet, apiPatch, apiPost } from "../api/client";
 import { mapClientDevice, type ClientDeviceListItem, type LineListItem } from "../types";
 import { mapLineItem } from "../types";
+
+dayjs.extend(relativeTime);
 
 type RowDraft = {
   name: string;
   lineId: number | undefined;
   reverseSshPort: number | undefined;
 };
+
+type DeviceTab = "attention" | "active" | "suspended" | "all";
+
+const SERVICE_REASON_LABEL: Record<string, string> = {
+  line_disabled: "线路已禁用",
+  line_deleted: "线路已删除",
+  line_unbound: "未绑线",
+  node_offline: "节点离线",
+  agent_not_active: "Agent 未就绪",
+};
+
+function managementTag(state: ClientDeviceListItem["managementState"]) {
+  return state === "online" ? (
+    <Tag color="green">在线</Tag>
+  ) : (
+    <Tag color="red">离线</Tag>
+  );
+}
+
+function serviceTag(item: ClientDeviceListItem) {
+  const map: Record<ClientDeviceListItem["serviceState"], { color: string; label: string }> = {
+    active: { color: "green", label: "业务正常" },
+    suspended: { color: "orange", label: "业务关停" },
+    unbound: { color: "default", label: "未绑线" },
+    degraded: { color: "volcano", label: "业务异常" },
+    unknown: { color: "default", label: "—" },
+  };
+  const meta = map[item.serviceState] ?? map.unknown;
+  return <Tag color={meta.color}>{meta.label}</Tag>;
+}
+
+function matchesTab(item: ClientDeviceListItem, tab: DeviceTab) {
+  if (tab === "all") return true;
+  if (tab === "attention") {
+    return item.managementState === "offline" || item.serviceState === "degraded";
+  }
+  if (tab === "active") {
+    return item.managementState === "online" && item.serviceState === "active";
+  }
+  if (tab === "suspended") {
+    return (
+      item.managementState === "online" &&
+      (item.serviceState === "suspended" || item.serviceState === "unbound")
+    );
+  }
+  return true;
+}
 
 export function ClientDevicesPage() {
   const nav = useNavigate();
@@ -34,6 +85,7 @@ export function ClientDevicesPage() {
   const [loading, setLoading] = useState(false);
   const [drafts, setDrafts] = useState<Record<number, RowDraft>>({});
   const [lastRefresh, setLastRefresh] = useState(dayjs());
+  const [activeTab, setActiveTab] = useState<DeviceTab>("attention");
   const [lineCodeModal, setLineCodeModal] = useState<{ open: boolean; code: string; tid: string }>({
     open: false,
     code: "",
@@ -65,6 +117,18 @@ export function ClientDevicesPage() {
     const timer = window.setInterval(() => void load(), 15000);
     return () => window.clearInterval(timer);
   }, [load]);
+
+  const counts = useMemo(() => {
+    const attention = items.filter((i) => matchesTab(i, "attention")).length;
+    const active = items.filter((i) => matchesTab(i, "active")).length;
+    const suspended = items.filter((i) => matchesTab(i, "suspended")).length;
+    return { attention, active, suspended, all: items.length };
+  }, [items]);
+
+  const visibleItems = useMemo(
+    () => items.filter((item) => matchesTab(item, activeTab)),
+    [items, activeTab]
+  );
 
   const getDraft = (row: ClientDeviceListItem): RowDraft =>
     drafts[row.id] ?? {
@@ -104,7 +168,7 @@ export function ClientDevicesPage() {
           reverse_ssh_port: draft.reverseSshPort ?? null,
         }
       );
-      message.success("已保存");
+      message.success("已保存，客户端将在下次拉取配置后生效");
       void load();
     } catch (e) {
       message.error(String(e));
@@ -152,17 +216,29 @@ export function ClientDevicesPage() {
         type="info"
         showIcon
         style={{ marginBottom: 16 }}
-        message="设备通过线路码激活后出现在此列表。可删除误注册记录；在线设备会在下次心跳时凭线路码自动重新注册。反向 SSH 端口用于远程 WebSSH。"
+        message="已纳管设备可在本页直接更换关联线路（无需重刷码）。解绑线路将切换为直连模式但保持在线管控。刷码适用于首次激活或本地状态恢复。"
       />
 
       <div style={{ marginBottom: 12, color: "#64748b", fontSize: 13 }}>
         上次刷新：{lastRefresh.format("HH:mm:ss")} | 共 {items.length} 台设备
       </div>
 
+      <Tabs
+        className="client-device-tabs"
+        activeKey={activeTab}
+        onChange={(key) => setActiveTab(key as DeviceTab)}
+        items={[
+          { key: "attention", label: `需关注 (${counts.attention})` },
+          { key: "active", label: `在线 · 业务正常 (${counts.active})` },
+          { key: "suspended", label: `在线 · 业务关停 (${counts.suspended})` },
+          { key: "all", label: `全部 (${counts.all})` },
+        ]}
+      />
+
       <Table
         rowKey="id"
         loading={loading}
-        dataSource={items}
+        dataSource={visibleItems}
         pagination={{ pageSize: 50 }}
         columns={[
           {
@@ -176,10 +252,20 @@ export function ClientDevicesPage() {
             ),
           },
           {
-            title: "状态",
-            dataIndex: "online",
-            render: (online: boolean) => (
-              <Tag color={online ? "green" : "red"}>{online ? "在线" : "离线"}</Tag>
+            title: "管控状态",
+            render: (_, row) => managementTag(row.managementState),
+          },
+          {
+            title: "业务状态",
+            render: (_, row) => (
+              <Space direction="vertical" size={2}>
+                {serviceTag(row)}
+                {row.serviceReason ? (
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    {SERVICE_REASON_LABEL[row.serviceReason] ?? row.serviceReason}
+                  </Typography.Text>
+                ) : null}
+              </Space>
             ),
           },
           {
@@ -192,9 +278,19 @@ export function ClientDevicesPage() {
             ),
           },
           {
-            title: "设备 ID",
-            dataIndex: "deviceId",
-            render: (v: string | null) => v || "-",
+            title: "最后在线",
+            dataIndex: "lastSeenAt",
+            render: (v: string | null) =>
+              v ? (
+                <Space direction="vertical" size={0}>
+                  <span>{dayjs(v).format("MM-DD HH:mm:ss")}</span>
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    {dayjs(v).fromNow()}
+                  </Typography.Text>
+                </Space>
+              ) : (
+                "-"
+              ),
           },
           {
             title: "反向端口",
@@ -217,11 +313,15 @@ export function ClientDevicesPage() {
                 style={{ minWidth: 180 }}
                 value={getDraft(row).lineId}
                 onChange={(v) => setDraft(row.id, { lineId: v })}
-                options={lines.map((l) => ({
-                  label: `${l.tid}${l.clientDeviceId && l.clientDeviceId !== row.id ? " (已占用)" : ""}`,
-                  value: l.id,
-                  disabled: !!l.clientDeviceId && l.clientDeviceId !== row.id,
-                }))}
+                options={lines
+                  .filter((l) => l.lineType === "client")
+                  .map((l) => ({
+                    label: `${l.tid}${!l.isEnabled ? " (已禁用)" : ""}${
+                      l.clientDeviceId && l.clientDeviceId !== row.id ? " (已占用)" : ""
+                    }`,
+                    value: l.id,
+                    disabled: !!l.clientDeviceId && l.clientDeviceId !== row.id,
+                  }))}
               />
             ),
           },
