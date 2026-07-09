@@ -1,0 +1,61 @@
+---
+description: GFC OpenWrt WAN apply 冻结 — 未经用户明确批准禁止修改网络 apply 逻辑
+globs:
+  - "**/gfc-client/internal/network/**"
+  - "**/gfc-bootstrap/**"
+  - "**/gfc-client/cmd/gfc-bootstrap/**"
+  - "**/gfc-client/deploy/immortalwrt/**"
+  - "**/gfc-client/docs/NETWORK_APPLY.md"
+alwaysApply: false
+---
+
+# 网络 Apply 变更协议（强制）
+
+## 权威来源（优先级从高到低）
+
+1. `gfc-client/docs/NETWORK_APPLY.md`（仓库内唯一真相）
+2. 用户在对话中明确给出的 `network-wan.json` 或 UCI 片段
+3. 其他文档（`ARCHITECTURE.md`、`REMOTE_ACCESS.md`、`deploy/immortalwrt/README.md`）— **不得覆盖 1**
+
+## 修改前必须做的事
+
+在编写或修改任何 OpenWrt/ImmortalWrt **WAN apply**、**network 快照/回滚**、**network-wan.json** 相关代码之前：
+
+1. 阅读 `gfc-client/docs/NETWORK_APPLY.md`
+2. 输出 **规范 vs 当前实现** 差异表（seed 条件、快照时机、mode 字段清理、LAN 开关、回滚边界）
+3. 等待用户回复 **「确认修改」** 或等价明确批准
+4. 仅修改用户点名的文件；禁止顺带「优化」或重构
+
+未获批准时：**只读分析，不写代码**。
+
+## 绝对禁止（未经架构评审 + 用户批准）
+
+- `network-wan.json` 缺失时盲写 `proto=dhcp`
+- apply WAN 前跳过 `/etc/config/network` 快照
+- 切换 `static` / `dhcp` / `pppoe` 时不清理跨模式 UCI 残留（`ipaddr`、`username` 等）
+- 默认开启 `GFC_MANAGE_LAN` 或未经批准修改 LAN/DHCP apply
+- 将数据面 rollback 与 `gfc-bootstrap --rollback-network` 混为一谈
+- 删除或绕过 `buildWANApplyPlan()` 的字段清理矩阵
+- 修改 WAN apply 却不更新 `openwrt_wan_test.go` / `openwrt_snapshot_test.go`
+
+## WAN mode 契约（摘要）
+
+| mode | 写入 UCI | 必须删除 |
+|------|----------|----------|
+| `static` | ipaddr/netmask/gateway/dns | username/password |
+| `dhcp` | proto=dhcp | static + pppoe 全部字段 |
+| `pppoe` | username/password | ipaddr/netmask/gateway/dns |
+
+## 允许的无须批准操作
+
+- 只读：`uci show network.wan`、`cat /etc/gfc-client/network-wan.json`
+- 文档：按用户要求更新 `NETWORK_APPLY.md` 本身
+- Gap 分析：对照规范与设备上 UCI / JSON
+
+## 用户固定口令（建议每次网络 apply 任务附带）
+
+> 严格按 `gfc-client/docs/NETWORK_APPLY.md`，只改我点名的文件，改前先给 diff 说明，我确认后再写代码。
+
+## 违规处理
+
+若生成器输出与 `NETWORK_APPLY.md` 不一致，应报告为 **bug**，不得将错就错更新文档来迁就代码。

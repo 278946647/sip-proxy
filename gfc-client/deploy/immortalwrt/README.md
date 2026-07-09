@@ -87,6 +87,8 @@ WAN is handled the same way:
 gfc-bootstrap --rollback-network
 ```
 
+完整契约见 [`docs/NETWORK_APPLY.md`](../../docs/NETWORK_APPLY.md)。
+
 `network-wan.json` WAN modes:
 
 | mode | JSON fields |

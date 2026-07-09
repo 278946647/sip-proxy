@@ -8,7 +8,8 @@
 > **数据面权威文档（实现与 AI 生成必须以之为准）：**
 > [`docs/NFT_ARCHITECTURE.md`](../../docs/NFT_ARCHITECTURE.md) ·
 > [`docs/UNBOUND_ARCHITECTURE.md`](../../docs/UNBOUND_ARCHITECTURE.md) ·
-> [`docs/SINGBOX_ARCHITECTURE.md`](../../docs/SINGBOX_ARCHITECTURE.md)
+> [`docs/SINGBOX_ARCHITECTURE.md`](../../docs/SINGBOX_ARCHITECTURE.md) ·
+> [`NETWORK_APPLY.md`](NETWORK_APPLY.md)（OpenWrt WAN apply / 回滚）
 
 ---
 

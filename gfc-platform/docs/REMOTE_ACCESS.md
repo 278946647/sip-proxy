@@ -74,6 +74,8 @@ ImmortalWrt 客户端（gfc-reverse-ssh + gfc-agent）
 
 ### apply-network 与 WAN 安全（A+C）
 
+权威规范：[`gfc-client/docs/NETWORK_APPLY.md`](../../gfc-client/docs/NETWORK_APPLY.md)
+
 - 无 `network-wan.json` 时：**先从当前 UCI 导入**生成该文件，不凭空写 dhcp
 - 仅当 `network-wan.json` 存在时才写 `network.wan`（写前自动快照）
 - `mode=dhcp` 时会清理 UCI 中残留的 `ipaddr/gateway`（修复 proto 与地址不一致）
