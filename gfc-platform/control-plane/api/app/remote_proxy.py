@@ -1,6 +1,7 @@
 """HTTP reverse proxy to client LuCI / flash via local reverse HTTP port."""
 from __future__ import annotations
 
+import logging
 import re
 from urllib.parse import parse_qs, urlencode
 
@@ -13,9 +14,16 @@ from .models import ClientDevice, PlatformUser
 from .reverse_ssh import session_active, tunnel_ready
 from .security import decode_access_token
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/remote", tags=["remote"])
 
-_SKIP_RESP_HEADERS = frozenset({"transfer-encoding", "connection", "content-encoding"})
+_SKIP_RESP_HEADERS = frozenset({
+    "transfer-encoding",
+    "connection",
+    "content-encoding",
+    "content-length",
+})
 
 
 async def _resolve_user(
@@ -31,10 +39,17 @@ async def _resolve_user(
     payload = decode_access_token(bearer) if bearer else None
     if not payload:
         raise HTTPException(401, "not authenticated")
-    row = await session.get(PlatformUser, int(payload.get("uid") or 0))
+    row = await session.get(PlatformUser, _token_user_id(payload))
     if not row or not row.is_active:
         raise HTTPException(401, "user disabled or missing")
     return row
+
+
+def _token_user_id(payload: dict) -> int:
+    try:
+        return int(payload.get("uid") or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 async def _device_with_session(
@@ -64,9 +79,15 @@ async def proxy_luci(
     session: AsyncSession = Depends(get_session),
     token: str | None = Query(default=None),
 ) -> Response:
-    device = await _device_with_session(device_id, session, request, token)
-    upstream = f"http://127.0.0.1:{device.reverse_http_port}/cgi-bin/luci/{path}"
-    return await _proxy(request, upstream, device_id, token)
+    try:
+        device = await _device_with_session(device_id, session, request, token)
+        upstream = f"http://127.0.0.1:{device.reverse_http_port}/cgi-bin/luci/{path}"
+        return await _proxy(request, upstream, device_id, token)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("proxy_luci failed device=%s path=%s", device_id, path)
+        raise HTTPException(500, f"luci proxy failed: {exc}") from exc
 
 
 @router.api_route("/{device_id}/flash/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD"])
@@ -156,19 +177,23 @@ async def _proxy(
                 headers=headers,
                 content=body if body else None,
             )
+        out_headers = _response_headers(resp, device_id)
+        content = resp.content
+        ctype = ""
+        for key, value in out_headers:
+            if key.lower() == "content-type":
+                ctype = value.lower()
+                break
+        if content and _should_rewrite_body(ctype):
+            content = _rewrite_body_paths(content, device_id)
+        return Response(content=content, status_code=resp.status_code, headers=out_headers)
+    except HTTPException:
+        raise
     except httpx.HTTPError as exc:
         raise HTTPException(502, f"upstream unreachable: {exc}") from exc
-
-    out_headers = _response_headers(resp, device_id)
-    content = resp.content
-    ctype = ""
-    for key, value in out_headers:
-        if key.lower() == "content-type":
-            ctype = value.lower()
-            break
-    if content and _should_rewrite_body(ctype):
-        content = _rewrite_body_paths(content, device_id)
-    return Response(content=content, status_code=resp.status_code, headers=out_headers)
+    except Exception as exc:
+        logger.exception("remote proxy failed device=%s upstream=%s", device_id, upstream)
+        raise HTTPException(500, f"remote proxy error: {exc}") from exc
 
 
 def _response_headers(resp: httpx.Response, device_id: int) -> list[tuple[str, str]]:
@@ -178,12 +203,23 @@ def _response_headers(resp: httpx.Response, device_id: int) -> list[tuple[str, s
         if kl in _SKIP_RESP_HEADERS:
             continue
         if kl == "set-cookie":
-            out.append((key, _rewrite_set_cookie(value, device_id)))
+            out.append((key, _safe_header_value(_rewrite_set_cookie(value, device_id))))
             continue
         if kl == "location":
             value = _rewrite_remote_location(value, device_id)
-        out.append((key, value))
+        out.append((key, _safe_header_value(value)))
     return out
+
+
+def _safe_header_value(value: str) -> str:
+    """Starlette requires header values to be latin-1 encodable."""
+    if not value:
+        return value
+    try:
+        value.encode("latin-1")
+        return value
+    except UnicodeEncodeError:
+        return value.encode("latin-1", errors="replace").decode("latin-1")
 
 
 def _upstream_query(request: Request) -> str:
@@ -254,7 +290,10 @@ def _rewrite_body_paths(content: bytes, device_id: int) -> bytes:
         text = content.decode("utf-8")
     except UnicodeDecodeError:
         return content
-    return _rewrite_text_paths(text, device_id).encode("utf-8")
+    try:
+        return _rewrite_text_paths(text, device_id).encode("utf-8")
+    except UnicodeEncodeError:
+        return content
 
 
 def _rewrite_text_paths(text: str, device_id: int) -> str:
@@ -277,11 +316,4 @@ def _rewrite_text_paths(text: str, device_id: int) -> str:
     text = text.replace('"/cgi-bin/luci"', f'"{prefix}/cgi-bin/luci"')
     text = text.replace("'/cgi-bin/luci'", f"'{prefix}/cgi-bin/luci'")
     text = text.replace("\\/cgi-bin\\/luci", f"{esc_prefix}\\/cgi-bin\\/luci")
-
-    # Catch remaining root-relative asset paths in minified JS.
-    text = re.sub(
-        rf'(?<![\w/])/(?!remote/{device_id}/)(cgi-bin|luci-static|gfc)/',
-        rf"{prefix}/\1/",
-        text,
-    )
     return text
