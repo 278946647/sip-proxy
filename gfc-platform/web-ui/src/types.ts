@@ -78,6 +78,7 @@ export type ClientDeviceListItem = {
   sshPublicKeyRegistered: boolean;
   reverseSshSessionState: string;
   proxyMode: string;
+  routingScheme: "split" | "global";
   online: boolean;
   managementState: "online" | "offline";
   serviceState: "active" | "suspended" | "unbound" | "degraded" | "unknown";
@@ -91,6 +92,7 @@ export type ClientDeviceListItem = {
 export type ClientDeviceDetail = ClientDeviceListItem & {
   metrics: ClientDeviceMetrics | null;
   lineName: string | null;
+  lineCountry: string | null;
   nodeName: string | null;
   sshConnectUrl: string | null;
   webRemoteUrl: string | null;
@@ -102,12 +104,86 @@ export type ClientDeviceMetrics = {
   cpuCores?: number;
   memoryUsedMb?: number;
   memoryTotalMb?: number;
+  memoryPercent?: number;
   connectionCount?: number;
   uploadMbps?: number;
   downloadMbps?: number;
   uploadPeakMbps?: number;
   downloadPeakMbps?: number;
+  updatedAt?: string;
 };
+
+export function normalizeClientDeviceMetrics(
+  raw: Record<string, unknown> | null | undefined
+): ClientDeviceMetrics | null {
+  if (!raw || typeof raw !== "object") return null;
+
+  const system = raw.system as Record<string, unknown> | undefined;
+  const memory = system?.memory as Record<string, unknown> | undefined;
+  const tunnel = raw.tunnel_traffic as Record<string, unknown> | undefined;
+
+  const cpuPercent =
+    (raw.cpu_percent as number | undefined) ??
+    (raw.cpuPercent as number | undefined) ??
+    (system?.cpu_percent as number | undefined);
+
+  let memoryUsedMb = raw.memory_used_mb as number | undefined;
+  let memoryTotalMb = raw.memory_total_mb as number | undefined;
+  let memoryPercent = raw.memory_percent as number | undefined;
+
+  if (memory) {
+    const usedBytes = memory.used_bytes as number | undefined;
+    const totalBytes = memory.total_bytes as number | undefined;
+    if (usedBytes != null) memoryUsedMb = Math.round(usedBytes / 1024 / 1024);
+    if (totalBytes != null) memoryTotalMb = Math.round(totalBytes / 1024 / 1024);
+    if (memory.used_percent != null) memoryPercent = memory.used_percent as number;
+  }
+
+  let connectionCount =
+    (raw.connection_count as number | undefined) ??
+    (raw.connectionCount as number | undefined);
+  if (connectionCount == null && tunnel?.active_conns != null) {
+    connectionCount = Number(tunnel.active_conns);
+  }
+
+  let uploadMbps = raw.upload_mbps as number | undefined;
+  let downloadMbps = raw.download_mbps as number | undefined;
+  if (tunnel) {
+    const windowSec = Number(tunnel.window_seconds) || 1;
+    const bytesIn = Number(tunnel.bytes_in) || 0;
+    const bytesOut = Number(tunnel.bytes_out) || 0;
+    if (uploadMbps == null && bytesOut > 0) {
+      uploadMbps = (bytesOut * 8) / windowSec / 1_000_000;
+    }
+    if (downloadMbps == null && bytesIn > 0) {
+      downloadMbps = (bytesIn * 8) / windowSec / 1_000_000;
+    }
+  }
+
+  return {
+    cpuPercent,
+    cpuCores: (raw.cpu_cores as number | undefined) ?? (system?.cpu_cores as number | undefined),
+    memoryUsedMb,
+    memoryTotalMb,
+    memoryPercent,
+    connectionCount,
+    uploadMbps,
+    downloadMbps,
+    uploadPeakMbps: raw.upload_peak_mbps as number | undefined,
+    downloadPeakMbps: raw.download_peak_mbps as number | undefined,
+    updatedAt: (raw.ts as string | undefined) ?? (raw.updated_at as string | undefined),
+  };
+}
+
+export function lineBindingLabel(
+  tid: string | null | undefined,
+  nodeName: string | null | undefined,
+  country: string | null | undefined
+): string {
+  if (!tid) return "未绑线";
+  const parts = [tid, nodeName, country].filter(Boolean);
+  return parts.join(" · ");
+}
 
 export type StaticRoute = {
   prefix: string;
@@ -267,6 +343,7 @@ export function mapClientDevice(raw: Record<string, unknown>): ClientDeviceListI
     sshPublicKeyRegistered: Boolean(raw.ssh_public_key_registered),
     reverseSshSessionState: String(raw.reverse_ssh_session_state || "idle"),
     proxyMode: (raw.proxy_mode as string) || "gateway",
+    routingScheme: ((raw.routing_scheme as string) || "split") as "split" | "global",
     online: raw.online as boolean,
     managementState: (raw.management_state as ClientDeviceListItem["managementState"]) || (raw.online ? "online" : "offline"),
     serviceState: (raw.service_state as ClientDeviceListItem["serviceState"]) || "unknown",
@@ -280,10 +357,12 @@ export function mapClientDevice(raw: Record<string, unknown>): ClientDeviceListI
 
 export function mapClientDeviceDetail(raw: Record<string, unknown>): ClientDeviceDetail {
   const base = mapClientDevice(raw);
+  const rawMetrics = raw.metrics as Record<string, unknown> | null | undefined;
   return {
     ...base,
-    metrics: (raw.metrics as ClientDeviceMetrics | null) ?? null,
+    metrics: normalizeClientDeviceMetrics(rawMetrics),
     lineName: (raw.line_name as string | null) ?? null,
+    lineCountry: (raw.line_country as string | null) ?? null,
     nodeName: (raw.node_name as string | null) ?? null,
     sshConnectUrl: (raw.ssh_connect_url as string | null) ?? null,
     webRemoteUrl: (raw.web_remote_url as string | null) ?? null,

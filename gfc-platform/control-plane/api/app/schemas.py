@@ -476,6 +476,7 @@ class ClientDeviceUpdateIn(BaseModel):
     line_id: int | None = None
     reverse_ssh_port: int | None = None
     proxy_mode: str | None = Field(default=None, pattern="^(gateway|bypass|transparent)$")
+    routing_scheme: str | None = Field(default=None, pattern="^(split|global)$")
     is_active: bool | None = None
 
 
@@ -492,6 +493,7 @@ class ClientDeviceListItem(BaseModel):
     ssh_public_key_registered: bool = False
     reverse_ssh_session_state: str = "idle"
     proxy_mode: str
+    routing_scheme: str = "split"
     online: bool
     management_state: str = "offline"
     service_state: str = "unknown"
@@ -505,6 +507,7 @@ class ClientDeviceListItem(BaseModel):
 class ClientDeviceDetailOut(ClientDeviceListItem):
     metrics: dict[str, Any] | None = None
     line_name: str | None = None
+    line_country: str | None = None
     node_name: str | None = None
     ssh_connect_url: str | None = None
     web_remote_url: str | None = None

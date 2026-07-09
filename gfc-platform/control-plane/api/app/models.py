@@ -160,6 +160,7 @@ class ClientDevice(Base):
         DateTime(timezone=True), nullable=True
     )
     proxy_mode: Mapped[str] = mapped_column(String(32), default="gateway")
+    routing_scheme: Mapped[str] = mapped_column(String(32), default="split")
     agent_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
     last_seen_at: Mapped[dt.datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

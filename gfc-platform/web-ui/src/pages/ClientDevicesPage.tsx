@@ -1,8 +1,7 @@
 import {
   Alert,
   Button,
-  Input,
-  Select,
+  Dropdown,
   Space,
   Table,
   Tabs,
@@ -10,25 +9,26 @@ import {
   Typography,
   message,
 } from "antd";
-import { DeleteOutlined, EyeOutlined, ReloadOutlined } from "@ant-design/icons";
+import type { MenuProps } from "antd";
+import { DeleteOutlined, DownOutlined, EyeOutlined, ReloadOutlined } from "@ant-design/icons";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import dayjs from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
-import { apiDelete, apiGet, apiPatch } from "../api/client";
+import { apiDelete, apiGet } from "../api/client";
 import { openRemoteTarget } from "../lib/openRemote";
 import { confirmDeleteClientDevice } from "../utils/dangerousConfirm";
-import { mapClientDevice, type ClientDeviceListItem, type LineListItem } from "../types";
-import { mapLineItem } from "../types";
+import {
+  lineBindingLabel,
+  mapClientDevice,
+  mapLineItem,
+  type ClientDeviceListItem,
+  type LineListItem,
+} from "../types";
 import { getUser } from "../api/auth";
 import { isOperatorDeletableClient, permissionsFromUser } from "../utils/permissions";
 
 dayjs.extend(relativeTime);
-
-type RowDraft = {
-  name: string;
-  lineId: number | undefined;
-};
 
 type DeviceTab = "attention" | "active" | "suspended" | "all";
 
@@ -77,12 +77,43 @@ function matchesTab(item: ClientDeviceListItem, tab: DeviceTab) {
   return true;
 }
 
+function resolveLine(row: ClientDeviceListItem, lines: LineListItem[]): LineListItem | null {
+  if (!row.lineId) return null;
+  return lines.find((l) => l.id === row.lineId) ?? null;
+}
+
+function LineSummary({
+  row,
+  lines,
+}: {
+  row: ClientDeviceListItem;
+  lines: LineListItem[];
+}) {
+  if (!row.lineId) {
+    return <Tag>未绑线</Tag>;
+  }
+  const line = resolveLine(row, lines);
+  if (!line) {
+    return <Tag color="orange">线路已删除</Tag>;
+  }
+  const label = lineBindingLabel(line.tid, line.nodeName, line.country);
+  return (
+    <Space direction="vertical" size={2}>
+      <Link to={`/lines/${line.id}`}>{label}</Link>
+      {!line.isEnabled ? (
+        <Typography.Text type="warning" style={{ fontSize: 12 }}>
+          线路已禁用
+        </Typography.Text>
+      ) : null}
+    </Space>
+  );
+}
+
 export function ClientDevicesPage() {
   const nav = useNavigate();
   const [items, setItems] = useState<ClientDeviceListItem[]>([]);
   const [lines, setLines] = useState<LineListItem[]>([]);
   const [loading, setLoading] = useState(false);
-  const [drafts, setDrafts] = useState<Record<number, RowDraft>>({});
   const [lastRefresh, setLastRefresh] = useState(dayjs());
   const [activeTab, setActiveTab] = useState<DeviceTab>("all");
   const perms = permissionsFromUser(getUser());
@@ -124,20 +155,6 @@ export function ClientDevicesPage() {
     [items, activeTab]
   );
 
-  const getDraft = (row: ClientDeviceListItem): RowDraft =>
-    drafts[row.id] ?? {
-      name: row.name,
-      lineId: row.lineId ?? undefined,
-    };
-
-  const setDraft = (id: number, patch: Partial<RowDraft>) => {
-    setDrafts((prev) => {
-      const row = items.find((i) => i.id === id);
-      if (!row) return prev;
-      return { ...prev, [id]: { ...getDraft(row), ...patch } };
-    });
-  };
-
   const deleteRow = async (row: ClientDeviceListItem) => {
     try {
       const res = await apiDelete<{ ok: boolean; message?: string }>(
@@ -150,22 +167,31 @@ export function ClientDevicesPage() {
     }
   };
 
-  const saveRow = async (row: ClientDeviceListItem) => {
-    const draft = getDraft(row);
-    try {
-      await apiPatch(
-        `/admin/client-devices/${row.id}?operator=${localStorage.getItem("gfc_user") || "admin"}`,
-        {
-          name: draft.name,
-          line_id: draft.lineId ?? null,
-        }
-      );
-      message.success("已保存，客户端将在下次拉取配置后生效");
-      void load();
-    } catch (e) {
-      message.error(String(e));
-    }
-  };
+  const remoteReady = (row: ClientDeviceListItem) =>
+    row.managementState === "online" && row.sshPublicKeyRegistered && !!row.reverseSshPort;
+
+  const remoteMenu = (row: ClientDeviceListItem): MenuProps => ({
+    items: [
+      {
+        key: "ssh",
+        label: "远程 SSH",
+        disabled: !remoteReady(row),
+        onClick: () => void openRemoteTarget(row.id, "ssh", row.name),
+      },
+      {
+        key: "web",
+        label: "Web 管理",
+        disabled: !remoteReady(row),
+        onClick: () => void openRemoteTarget(row.id, "web", row.name),
+      },
+      {
+        key: "flash",
+        label: "刷码协助",
+        disabled: !remoteReady(row),
+        onClick: () => void openRemoteTarget(row.id, "flash", row.name),
+      },
+    ],
+  });
 
   return (
     <div>
@@ -182,7 +208,7 @@ export function ClientDevicesPage() {
         type="info"
         showIcon
         style={{ marginBottom: 16 }}
-        message="已纳管设备可在本页直接更换关联线路（无需重刷码）。解绑线路将切换为直连模式但保持在线管控。刷码适用于首次激活或本地状态恢复。"
+        message="列表展示设备管控与业务状态。更换线路、编辑名称等操作请进入设备详情。刷码适用于首次激活或本地状态恢复。"
       />
 
       <div style={{ marginBottom: 12, color: "#64748b", fontSize: 13 }}>
@@ -210,11 +236,9 @@ export function ClientDevicesPage() {
           {
             title: "设备名称",
             render: (_, row) => (
-              <Input
-                value={getDraft(row).name}
-                onChange={(e) => setDraft(row.id, { name: e.target.value })}
-                style={{ minWidth: 160 }}
-              />
+              <Link to={`/client-devices/${row.id}`}>
+                <Typography.Text strong>{row.name}</Typography.Text>
+              </Link>
             ),
           },
           {
@@ -235,13 +259,8 @@ export function ClientDevicesPage() {
             ),
           },
           {
-            title: "LAN MAC",
-            dataIndex: "lanMac",
-            render: (v: string | null) => (
-              <Typography.Text code copyable={!!v}>
-                {v || "-"}
-              </Typography.Text>
-            ),
+            title: "关联线路",
+            render: (_, row) => <LineSummary row={row} lines={lines} />,
           },
           {
             title: "最后在线",
@@ -259,94 +278,32 @@ export function ClientDevicesPage() {
               ),
           },
           {
-            title: "反代端口",
-            render: (_, row) => (
-              <Space direction="vertical" size={0}>
-                <Typography.Text code>SSH {row.reverseSshPort ?? "-"}</Typography.Text>
-                <Typography.Text code type="secondary">
-                  HTTP {row.reverseHttpPort ?? "-"}
-                </Typography.Text>
-                {!row.sshPublicKeyRegistered ? (
-                  <Typography.Text type="warning" style={{ fontSize: 12 }}>
-                    公钥未注册
-                  </Typography.Text>
-                ) : null}
-              </Space>
-            ),
-          },
-          {
-            title: "关联线路",
-            render: (_, row) => (
-              <Select
-                allowClear
-                placeholder="---未关联---"
-                style={{ minWidth: 180 }}
-                value={getDraft(row).lineId}
-                onChange={(v) => setDraft(row.id, { lineId: v })}
-                options={lines
-                  .filter((l) => l.lineType === "client")
-                  .map((l) => ({
-                    label: `${l.tid}${!l.isEnabled ? " (已禁用)" : ""}${
-                      l.clientDeviceId && l.clientDeviceId !== row.id ? " (已占用)" : ""
-                    }`,
-                    value: l.id,
-                    disabled: !!l.clientDeviceId && l.clientDeviceId !== row.id,
-                  }))}
-              />
-            ),
-          },
-          {
             title: "操作",
             render: (_, row) => (
               <Space wrap>
-                {perms.actions.includes("write_safe") && (
-                <Button size="small" type="primary" onClick={() => void saveRow(row)}>
-                  保存
-                </Button>
-                )}
-                {perms.canRemoteAccess && (
-                <>
-                <Button
-                  size="small"
-                  type="primary"
-                  ghost
-                  disabled={!row.online || !row.sshPublicKeyRegistered || !row.reverseSshPort}
-                  onClick={() => void openRemoteTarget(row.id, "ssh", row.name)}
-                >
-                  远程 SSH
-                </Button>
-                <Button
-                  size="small"
-                  disabled={!row.online || !row.sshPublicKeyRegistered || !row.reverseSshPort}
-                  onClick={() => void openRemoteTarget(row.id, "web", row.name)}
-                >
-                  Web 管理
-                </Button>
-                <Button
-                  size="small"
-                  disabled={!row.online || !row.sshPublicKeyRegistered || !row.reverseSshPort}
-                  onClick={() => void openRemoteTarget(row.id, "flash", row.name)}
-                >
-                  刷码协助
-                </Button>
-                </>
-                )}
                 <Button
                   size="small"
                   icon={<EyeOutlined />}
                   onClick={() => nav(`/client-devices/${row.id}`)}
-                />
-                {(perms.canDeleteStructural || isOperatorDeletableClient(row)) && (
-                <Button
-                  size="small"
-                  danger
-                  icon={<DeleteOutlined />}
-                  onClick={() =>
-                    confirmDeleteClientDevice(row.name, () => deleteRow(row))
-                  }
                 >
-                  删除
+                  详情
                 </Button>
+                {perms.canRemoteAccess && (
+                  <Dropdown menu={remoteMenu(row)} disabled={!remoteReady(row)}>
+                    <Button size="small">
+                      远程 <DownOutlined />
+                    </Button>
+                  </Dropdown>
+                )}
+                {(perms.canDeleteStructural || isOperatorDeletableClient(row)) && (
+                  <Button
+                    size="small"
+                    danger
+                    icon={<DeleteOutlined />}
+                    onClick={() => confirmDeleteClientDevice(row.name, () => deleteRow(row))}
+                  >
+                    删除
+                  </Button>
                 )}
               </Space>
             ),

@@ -108,6 +108,9 @@ def _migrate_sync(sync_conn: Connection) -> None:
                 sync_conn.execute(text(sql))
 
     client_device_cols = {
+        "routing_scheme": (
+            "ALTER TABLE client_devices ADD COLUMN routing_scheme VARCHAR(32) DEFAULT 'split'"
+        ),
         "reverse_http_port": "ALTER TABLE client_devices ADD COLUMN reverse_http_port INTEGER",
         "ssh_public_key": "ALTER TABLE client_devices ADD COLUMN ssh_public_key TEXT",
         "reverse_ssh_session_expires_at": (
@@ -150,6 +153,7 @@ def _migrate_sync(sync_conn: Connection) -> None:
                     reverse_ssh_session_targets TEXT,
                     reverse_ssh_tunnel_reported_at DATETIME,
                     proxy_mode VARCHAR(32) DEFAULT 'gateway',
+                    routing_scheme VARCHAR(32) DEFAULT 'split',
                     agent_version VARCHAR(32),
                     last_seen_at DATETIME,
                     last_metrics_json TEXT,
