@@ -1,0 +1,49 @@
+---
+description: GFC 底层数据面变更 — 必先差异表与验收，禁止静默改 DNS/NFT/路由
+globs:
+  - "**/gfc-client/internal/render/**"
+  - "**/gfc-client/internal/network/**"
+  - "**/gfc-client/internal/orchestrator/**"
+  - "**/gfc-client/deploy/**"
+  - "**/gfc-client/share/unbound/**"
+  - "**/gfc-client/share/**/*.nft"
+  - "**/docs/NFT_ARCHITECTURE.md"
+  - "**/docs/UNBOUND_ARCHITECTURE.md"
+  - "**/docs/SINGBOX_ARCHITECTURE.md"
+  - "**/gfc-client/docs/NETWORK_APPLY.md"
+  - "**/gfc-client/docs/DATAPLANE_CHANGE.md"
+alwaysApply: false
+---
+
+# 底层数据面变更协议（强制）
+
+## 权威来源
+
+见 `gfc-client/docs/DATAPLANE_CHANGE.md` 第 1 节。不得用零散注释覆盖架构文档。
+
+## 修改前必须做的事
+
+1. 阅读涉及的 `*_ARCHITECTURE.md` / `NETWORK_APPLY.md`
+2. 输出 **规范 vs 当前实现** 差异表（含 LAN 影响面、文件列表、验收命令）
+3. 等待 **「确认修改」**
+4. 仅改用户点名文件
+
+未获批准：**只读分析，不写代码**。
+
+## 修改后必须做的事
+
+1. 说明是否影响：unbound :53、dnsmasq DHCP option 6、gfc-routing NAT/DNS hijack、sing-box
+2. 设备验收：`verify-dataplane-dns.sh` 或等价命令
+3. 若破坏下联上网，视为 **bug**，不得改文档迁就错误实现
+
+## 绝对禁止（未经评审 + 用户批准）
+
+- bootstrap 成功路径依赖缺失的 unbound include 文件
+- 因无 `sing-box.json` 而跳过 `gfc-routing`（NAT/DNS hijack）
+- dnsmasq 监听 :53 或 `server=127.0.0.1#1053`
+- 未跑 `unbound-checkconf` 即发布 unbound 模板/render 变更
+- 底层改动无差异表直接写代码
+
+## 用户口令
+
+> 按 `DATAPLANE_CHANGE.md`，先差异表，确认后改；改后跑 verify-dataplane-dns。

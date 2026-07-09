@@ -202,17 +202,18 @@ start_dataplane() {
 		echo "NOTE: GFC_SKIP_DATAPLANE=1, gfc-sing-box / gfc-routing not started"
 		return 0
 	fi
+	step "start gfc-routing (NAT + DNS hijack)"
+	start_service gfc-routing
 	if [ ! -x /usr/bin/sing-box ]; then
-		echo "NOTE: /usr/bin/sing-box missing; install sing-box before starting gfc-sing-box" >&2
+		echo "NOTE: /usr/bin/sing-box missing; base gfc-routing applied" >&2
 		return 0
 	fi
 	if [ ! -f /etc/gfc-client/sing-box.json ]; then
-		echo "NOTE: no /etc/gfc-client/sing-box.json yet; activate device first, then apply config" >&2
+		echo "NOTE: no sing-box.json; base gfc-routing applied (run gfc-bootstrap / activate)" >&2
 		return 0
 	fi
-	step "start gfc-sing-box + gfc-routing"
+	step "start gfc-sing-box + policy route"
 	start_service gfc-sing-box
-	start_service gfc-routing
 	# sing-box creates gfctun asynchronously; retry policy route once TUN is up.
 	(
 		i=0
@@ -291,6 +292,12 @@ if [ -x /etc/init.d/gfc-reverse-ssh ]; then
 	fi
 fi
 touch /var/run/gfc-restore-reverse-ssh 2>/dev/null || true
+
+_verify_sh="$GFC_ROOT/deploy/immortalwrt/verify-dataplane-dns.sh"
+if [ -f "$_verify_sh" ]; then
+	step "verify LAN DNS / NAT"
+	sh "$_verify_sh" || echo "WARN: dataplane verify failed — fix bootstrap/unbound/routing" >&2
+fi
 
 for svc in gfc-api gfc-agent gfc-unbound gfc-sing-box gfc-routing; do
 	/etc/init.d/"$svc" enable 2>/dev/null || true

@@ -210,8 +210,10 @@ Generated / rendered unbound config must:
 |-----------|-----------|--------|
 | Main template | `share/unbound/unbound.conf.template` | Aligned |
 | Renderer | `internal/render/unbound/unbound.go` | Aligned |
+| Snippet includes | `share/unbound/local.d/*.conf`, `conf.d/gfc-domestic-forward.conf` | Required at bootstrap |
 | Init | `deploy/immortalwrt/package/files/etc/init.d/gfc-unbound` | Aligned |
 | dnsmasq DHCP DNS | `deploy/immortalwrt/configure-dnsmasq-dhcp.sh` | Aligned (`v0.3.0`) |
+| Post-install verify | `deploy/immortalwrt/verify-dataplane-dns.sh` | Aligned |
 | NFT DNS hijack | `gfc-routing.sh` / `lib-unbound-nft.sh` | Aligned (redirect :53) |
 | Legacy MosDNS docs | `GATEWAY_CORE.md` | Aligned (references unbound) |
 | Legacy share | `share/easymosdns/` | **Legacy** — not used in production path |

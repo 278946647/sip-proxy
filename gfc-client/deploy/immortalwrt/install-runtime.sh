@@ -223,17 +223,25 @@ start_dataplane() {
 		echo "NOTE: GFC_SKIP_DATAPLANE=1, gfc-sing-box / gfc-routing not started"
 		return 0
 	fi
+	# Base LAN path: DNS hijack + WAN NAT must exist even before activation.
+	/etc/init.d/gfc-routing start 2>/dev/null || \
+		/usr/lib/gfc-client/deploy/immortalwrt/gfc-routing.sh start 2>/dev/null || true
 	if [ ! -x /usr/bin/sing-box ]; then
-		echo "NOTE: /usr/bin/sing-box missing; install sing-box before starting gfc-sing-box" >&2
+		echo "NOTE: /usr/bin/sing-box missing; gfc-routing base rules applied" >&2
 		return 0
 	fi
 	if [ ! -f /etc/gfc-client/sing-box.json ]; then
-		echo "NOTE: no /etc/gfc-client/sing-box.json yet; activate device first, then apply config" >&2
+		echo "NOTE: no sing-box.json; gfc-routing base rules applied (activate for proxy)" >&2
 		return 0
 	fi
 	service_restart gfc-sing-box || true
 	/etc/init.d/gfc-routing start 2>/dev/null || true
 }
 start_dataplane
+
+_verify_sh="$GFC_ROOT/deploy/immortalwrt/verify-dataplane-dns.sh"
+if [ -f "$_verify_sh" ]; then
+	sh "$_verify_sh" || echo "WARN: dataplane verify failed — see messages above" >&2
+fi
 
 echo "GFC runtime installed. API: http://127.0.0.1:${GFC_WEB_PORT}/api/v1/status"

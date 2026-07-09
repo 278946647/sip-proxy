@@ -89,6 +89,8 @@ gfc-bootstrap --rollback-network
 
 完整契约见 [`docs/NETWORK_APPLY.md`](../../docs/NETWORK_APPLY.md)。
 
+底层变更流程见 [`docs/DATAPLANE_CHANGE.md`](../../docs/DATAPLANE_CHANGE.md)。
+
 `network-wan.json` WAN modes:
 
 | mode | JSON fields |

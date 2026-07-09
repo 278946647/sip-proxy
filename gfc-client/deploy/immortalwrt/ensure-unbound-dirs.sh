@@ -5,7 +5,28 @@ set -eu
 GFC_LOG_DIR="${GFC_LOG_DIR:-/var/log/gfc-client}"
 GFC_UNBOUND_USER="${GFC_UNBOUND_USER:-unbound}"
 
-mkdir -p /etc/unbound/conf.d /var/lib/unbound /var/lib/unbound/etc/unbound "$GFC_LOG_DIR"
+mkdir -p /etc/unbound/conf.d /etc/unbound/local.d /var/lib/unbound /var/lib/unbound/etc/unbound "$GFC_LOG_DIR"
+
+_ensure_snippet() {
+	_dst="$1"
+	shift
+	if [ -f "$_dst" ]; then
+		return 0
+	fi
+	printf '%s\n' "$@" >"$_dst"
+	chmod 644 "$_dst" 2>/dev/null || true
+}
+
+_ensure_snippet /etc/unbound/conf.d/gfc-domestic-forward.conf \
+	'# GFC — domestic forward overrides (empty default)'
+
+_ensure_snippet /etc/unbound/local.d/gfc-block.conf \
+	'# GFC — block list (empty default)' \
+	'server:' \
+	'    # local-zone: "ads.example.com." static'
+
+_ensure_snippet /etc/unbound/local.d/gfc-static.conf \
+	'# GFC — static records (empty default)'
 
 # unbound-checkconf on ImmortalWrt validates paths inside default chroot (/var/lib/unbound).
 # GFC config keeps auto-trust-anchor-file at /var/lib/unbound/root.key and sets chroot: "".

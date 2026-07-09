@@ -74,6 +74,15 @@ func (r *Renderer) EnsureTree() error {
 		filepath.Join(bundle, "conf.d", "cn.unbound.conf"): filepath.Join(
 			r.cfg.Paths.UnboundConfD, "cn.unbound.conf",
 		),
+		filepath.Join(bundle, "conf.d", "gfc-domestic-forward.conf"): filepath.Join(
+			r.cfg.Paths.UnboundConfD, "gfc-domestic-forward.conf",
+		),
+		filepath.Join(bundle, "local.d", "gfc-block.conf"): filepath.Join(
+			filepath.Dir(r.cfg.Paths.UnboundConfig), "local.d", "gfc-block.conf",
+		),
+		filepath.Join(bundle, "local.d", "gfc-static.conf"): filepath.Join(
+			filepath.Dir(r.cfg.Paths.UnboundConfig), "local.d", "gfc-static.conf",
+		),
 	}
 	for src, dst := range files {
 		if err := copyIfChanged(src, dst); err != nil {
