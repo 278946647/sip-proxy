@@ -1,5 +1,6 @@
 import { ensureRemoteSession } from "../lib/reverseSsh";
 import { absoluteUrl, openFixedPopup } from "../lib/openPopup";
+import { confirmRemoteAccess } from "../utils/dangerousConfirm";
 import { message } from "antd";
 
 const POPUP_SIZE: Record<"ssh" | "web" | "flash", { w: number; h: number }> = {
@@ -31,27 +32,29 @@ export async function openRemoteTarget(
   target: "ssh" | "web" | "flash",
   deviceName: string
 ) {
-  const hide = message.loading(`正在连接设备「${deviceName}」…`, 0);
-  try {
-    const session = await ensureRemoteSession(deviceId);
-    hide();
-    const token = localStorage.getItem("gfc_token") || "";
-    if (target === "ssh") {
-      openRemoteWindow(
-        "ssh",
-        deviceId,
-        absoluteUrl(withToken(`/client-devices/${deviceId}/ssh`, token))
-      );
-      return;
+  confirmRemoteAccess(target, deviceName, async () => {
+    const hide = message.loading(`正在连接设备「${deviceName}」…`, 0);
+    try {
+      const session = await ensureRemoteSession(deviceId);
+      hide();
+      const token = localStorage.getItem("gfc_token") || "";
+      if (target === "ssh") {
+        openRemoteWindow(
+          "ssh",
+          deviceId,
+          absoluteUrl(withToken(`/client-devices/${deviceId}/ssh`, token))
+        );
+        return;
+      }
+      const path = target === "web" ? session.urls.web : session.urls.flash;
+      if (!path) {
+        message.error("反代 URL 不可用");
+        return;
+      }
+      openRemoteWindow(target, deviceId, absoluteUrl(withToken(path, token)));
+    } catch (e) {
+      hide();
+      message.error(String(e));
     }
-    const path = target === "web" ? session.urls.web : session.urls.flash;
-    if (!path) {
-      message.error("反代 URL 不可用");
-      return;
-    }
-    openRemoteWindow(target, deviceId, absoluteUrl(withToken(path, token)));
-  } catch (e) {
-    hide();
-    message.error(String(e));
-  }
+  });
 }

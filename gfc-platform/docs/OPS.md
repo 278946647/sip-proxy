@@ -350,6 +350,36 @@ sysctl net.ipv4.ip_forward
 
 ---
 
+## 8. 客户端远程接入（反向 SSH / WebSSH）
+
+完整架构见 **[REMOTE_ACCESS.md](./REMOTE_ACCESS.md)**。
+
+### 8.1 快速检查
+
+```bash
+# 控制面：会话与端口
+sqlite3 /path/to/gfc.db \
+  "SELECT id, name, reverse_ssh_port, reverse_http_port, reverse_ssh_session_expires_at FROM client_devices;"
+
+# 冷却中的端口
+sqlite3 /path/to/gfc.db \
+  "SELECT port, datetime(released_until) FROM released_reverse_ports WHERE released_until > datetime('now');"
+
+# 设备侧隧道
+ssh root@<client> 'pidof autossh; /etc/init.d/gfc-reverse-ssh status; ls -la /var/run/gfc-restore-reverse-ssh'
+```
+
+### 8.2 常见问题
+
+| 现象 | 排查 |
+|------|------|
+| Web 管理「No RPC reply」 | 检查 `/remote/{id}/cgi-bin/...` 是否 200；API 是否已更新 remote_proxy |
+| 隧道 connecting 不 ready | 设备 `logread -e autossh`；控制面 `authorized_keys` 是否含该设备公钥 |
+| 升级后远程不可用 | 确认 `upgrade-runtime.sh` 已执行 reverse-ssh restart；agent 是否消费 restore 标记 |
+| 删设备后新设备串线 | 检查 `GFC_REVERSE_SSH_PORT_RELEASE_COOLDOWN_SECONDS` 与 `released_reverse_ports` 表 |
+
+---
+
 ## 9. 已有环境启用日志（快速步骤）
 
 **控制平台（已用 systemd）：**

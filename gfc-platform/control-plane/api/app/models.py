@@ -197,6 +197,19 @@ class ClientToken(Base):
     device: Mapped["ClientDevice"] = relationship(back_populates="tokens")
 
 
+class ReleasedReversePort(Base):
+    """Ports kept out of allocation for a cooldown after device deletion."""
+
+    __tablename__ = "released_reverse_ports"
+
+    port: Mapped[int] = mapped_column(Integer, primary_key=True)
+    former_device_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    released_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: dt.datetime.now(dt.timezone.utc)
+    )
+    released_until: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True))
+
+
 class ConfigBundle(Base):
     __tablename__ = "config_bundles"
 

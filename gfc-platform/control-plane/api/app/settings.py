@@ -53,6 +53,7 @@ class Settings(BaseSettings):
     client_ssh_port_base: int = 6001
     client_ssh_port_max: int = 7999
     client_ports_per_device: int = 2
+    reverse_ssh_port_release_cooldown_seconds: int = 3600
 
 
 settings = Settings()

@@ -745,7 +745,10 @@ gfc-agent
 | 心跳 | 采集 CPU/内存/接口/TUN/DNS 状态 → `POST /clients/heartbeat` |
 | 拉配置 | `GET /clients/config` → 比较 `version` 与 `applied_version` |
 | 应用 | `Orchestrator.Apply()` → `POST /clients/config/ack` |
-| 反向 SSH | 心跳响应 `reverse_ssh_port` → 本地 `autossh`（待实现） |
+| 反向 SSH | 心跳响应 `reverse_ssh` → `gfc-reverse-ssh`（autossh）→ 控制面端口池；详见 `gfc-platform/docs/REMOTE_ACCESS.md` |
+| 网络恢复 | `apply-network` / 升级后写入 restore 标记，agent 重启隧道（P2-4） |
+
+> 控制面侧远程接入运维文档：`gfc-platform/docs/REMOTE_ACCESS.md`
 
 ### 8.4 状态与存储
 
@@ -843,7 +846,7 @@ chattr +i /etc/resolv.conf   # 可选：防止被覆盖
 | **P2-3** | 模板完善 | sing-box 去 DNS；mosdns DoH 443；dnsmasq/nft 渲染器 |
 | **P2-4** | systemd 对齐 | 依赖链、热重载、服务重命名 |
 | **P2-5** | Web 增强 | Dashboard、Sing-box 页、DNS 统计 API |
-| **P2-6** | 运维 | 反向 SSH、自动升级、旁路/透明模式细化 |
+| **P2-6** | 运维 | 反向 SSH（已实现）、自动升级、旁路/透明模式细化 |
 | **P2-7** | 测试 | 安装验证脚本、DNS 劫持用例、断线恢复 |
 
 ---

@@ -67,6 +67,13 @@ func (r *Runner) Run() {
 }
 
 func (r *Runner) tick() {
+	if reversessh.ConsumeRestoreRequest() {
+		if ok, msg := r.revSSH.RestoreAfterNetwork(); msg != "" {
+			fmt.Printf("reverse ssh restore: %s (ok=%v)\n", msg, ok)
+		}
+		r.pendingReverseSSH = true
+	}
+
 	code, payload, err := r.activation.ReadActivation()
 	if err != nil || code == "" {
 		r.writeIdle("请刷入线路码")

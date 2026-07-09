@@ -11,7 +11,6 @@ import {
   Tag,
   Typography,
   message,
-  Popconfirm,
 } from "antd";
 import { PlusOutlined, EyeOutlined, DeleteOutlined } from "@ant-design/icons";
 import { useCallback, useEffect, useState } from "react";
@@ -19,6 +18,7 @@ import { Link, useNavigate } from "react-router-dom";
 import dayjs from "dayjs";
 import { apiDelete, apiGet, apiPatch, apiPost } from "../api/client";
 import { confirmLineEnableChange } from "../utils/lineEnableConfirm";
+import { confirmDeleteLine } from "../utils/dangerousConfirm";
 import {
   mapLineItem,
   mapNode,
@@ -257,16 +257,18 @@ export function LinesPage() {
             render: (_, r) => (
               <Space>
                 <Button type="link" icon={<EyeOutlined />} onClick={() => nav(`/lines/${r.id}`)} />
-                <Popconfirm
-                  title="确认删除该线路？"
-                  onConfirm={async () => {
-                    await apiDelete(`/admin/lines/${r.id}`);
-                    message.success("已删除");
-                    void load();
-                  }}
-                >
-                  <Button type="link" danger icon={<DeleteOutlined />} />
-                </Popconfirm>
+                <Button
+                  type="link"
+                  danger
+                  icon={<DeleteOutlined />}
+                  onClick={() =>
+                    confirmDeleteLine(r.tid, async () => {
+                      await apiDelete(`/admin/lines/${r.id}`);
+                      message.success("已删除");
+                      void load();
+                    })
+                  }
+                />
               </Space>
             ),
           },

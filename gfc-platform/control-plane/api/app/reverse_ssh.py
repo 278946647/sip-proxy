@@ -1,6 +1,7 @@
 """Reverse SSH session management, port allocation, and bastion key rendering."""
 from __future__ import annotations
 
+import datetime as dt
 import json
 import logging
 import os
@@ -8,10 +9,10 @@ import socket
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import ClientDevice
+from .models import ClientDevice, ReleasedReversePort
 from .settings import settings
 from .timeutil import ensure_utc, utc_now
 
@@ -52,6 +53,50 @@ def validate_ssh_public_key(key: str) -> str:
     return key
 
 
+def port_release_cooldown_seconds() -> int:
+    return max(0, settings.reverse_ssh_port_release_cooldown_seconds)
+
+
+async def _cooling_ports(session: AsyncSession) -> set[int]:
+    now = utc_now()
+    await session.execute(
+        delete(ReleasedReversePort).where(ReleasedReversePort.released_until <= now)
+    )
+    rows = (
+        await session.execute(
+            select(ReleasedReversePort.port).where(ReleasedReversePort.released_until > now)
+        )
+    ).scalars().all()
+    return set(rows)
+
+
+async def release_device_reverse_ports(
+    session: AsyncSession,
+    device: ClientDevice,
+) -> None:
+    """Put device ports into cooldown instead of immediate reuse."""
+    cooldown = port_release_cooldown_seconds()
+    ports: list[int] = []
+    if device.reverse_ssh_port:
+        ports.append(device.reverse_ssh_port)
+    if device.reverse_http_port:
+        ports.append(device.reverse_http_port)
+    if not ports:
+        return
+    if cooldown <= 0:
+        return
+    now = utc_now()
+    until = now + dt.timedelta(seconds=cooldown)
+    for port in ports:
+        row = await session.get(ReleasedReversePort, port)
+        if row is None:
+            row = ReleasedReversePort(port=port)
+        row.former_device_id = device.id
+        row.released_at = now
+        row.released_until = until
+        session.add(row)
+
+
 async def allocate_reverse_ports(session: AsyncSession) -> tuple[int, int]:
     """Allocate sequential (ssh_port, http_port) from the pool."""
     step = ports_per_device()
@@ -59,6 +104,8 @@ async def allocate_reverse_ports(session: AsyncSession) -> tuple[int, int]:
     hi = ssh_port_max()
     if hi < lo:
         raise RuntimeError("invalid reverse ssh port pool")
+
+    cooled = await _cooling_ports(session)
 
     stmt = select(func.max(ClientDevice.reverse_ssh_port))
     current = (await session.execute(stmt)).scalar_one_or_none()
@@ -70,7 +117,7 @@ async def allocate_reverse_ports(session: AsyncSession) -> tuple[int, int]:
         (await session.execute(select(ClientDevice.reverse_ssh_port))).scalars().all()
     ) | set(
         (await session.execute(select(ClientDevice.reverse_http_port))).scalars().all()
-    )
+    ) | cooled
     while next_port <= hi:
         pair = [next_port + i for i in range(step)]
         if all(p not in used for p in pair):

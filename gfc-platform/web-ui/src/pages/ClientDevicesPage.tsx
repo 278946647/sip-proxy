@@ -2,7 +2,6 @@ import {
   Alert,
   Button,
   Input,
-  Popconfirm,
   Select,
   Space,
   Table,
@@ -18,6 +17,7 @@ import dayjs from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
 import { apiDelete, apiGet, apiPatch } from "../api/client";
 import { openRemoteTarget } from "../lib/openRemote";
+import { confirmDeleteClientDevice } from "../utils/dangerousConfirm";
 import { mapClientDevice, type ClientDeviceListItem, type LineListItem } from "../types";
 import { mapLineItem } from "../types";
 
@@ -138,7 +138,7 @@ export function ClientDevicesPage() {
   const deleteRow = async (row: ClientDeviceListItem) => {
     try {
       const res = await apiDelete<{ ok: boolean; message?: string }>(
-        `/admin/client-devices/${row.id}?operator=${localStorage.getItem("gfc_user") || "admin"}`
+        `/admin/client-devices/${row.id}?operator=${localStorage.getItem("gfc_user") || "admin"}&confirm=true`
       );
       message.success(res.message || "已删除");
       void load();
@@ -327,15 +327,16 @@ export function ClientDevicesPage() {
                   icon={<EyeOutlined />}
                   onClick={() => nav(`/client-devices/${row.id}`)}
                 />
-                <Popconfirm
-                  title="删除此客户端记录？"
-                  description="在线设备将自动重新注册；线路码仍有效。"
-                  onConfirm={() => void deleteRow(row)}
+                <Button
+                  size="small"
+                  danger
+                  icon={<DeleteOutlined />}
+                  onClick={() =>
+                    confirmDeleteClientDevice(row.name, () => deleteRow(row))
+                  }
                 >
-                  <Button size="small" danger icon={<DeleteOutlined />}>
-                    删除
-                  </Button>
-                </Popconfirm>
+                  删除
+                </Button>
               </Space>
             ),
           },

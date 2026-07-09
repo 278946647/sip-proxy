@@ -12,6 +12,7 @@ import (
 
 	"github.com/278946647/sip-proxy/gfc-client/internal/config"
 	"github.com/278946647/sip-proxy/gfc-client/internal/platform"
+	"github.com/278946647/sip-proxy/gfc-client/internal/reversessh"
 )
 
 type Manager struct {
@@ -208,16 +209,30 @@ func listInterfaces(includeTun bool) []string {
 }
 
 func (m *Manager) ApplyNetwork() (map[string]any, error) {
+	var result map[string]any
+	var err error
 	if platform.IsOpenWrt() {
-		return m.applyOpenWrt()
+		result, err = m.applyOpenWrt()
+	} else {
+		script := filepath.Join(m.cfg.Paths.Root, "deploy", "apply-network.sh")
+		if _, statErr := os.Stat(script); statErr != nil {
+			return nil, statErr
+		}
+		cmd := exec.Command("bash", script)
+		out, runErr := cmd.CombinedOutput()
+		result = map[string]any{"output": string(out), "ok": runErr == nil}
+		err = runErr
 	}
-	script := filepath.Join(m.cfg.Paths.Root, "deploy", "apply-network.sh")
-	if _, err := os.Stat(script); err != nil {
-		return nil, err
+	if err == nil {
+		reversessh.RequestRestoreAfterNetwork()
+		if ok, msg := reversessh.New(m.cfg).RestoreAfterNetwork(); msg != "" {
+			if result == nil {
+				result = map[string]any{}
+			}
+			result["reverse_ssh_restore"] = map[string]any{"ok": ok, "message": msg}
+		}
 	}
-	cmd := exec.Command("bash", script)
-	out, err := cmd.CombinedOutput()
-	return map[string]any{"output": string(out), "ok": err == nil}, err
+	return result, err
 }
 
 func (m *Manager) ApplyBridge(body map[string]any) (map[string]any, error) {

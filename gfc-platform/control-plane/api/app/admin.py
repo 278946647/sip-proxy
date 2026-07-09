@@ -33,8 +33,10 @@ from .models import AlertEvent, ClientDevice, FlowStat, Line, Node, OperationLog
 from .reverse_ssh import (
     ensure_device_reverse_ports,
     parse_session_targets,
+    release_device_reverse_ports,
     session_active,
     session_state,
+    sync_authorized_keys,
     tunnel_ready,
 )
 from .security import hash_password
@@ -1559,18 +1561,30 @@ async def delete_client_device(
     device_id: int,
     session: AsyncSession = Depends(get_session),
     operator: str = Query("admin"),
+    confirm: bool = Query(False, description="Must be true to delete device record"),
 ) -> dict[str, str | bool]:
+    if not confirm:
+        raise HTTPException(
+            400,
+            "destructive action requires confirm=true — delete releases remote ports into cooldown",
+        )
     device = await session.get(ClientDevice, device_id)
     if not device:
         raise HTTPException(404, "client device not found")
 
     label = device.name or device.device_key
+    await release_device_reverse_ports(session, device)
     await _log_op(session, operator, "delete_client_device", label, f"id={device_id}")
     await session.delete(device)
     await session.commit()
+    await sync_authorized_keys(session)
+    cooldown = settings.reverse_ssh_port_release_cooldown_seconds
     return {
         "ok": True,
-        "message": "设备记录已删除；客户端仍在线时会通过线路码自动重新注册",
+        "message": (
+            "设备记录已删除；客户端仍在线时会通过线路码自动重新注册。"
+            f" 远程端口已进入 {cooldown}s 冷却期。"
+        ),
     }
 
 

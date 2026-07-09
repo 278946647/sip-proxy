@@ -257,6 +257,14 @@ start_service gfc-unbound
 start_service gfc-agent
 start_dataplane
 
+step "restore reverse ssh tunnel when enabled"
+if [ -x /etc/init.d/gfc-reverse-ssh ]; then
+	if pidof autossh >/dev/null 2>&1 || /etc/init.d/gfc-reverse-ssh running 2>/dev/null; then
+		/etc/init.d/gfc-reverse-ssh restart 2>/dev/null || true
+	fi
+fi
+touch /var/run/gfc-restore-reverse-ssh 2>/dev/null || true
+
 for svc in gfc-api gfc-agent gfc-unbound gfc-sing-box gfc-routing; do
 	/etc/init.d/"$svc" enable 2>/dev/null || true
 done

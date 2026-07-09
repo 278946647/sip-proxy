@@ -1,11 +1,12 @@
 import { ArrowLeftOutlined, DeleteOutlined } from "@ant-design/icons";
-import { Button, Card, Col, Popconfirm, Progress, Row, Space, Statistic, Tag, Typography, message } from "antd";
+import { Button, Card, Col, Progress, Row, Space, Statistic, Tag, Typography, message } from "antd";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import dayjs from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
 import { apiDelete, apiGet } from "../api/client";
 import { openRemoteTarget } from "../lib/openRemote";
+import { confirmDeleteClientDevice } from "../utils/dangerousConfirm";
 import { mapClientDeviceDetail, type ClientDeviceDetail } from "../types";
 
 dayjs.extend(relativeTime);
@@ -48,7 +49,7 @@ export function ClientDeviceDetailPage() {
     if (!id) return;
     try {
       const res = await apiDelete<{ ok: boolean; message?: string }>(
-        `/admin/client-devices/${id}?operator=${localStorage.getItem("gfc_user") || "admin"}`
+        `/admin/client-devices/${id}?operator=${localStorage.getItem("gfc_user") || "admin"}&confirm=true`
       );
       message.success(res.message || "已删除");
       nav("/client-devices");
@@ -89,15 +90,13 @@ export function ClientDeviceDetailPage() {
             <Button onClick={() => void openRemoteTarget(device.id, "flash", device.name)}>刷码协助</Button>
           </Space>
         )}
-        <Popconfirm
-          title="删除此客户端？"
-          description="在线设备将凭线路码自动重新注册。"
-          onConfirm={() => void removeDevice()}
+        <Button
+          danger
+          icon={<DeleteOutlined />}
+          onClick={() => confirmDeleteClientDevice(device.name, () => removeDevice())}
         >
-          <Button danger icon={<DeleteOutlined />}>
-            删除
-          </Button>
-        </Popconfirm>
+          删除
+        </Button>
       </Space>
 
       <Typography.Title level={4}>

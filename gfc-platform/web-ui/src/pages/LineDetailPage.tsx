@@ -21,6 +21,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import dayjs from "dayjs";
 import { apiDelete, apiGet, apiPatch, apiPost } from "../api/client";
 import { confirmLineEnableChange } from "../utils/lineEnableConfirm";
+import { confirmDeleteLine } from "../utils/dangerousConfirm";
 import { mapLineDetail, type FlowStat, type LineDetail } from "../types";
 
 function mapFlowRows(flow: Record<string, unknown>[]) {
@@ -220,16 +221,18 @@ export function LineDetailPage() {
         <Button icon={<ArrowLeftOutlined />} onClick={() => nav("/lines")}>
           返回列表
         </Button>
-        <Popconfirm
-          title={`删除线路 ${line.tid}？`}
-          onConfirm={async () => {
-            await apiDelete(`/admin/lines/${line.id}`);
-            message.success("已删除");
-            nav("/lines");
-          }}
+        <Button
+          danger
+          onClick={() =>
+            confirmDeleteLine(line.tid, async () => {
+              await apiDelete(`/admin/lines/${line.id}`);
+              message.success("已删除");
+              nav("/lines");
+            })
+          }
         >
-          <Button danger>删除线路</Button>
-        </Popconfirm>
+          删除线路
+        </Button>
       </Space>
 
       <Typography.Title level={4}>线路详情 - {line.tid}</Typography.Title>

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import dayjs from "dayjs";
 import { getUser } from "../api/auth";
 import { apiGet, apiPatch, apiPost } from "../api/client";
+import { confirmResetUserPassword } from "../utils/dangerousConfirm";
 import type { PlatformUser } from "../types";
 
 export function UsersPage() {
@@ -124,12 +125,25 @@ export function UsersPage() {
       <Modal
         title={`重置密码 — ${current?.username}`}
         open={resetOpen}
-        onOk={async () => {
-          const v = await resetForm.validateFields();
-          await apiPatch(`/admin/users/${current!.id}`, { password: v.password });
-          message.success("密码已重置");
-          setResetOpen(false);
-        }}
+        onOk={() =>
+          new Promise<void>((resolve, reject) => {
+            resetForm
+              .validateFields()
+              .then((v) => {
+                confirmResetUserPassword(
+                  current!.username,
+                  async () => {
+                    await apiPatch(`/admin/users/${current!.id}`, { password: v.password });
+                    message.success("密码已重置");
+                    setResetOpen(false);
+                    resolve();
+                  },
+                  () => reject(new Error("cancelled"))
+                );
+              })
+              .catch(reject);
+          })
+        }
         onCancel={() => setResetOpen(false)}
       >
         <Form form={resetForm} layout="vertical">

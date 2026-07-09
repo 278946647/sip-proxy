@@ -3,7 +3,6 @@ import {
   Form,
   Input,
   Modal,
-  Popconfirm,
   Space,
   Statistic,
   Table,
@@ -14,7 +13,8 @@ import {
 import { PlusOutlined } from "@ant-design/icons";
 import { useEffect, useMemo, useState } from "react";
 import dayjs from "dayjs";
-import { apiDelete, apiGet, apiPost, apiPatch } from "../api/client";
+import { apiDelete, apiGet, apiPatch, apiPost } from "../api/client";
+import { confirmDeleteSocks } from "../utils/dangerousConfirm";
 import { mapSocks, type SocksProfile } from "../types";
 import { formatSocksAddress } from "../utils/socksAddress";
 
@@ -161,18 +161,19 @@ export function ProxiesPage() {
                 >
                   编辑
                 </Button>
-                <Popconfirm
-                  title="确认删除？"
-                  onConfirm={async () => {
-                    await apiDelete(`/admin/socks/${r.id}`);
-                    message.success("已删除");
-                    await load();
-                  }}
+                <Button
+                  type="link"
+                  danger
+                  onClick={() =>
+                    confirmDeleteSocks(r.name || r.host, async () => {
+                      await apiDelete(`/admin/socks/${r.id}`);
+                      message.success("已删除");
+                      await load();
+                    })
+                  }
                 >
-                  <Button type="link" danger>
-                    删除
-                  </Button>
-                </Popconfirm>
+                  删除
+                </Button>
               </>
             ),
           },

@@ -212,6 +212,20 @@ def _migrate_sync(sync_conn: Connection) -> None:
             )
         )
 
+    if not _table_exists(sync_conn, "released_reverse_ports"):
+        sync_conn.execute(
+            text(
+                """
+                CREATE TABLE released_reverse_ports (
+                    port INTEGER NOT NULL PRIMARY KEY,
+                    former_device_id INTEGER,
+                    released_at DATETIME,
+                    released_until DATETIME
+                )
+                """
+            )
+        )
+
 
 async def migrate_sqlite(engine: AsyncEngine) -> None:
     async with engine.begin() as conn:

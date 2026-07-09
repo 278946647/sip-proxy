@@ -8,6 +8,7 @@ import (
 	"github.com/278946647/sip-proxy/gfc-client/internal/config"
 	"github.com/278946647/sip-proxy/gfc-client/internal/dataplane"
 	"github.com/278946647/sip-proxy/gfc-client/internal/network"
+	"github.com/278946647/sip-proxy/gfc-client/internal/reversessh"
 	"github.com/278946647/sip-proxy/gfc-client/internal/store"
 )
 
@@ -28,6 +29,10 @@ func main() {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "apply network failed: %s\n", err)
 			os.Exit(1)
+		}
+		reversessh.RequestRestoreAfterNetwork()
+		if ok, msg := reversessh.New(cfg).RestoreAfterNetwork(); msg != "" {
+			fmt.Printf("reverse ssh restore: %s (ok=%v)\n", msg, ok)
 		}
 		fmt.Printf("%v\n", result)
 		return
