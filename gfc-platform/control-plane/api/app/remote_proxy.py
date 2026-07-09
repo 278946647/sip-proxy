@@ -1,6 +1,7 @@
 """HTTP reverse proxy to client LuCI / flash via local reverse HTTP port."""
 from __future__ import annotations
 
+import re
 from urllib.parse import parse_qs, urlencode
 
 import httpx
@@ -13,6 +14,8 @@ from .reverse_ssh import session_active, tunnel_ready
 from .security import decode_access_token
 
 router = APIRouter(prefix="/remote", tags=["remote"])
+
+_SKIP_RESP_HEADERS = frozenset({"transfer-encoding", "connection", "content-encoding"})
 
 
 async def _resolve_user(
@@ -155,22 +158,32 @@ async def _proxy(
             )
     except httpx.HTTPError as exc:
         raise HTTPException(502, f"upstream unreachable: {exc}") from exc
-    out_headers = {
-        k: v
-        for k, v in resp.headers.items()
-        if k.lower() not in {"transfer-encoding", "connection", "content-encoding"}
-    }
-    location = out_headers.get("location") or out_headers.get("Location")
-    if location:
-        rewritten = _rewrite_remote_location(location, device_id)
-        if rewritten != location:
-            out_headers["location"] = rewritten
-            out_headers.pop("Location", None)
+
+    out_headers = _response_headers(resp, device_id)
     content = resp.content
-    ctype = (out_headers.get("content-type") or "").lower()
+    ctype = ""
+    for key, value in out_headers:
+        if key.lower() == "content-type":
+            ctype = value.lower()
+            break
     if content and _should_rewrite_body(ctype):
         content = _rewrite_body_paths(content, device_id)
     return Response(content=content, status_code=resp.status_code, headers=out_headers)
+
+
+def _response_headers(resp: httpx.Response, device_id: int) -> list[tuple[str, str]]:
+    out: list[tuple[str, str]] = []
+    for key, value in resp.headers.multi_items():
+        kl = key.lower()
+        if kl in _SKIP_RESP_HEADERS:
+            continue
+        if kl == "set-cookie":
+            out.append((key, _rewrite_set_cookie(value, device_id)))
+            continue
+        if kl == "location":
+            value = _rewrite_remote_location(value, device_id)
+        out.append((key, value))
+    return out
 
 
 def _upstream_query(request: Request) -> str:
@@ -183,6 +196,21 @@ def _upstream_query(request: Request) -> str:
     if not params:
         return ""
     return urlencode(params, doseq=True)
+
+
+def _rewrite_set_cookie(value: str, device_id: int) -> str:
+    """Scope LuCI session cookies under /remote/{device_id}/ so the browser sends them."""
+    prefix = f"/remote/{device_id}"
+
+    def repl(match: re.Match[str]) -> str:
+        path = match.group(1)
+        if path.startswith(prefix):
+            return match.group(0)
+        if path == "/":
+            return f"Path={prefix}/"
+        return f"Path={prefix}{path}"
+
+    return re.sub(r"Path=(/[^;]*)", repl, value, flags=re.IGNORECASE)
 
 
 def _rewrite_remote_location(location: str, device_id: int) -> str:
@@ -236,8 +264,24 @@ def _rewrite_text_paths(text: str, device_id: int) -> str:
     while double in text:
         text = text.replace(double, prefix)
 
+    esc_prefix = "\\/remote\\/" + str(device_id)
     for seg in _PATH_SEGMENTS:
         for quote in ('"', "'", "`"):
             text = text.replace(f"{quote}/{seg}/", f"{quote}{prefix}/{seg}/")
+            text = text.replace(f'{quote}/{seg}"', f'{quote}{prefix}/{seg}"')
+            text = text.replace(f"{quote}/{seg}'", f"{quote}{prefix}/{seg}'")
         text = text.replace(f"url(/{seg}/", f"url({prefix}/{seg}/")
+        text = text.replace(f"\\/{seg}\\/", f"{esc_prefix}\\/{seg}\\/")
+
+    # LuCI base path without trailing segment, e.g. "/cgi-bin/luci"
+    text = text.replace('"/cgi-bin/luci"', f'"{prefix}/cgi-bin/luci"')
+    text = text.replace("'/cgi-bin/luci'", f"'{prefix}/cgi-bin/luci'")
+    text = text.replace("\\/cgi-bin\\/luci", f"{esc_prefix}\\/cgi-bin\\/luci")
+
+    # Catch remaining root-relative asset paths in minified JS.
+    text = re.sub(
+        rf'(?<![\w/])/(?!remote/{device_id}/)(cgi-bin|luci-static|gfc)/',
+        rf"{prefix}/\1/",
+        text,
+    )
     return text
