@@ -1,7 +1,7 @@
 """HTTP reverse proxy to client LuCI / flash via local reverse HTTP port."""
 from __future__ import annotations
 
-import re
+from urllib.parse import parse_qs, urlencode
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
@@ -136,9 +136,7 @@ async def _proxy(
     device_id: int,
     token: str | None = None,
 ) -> Response:
-    query = str(request.url.query or "")
-    if token and "token=" not in query:
-        query = f"{query}&token={token}" if query else f"token={token}"
+    query = _upstream_query(request)
     if query:
         upstream = f"{upstream}?{query}"
     headers = {
@@ -147,13 +145,16 @@ async def _proxy(
         if k.lower() not in {"host", "content-length", "connection"}
     }
     body = await request.body()
-    async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
-        resp = await client.request(
-            request.method,
-            upstream,
-            headers=headers,
-            content=body if body else None,
-        )
+    try:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
+            resp = await client.request(
+                request.method,
+                upstream,
+                headers=headers,
+                content=body if body else None,
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, f"upstream unreachable: {exc}") from exc
     out_headers = {
         k: v
         for k, v in resp.headers.items()
@@ -170,6 +171,18 @@ async def _proxy(
     if content and _should_rewrite_body(ctype):
         content = _rewrite_body_paths(content, device_id)
     return Response(content=content, status_code=resp.status_code, headers=out_headers)
+
+
+def _upstream_query(request: Request) -> str:
+    """Forward client query string but drop platform auth token."""
+    raw = str(request.url.query or "")
+    if not raw:
+        return ""
+    params = parse_qs(raw, keep_blank_values=True)
+    params.pop("token", None)
+    if not params:
+        return ""
+    return urlencode(params, doseq=True)
 
 
 def _rewrite_remote_location(location: str, device_id: int) -> str:
@@ -224,6 +237,7 @@ def _rewrite_text_paths(text: str, device_id: int) -> str:
         text = text.replace(double, prefix)
 
     for seg in _PATH_SEGMENTS:
-        pattern = rf'(?<=[("\'`:=]|url\()/(?!remote/{device_id}/)({seg}/)'
-        text = re.sub(pattern, rf"{prefix}/\1", text)
+        for quote in ('"', "'", "`"):
+            text = text.replace(f"{quote}/{seg}/", f"{quote}{prefix}/{seg}/")
+        text = text.replace(f"url(/{seg}/", f"url({prefix}/{seg}/")
     return text
