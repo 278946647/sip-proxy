@@ -12,7 +12,7 @@ export async function openRemoteTarget(
     const session = await waitForTunnel(deviceId);
     hide();
     if (target === "ssh") {
-      window.open(`/#/client-devices/${deviceId}/ssh`, "_blank");
+      window.open(`/client-devices/${deviceId}/ssh`, "_blank");
       return;
     }
     const url = target === "web" ? session.urls.web : session.urls.flash;
