@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     reverse_ssh_user: str = "gfc-reverse"
     reverse_ssh_session_ttl_seconds: int = 1800
     reverse_ssh_connect_timeout_seconds: int = 90
-    reverse_ssh_authorized_keys_path: str = "./data/reverse-ssh/authorized_keys"
+    reverse_ssh_authorized_keys_path: str = "/data/reverse-ssh/authorized_keys"
     reverse_ssh_client_shell_user: str = "root"
     reverse_ssh_client_shell_password: str = ""
 

@@ -129,6 +129,9 @@ fi
 
 gfc_cp_write_env_file "$REPO_ROOT/.env" "$REPO_ROOT/deploy/control/install.env"
 
+echo "==> Reverse SSH host prerequisites (gfc-reverse + authorized_keys)"
+bash "$REPO_ROOT/deploy/control/setup-reverse-ssh.sh"
+
 install -m 755 "$REPO_ROOT/deploy/control/gfc-compose.sh" /usr/local/bin/gfc-compose
 
 cd "$REPO_ROOT"

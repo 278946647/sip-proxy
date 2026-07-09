@@ -3,11 +3,11 @@ services:
     build:
       context: ./control-plane/api
       dockerfile: Dockerfile
-    ports:
-      - "8080:8080"
+    network_mode: host
     environment:
       GFC_DATABASE_URL: sqlite+aiosqlite:////data/gfc.db
       GFC_PKI_DIR: /data/pki
+      GFC_REVERSE_SSH_AUTHORIZED_KEYS_PATH: /data/reverse-ssh/authorized_keys
       GFC_BOOTSTRAP_TOKENS: ${GFC_BOOTSTRAP_TOKENS:-demo-bootstrap}
       GFC_ADMIN_DEFAULT_PASSWORD: ${GFC_ADMIN_DEFAULT_PASSWORD:-admin123}
       GFC_AUTH_SECRET: ${GFC_AUTH_SECRET:-change-me-in-production}
@@ -17,6 +17,7 @@ services:
       GFC_PUBLIC_PORT: ${GFC_PUBLIC_PORT:-8080}
     volumes:
       - gfc-data:/data
+      - /var/lib/gfc/reverse-ssh/authorized_keys:/data/reverse-ssh/authorized_keys
     healthcheck:
       test:
         [
@@ -42,6 +43,8 @@ services:
       dockerfile: Dockerfile
     ports:
       - "5173:80"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       api:
         condition: service_healthy

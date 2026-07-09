@@ -29,6 +29,9 @@ fi
 echo "==> 重建 API / Web 镜像"
 "${COMPOSE[@]}" build --no-cache api web
 
+echo "==> Reverse SSH host prerequisites"
+bash "$ROOT/deploy/control/setup-reverse-ssh.sh"
+
 echo "==> 安全重启（先删容器再 up，避免 ContainerConfig）"
 install -m 755 "$ROOT/deploy/control/gfc-compose.sh" /usr/local/bin/gfc-compose 2>/dev/null || true
 gfc_compose_safe_up "$ROOT" 0

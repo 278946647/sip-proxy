@@ -27,6 +27,7 @@ from .models import Base, ConfigBundle, Line, Node, NodeToken, PlatformUser, Soc
 from .node_config import build_node_payload, payload_version
 from .monitor import monitor_loop
 from .node_health import emit_alert, process_heartbeat_metrics
+from .reverse_ssh import sync_authorized_keys
 from .schemas import (
     ActivateRequest,
     ActivateResponse,
@@ -68,6 +69,7 @@ async def _lifespan(_app: FastAPI):
                 await session.commit()
         await load_smtp_settings(session)
         await ensure_platform_secrets(session)
+        await sync_authorized_keys(session)
 
     stop = asyncio.Event()
     task = asyncio.create_task(monitor_loop(stop))
