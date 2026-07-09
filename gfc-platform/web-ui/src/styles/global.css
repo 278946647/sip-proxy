@@ -89,6 +89,12 @@ body,
   gap: 8px 16px;
 }
 
+.traffic-stats-hint {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+
 .traffic-chart {
   width: 100%;
   max-width: 100%;

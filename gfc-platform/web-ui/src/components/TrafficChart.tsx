@@ -5,10 +5,22 @@ import type { FlowStat } from "../types";
 type Props = {
   stats: FlowStat[];
   height?: number;
-  maxPoints?: number;
 };
 
 const VIEW_WIDTH = 1000;
+const MIB = 1024 * 1024;
+
+export function flowRateMBps(bytesIn: number, bytesOut: number, windowSeconds: number) {
+  const sec = Math.max(windowSeconds, 1);
+  return (bytesIn + bytesOut) / sec / MIB;
+}
+
+export function formatRateMBps(rate: number) {
+  if (!Number.isFinite(rate) || rate <= 0) return "0 MB/s";
+  if (rate < 0.01) return `${(rate * 1024).toFixed(1)} KB/s`;
+  if (rate < 10) return `${rate.toFixed(2)} MB/s`;
+  return `${rate.toFixed(1)} MB/s`;
+}
 
 function formatBytes(n: number) {
   if (n < 1024) return `${n} B`;
@@ -17,39 +29,45 @@ function formatBytes(n: number) {
   return `${(n / 1024 ** 3).toFixed(2)} GB`;
 }
 
-type ChartPoint = FlowStat & { total: number; label: string };
+type ChartPoint = FlowStat & {
+  rateMBps: number;
+  label: string;
+};
 
-function downsamplePoints(points: ChartPoint[], maxPoints: number): ChartPoint[] {
-  if (points.length <= maxPoints) return points;
-  const bucket = points.length / maxPoints;
-  const out: ChartPoint[] = [];
-  for (let i = 0; i < maxPoints; i += 1) {
-    const start = Math.floor(i * bucket);
-    const end = Math.max(start + 1, Math.floor((i + 1) * bucket));
-    const slice = points.slice(start, end);
-    out.push(slice.reduce((best, p) => (p.total > best.total ? p : best), slice[0]));
-  }
-  return out;
+function smoothRates(values: number[]): number[] {
+  if (values.length <= 2) return values;
+  return values.map((v, i) => {
+    const prev = values[Math.max(0, i - 1)];
+    const next = values[Math.min(values.length - 1, i + 1)];
+    return (prev + v + next) / 3;
+  });
 }
 
-export function TrafficChart({ stats, height = 120, maxPoints = 120 }: Props) {
+function xLabelAnchor(idx: number, lastIdx: number): "start" | "middle" | "end" {
+  if (idx <= 0) return "start";
+  if (idx >= lastIdx) return "end";
+  return "middle";
+}
+
+export function TrafficChart({ stats, height = 140 }: Props) {
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
   const points = useMemo(() => {
-    const raw = stats.map((s) => ({
+    const raw: ChartPoint[] = stats.map((s) => ({
       ...s,
-      total: s.bytesIn + s.bytesOut,
+      rateMBps: flowRateMBps(s.bytesIn, s.bytesOut, s.windowSeconds),
       label: dayjs(s.windowStart).format("MM-DD HH:mm"),
     }));
-    return downsamplePoints(raw, maxPoints);
-  }, [stats, maxPoints]);
+    const smoothed = smoothRates(raw.map((p) => p.rateMBps));
+    return raw.map((p, i) => ({ ...p, rateMBps: smoothed[i] }));
+  }, [stats]);
 
   if (points.length === 0) {
-    return <div className="traffic-chart-empty">暂无流量数据</div>;
+    return <div className="traffic-chart-empty">暂无 gfctun 流量数据</div>;
   }
 
-  const max = Math.max(...points.map((p) => p.total), 1);
-  const pad = { top: 10, right: 12, bottom: 28, left: 56 };
+  const max = Math.max(...points.map((p) => p.rateMBps), 0.001);
+  const pad = { top: 12, right: 28, bottom: 30, left: 64 };
   const innerW = VIEW_WIDTH - pad.left - pad.right;
   const innerH = height - pad.top - pad.bottom;
 
@@ -57,7 +75,7 @@ export function TrafficChart({ stats, height = 120, maxPoints = 120 }: Props) {
     const x =
       pad.left +
       (points.length === 1 ? innerW / 2 : (i / (points.length - 1)) * innerW);
-    const y = pad.top + innerH - (p.total / max) * innerH;
+    const y = pad.top + innerH - (p.rateMBps / max) * innerH;
     return { x, y, p };
   });
 
@@ -68,10 +86,13 @@ export function TrafficChart({ stats, height = 120, maxPoints = 120 }: Props) {
     ` ${pad.left + innerW},${pad.top + innerH}`;
   const hover = hoverIdx != null ? coords[hoverIdx] : null;
 
-  const xLabelCount = Math.min(6, points.length);
+  const xLabelCount = Math.min(8, points.length);
   const xLabelIdx = Array.from({ length: xLabelCount }, (_, i) =>
     Math.round((i / Math.max(xLabelCount - 1, 1)) * (points.length - 1))
   );
+  const lastLabelIdx = xLabelIdx[xLabelIdx.length - 1] ?? 0;
+
+  const yTicks = [0, 0.25, 0.5, 0.75, 1];
 
   const pickHover = (clientX: number, svg: SVGSVGElement) => {
     const rect = svg.getBoundingClientRect();
@@ -95,11 +116,10 @@ export function TrafficChart({ stats, height = 120, maxPoints = 120 }: Props) {
         viewBox={`0 0 ${VIEW_WIDTH} ${height}`}
         width="100%"
         height={height}
-        preserveAspectRatio="none"
+        preserveAspectRatio="xMidYMid meet"
         onMouseLeave={() => setHoverIdx(null)}
         onMouseMove={(e) => pickHover(e.clientX, e.currentTarget)}
       >
-        {/* full-width hit area so hover works anywhere on the chart */}
         <rect
           x={pad.left}
           y={pad.top}
@@ -107,7 +127,7 @@ export function TrafficChart({ stats, height = 120, maxPoints = 120 }: Props) {
           height={innerH}
           fill="transparent"
         />
-        {[0, 0.5, 1].map((ratio) => {
+        {yTicks.map((ratio) => {
           const y = pad.top + innerH * (1 - ratio);
           const val = max * ratio;
           return (
@@ -120,23 +140,37 @@ export function TrafficChart({ stats, height = 120, maxPoints = 120 }: Props) {
                 stroke="#e2e8f0"
               />
               <text x={pad.left - 8} y={y + 4} textAnchor="end" fontSize="11" fill="#64748b">
-                {formatBytes(val)}
+                {formatRateMBps(val)}
               </text>
             </g>
           );
         })}
         {xLabelIdx.map((idx) => {
           const x = coords[idx]?.x ?? pad.left;
+          const anchor = xLabelAnchor(idx, lastLabelIdx);
           return (
             <g key={idx}>
-              <text x={x} y={height - 6} textAnchor="middle" fontSize="10" fill="#94a3b8">
+              <text
+                x={x}
+                y={height - 8}
+                textAnchor={anchor}
+                fontSize="10"
+                fill="#94a3b8"
+              >
                 {points[idx]?.label}
               </text>
             </g>
           );
         })}
         <polygon fill="rgba(59,130,246,0.08)" points={area} />
-        <polyline fill="none" stroke="#3b82f6" strokeWidth="2" points={polyline} />
+        <polyline
+          fill="none"
+          stroke="#3b82f6"
+          strokeWidth="2"
+          strokeLinejoin="round"
+          strokeLinecap="round"
+          points={polyline}
+        />
         {hover ? (
           <>
             <line
@@ -154,7 +188,7 @@ export function TrafficChart({ stats, height = 120, maxPoints = 120 }: Props) {
       {hover ? (
         <div className="traffic-chart-hover">
           <strong>{hover.p.label}</strong>
-          {" · "}总 {formatBytes(hover.p.total)}
+          {" · "}速率 {formatRateMBps(flowRateMBps(hover.p.bytesIn, hover.p.bytesOut, hover.p.windowSeconds))}
           {" · "}下 {formatBytes(hover.p.bytesIn)}
           {" · "}上 {formatBytes(hover.p.bytesOut)}
         </div>
