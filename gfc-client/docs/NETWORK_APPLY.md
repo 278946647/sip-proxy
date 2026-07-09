@@ -163,8 +163,9 @@ GFC_PLATFORM=immortalwrt gfc-bootstrap --rollback-network
 ```
 
 - 恢复最新快照到 `/etc/config/network`
-- `uci commit` network/dhcp/firewall
-- `network` / `dnsmasq` / `firewall` restart
+- `uci commit` network/dhcp
+- `network` / `dnsmasq` restart
+- `firewall` **stop + disable**（不 restart fw4）
 
 仅 OpenWrt/ImmortalWrt 支持；Ubuntu 路径走 `deploy/apply-network.sh`。
 
