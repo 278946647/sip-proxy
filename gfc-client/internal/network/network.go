@@ -454,43 +454,6 @@ func (m *Manager) applyOpenWrtLAN(cfg map[string]any) error {
 	return nil
 }
 
-func (m *Manager) applyOpenWrtWAN(cfg map[string]any) error {
-	iface := strings.TrimSpace(text(cfg["interface"]))
-	if iface == "" {
-		iface = m.cfg.WanIface
-	}
-	if iface == "" {
-		return nil
-	}
-	mode := strings.ToLower(strings.TrimSpace(text(cfg["mode"])))
-	if mode == "" {
-		mode = "dhcp"
-	}
-	_, _ = uci("set", "network.wan=interface")
-	_, _ = uci("set", "network.wan.device="+iface)
-	_, _ = uci("set", "network.wan.proto="+mode)
-	if mtu := intValue(cfg["mtu"], 0); mtu > 0 {
-		_, _ = uci("set", "network.wan.mtu="+strconv.Itoa(mtu))
-	}
-	if mode == "static" {
-		for key, uciKey := range map[string]string{"address": "ipaddr", "netmask": "netmask", "gateway": "gateway"} {
-			if val := strings.TrimSpace(text(cfg[key])); val != "" {
-				_, _ = uci("set", "network.wan."+uciKey+"="+val)
-			}
-		}
-		dns := compact([]string{text(cfg["dns1"]), text(cfg["dns2"])})
-		if len(dns) > 0 {
-			_, _ = uci("set", "network.wan.dns="+strings.Join(dns, " "))
-		}
-	} else if mode == "dhcp" {
-		_, _ = uci("delete", "network.wan.ipaddr")
-		_, _ = uci("delete", "network.wan.netmask")
-		_, _ = uci("delete", "network.wan.gateway")
-		_, _ = uci("delete", "network.wan.dns")
-	}
-	return nil
-}
-
 func (m *Manager) applyOpenWrtDHCP(cfg map[string]any) error {
 	if !manageOpenWrtLAN(cfg) {
 		return nil

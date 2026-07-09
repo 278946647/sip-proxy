@@ -87,6 +87,14 @@ WAN is handled the same way:
 gfc-bootstrap --rollback-network
 ```
 
+`network-wan.json` WAN modes:
+
+| mode | JSON fields |
+|------|-------------|
+| `static` | `address`, `netmask`, `gateway`, `dns1`, `dns2` |
+| `dhcp` | clears static/pppoe UCI leftovers |
+| `pppoe` | `username`, `password`; clears static UCI leftovers |
+
 ## Manual Runtime Install
 
 For early device testing, compile on Ubuntu/VM and upload binaries plus `deploy`

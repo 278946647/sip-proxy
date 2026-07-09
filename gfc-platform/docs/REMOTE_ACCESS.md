@@ -77,6 +77,7 @@ ImmortalWrt 客户端（gfc-reverse-ssh + gfc-agent）
 - 无 `network-wan.json` 时：**先从当前 UCI 导入**生成该文件，不凭空写 dhcp
 - 仅当 `network-wan.json` 存在时才写 `network.wan`（写前自动快照）
 - `mode=dhcp` 时会清理 UCI 中残留的 `ipaddr/gateway`（修复 proto 与地址不一致）
+- `mode=pppoe` 时写入 `username`/`password`，并清理 static 残留字段
 - 回滚：`gfc-bootstrap --rollback-network`
 
 ---

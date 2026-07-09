@@ -28,3 +28,15 @@ network.wan.proto='dhcp'`
 		t.Fatalf("proto=%q", values["proto"])
 	}
 }
+
+func TestParseUCIShowPPPoEWAN(t *testing.T) {
+	out := `network.wan=interface
+network.wan.device='eth0'
+network.wan.proto='pppoe'
+network.wan.username='user@isp'
+network.wan.password='secret'`
+	values := parseUCIShow(out)
+	if values["proto"] != "pppoe" || values["username"] != "user@isp" {
+		t.Fatalf("values=%v", values)
+	}
+}
