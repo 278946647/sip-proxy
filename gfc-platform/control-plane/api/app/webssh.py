@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shutil
+from pathlib import Path
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -19,6 +21,48 @@ router = APIRouter(prefix="/admin/ws", tags=["webssh"])
 async def _load_device(device_id: int) -> ClientDevice | None:
     async with async_session_factory() as session:
         return await session.get(ClientDevice, device_id)
+
+
+def _build_ssh_command(device: ClientDevice) -> list[str] | None:
+    """Build ssh argv for device shell via reverse tunnel port."""
+    port = str(device.reverse_ssh_port)
+    target = f"{settings.reverse_ssh_client_shell_user}@127.0.0.1"
+    ssh_opts = [
+        "ssh",
+        "-tt",
+        "-o",
+        "StrictHostKeyChecking=no",
+        "-o",
+        "UserKnownHostsFile=/dev/null",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "NumberOfPasswordPrompts=0",
+        "-p",
+        port,
+    ]
+    identity = (settings.reverse_ssh_client_shell_identity_path or "").strip()
+    if identity and Path(identity).is_file():
+        ssh_opts.extend(["-i", identity, target])
+        return ssh_opts
+
+    password = (settings.reverse_ssh_client_shell_password or "").strip()
+    if password:
+        if not shutil.which("sshpass"):
+            logger.error("sshpass not installed in API image")
+            return None
+        return ["sshpass", "-p", password, *ssh_opts, target]
+
+    return None
+
+
+def _missing_auth_message() -> str:
+    return (
+        "[webssh] 未配置设备 Shell 登录凭据。\n"
+        "在控制平台设置 GFC_REVERSE_SSH_CLIENT_SHELL_PASSWORD（ImmortalWrt root 密码），\n"
+        "或配置 GFC_REVERSE_SSH_CLIENT_SHELL_IDENTITY_PATH 指向 API 上的私钥，"
+        "并把对应公钥写入设备 /etc/dropbear/authorized_keys。\n"
+    )
 
 
 @router.websocket("/ssh/{device_id}")
@@ -45,25 +89,13 @@ async def webssh_device(
         await websocket.close(code=4409)
         return
 
+    ssh_args = _build_ssh_command(device)
     await websocket.accept()
-    ssh_args = [
-        "ssh",
-        "-tt",
-        "-o",
-        "StrictHostKeyChecking=no",
-        "-o",
-        "UserKnownHostsFile=/dev/null",
-        "-p",
-        str(device.reverse_ssh_port),
-        f"{settings.reverse_ssh_client_shell_user}@127.0.0.1",
-    ]
-    if settings.reverse_ssh_client_shell_password:
-        ssh_args = [
-            "sshpass",
-            "-p",
-            settings.reverse_ssh_client_shell_password,
-            *ssh_args,
-        ]
+    if ssh_args is None:
+        await websocket.send_text(_missing_auth_message())
+        await websocket.close()
+        return
+
     try:
         proc = await asyncio.create_subprocess_exec(
             *ssh_args,

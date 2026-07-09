@@ -46,6 +46,8 @@ class Settings(BaseSettings):
     reverse_ssh_authorized_keys_path: str = "/data/reverse-ssh/authorized_keys"
     reverse_ssh_client_shell_user: str = "root"
     reverse_ssh_client_shell_password: str = ""
+    # Optional ed25519 private key path on API host for passwordless WebSSH.
+    reverse_ssh_client_shell_identity_path: str = ""
 
     # Reverse tunnel local port pool on control platform (127.0.0.1)
     client_ssh_port_base: int = 6001

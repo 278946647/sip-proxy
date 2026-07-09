@@ -9,7 +9,7 @@ export function ClientWebSSHPage() {
   const nav = useNavigate();
   const termRef = useRef<HTMLPreElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
-  const [connected, setConnected] = useState(false);
+  const [phase, setPhase] = useState<"connecting" | "shell" | "failed">("connecting");
 
   useEffect(() => {
     if (!id) return;
@@ -23,18 +23,34 @@ export function ClientWebSSHPage() {
     ws.binaryType = "arraybuffer";
     wsRef.current = ws;
     ws.onopen = () => {
-      setConnected(true);
-      append("\r\n[已连接远程 SSH]\r\n");
+      append("\r\n[正在连接设备 Shell…]\r\n");
     };
     ws.onmessage = (ev) => {
-      if (typeof ev.data === "string") append(ev.data);
-      else append(new TextDecoder().decode(ev.data));
+      const text =
+        typeof ev.data === "string" ? ev.data : new TextDecoder().decode(ev.data);
+      append(text);
+      if (
+        text.includes("Permission denied") ||
+        text.includes("未配置设备 Shell") ||
+        text.includes("[webssh]")
+      ) {
+        setPhase("failed");
+      } else if (
+        text.includes("BusyBox") ||
+        /root@/.test(text) ||
+        text.includes("ImmortalWrt")
+      ) {
+        setPhase("shell");
+      }
     };
     ws.onclose = () => {
-      setConnected(false);
+      setPhase((p) => (p === "shell" ? "shell" : "failed"));
       append("\r\n[连接已关闭]\r\n");
     };
-    ws.onerror = () => message.error("WebSSH 连接失败");
+    ws.onerror = () => {
+      setPhase("failed");
+      message.error("WebSSH 连接失败");
+    };
     return () => ws.close();
   }, [id, nav]);
 
@@ -68,8 +84,10 @@ export function ClientWebSSHPage() {
     <div>
       <Space style={{ marginBottom: 12 }}>
         <Button onClick={() => nav(`/client-devices/${id}`)}>返回设备详情</Button>
-        <Typography.Text type={connected ? "success" : "secondary"}>
-          {connected ? "已连接" : "连接中…"}
+        <Typography.Text
+          type={phase === "shell" ? "success" : phase === "failed" ? "danger" : "secondary"}
+        >
+          {phase === "shell" ? "Shell 已连接" : phase === "failed" ? "连接失败" : "连接中…"}
         </Typography.Text>
       </Space>
       <Typography.Title level={5}>远程 SSH — 设备 #{id}</Typography.Title>
@@ -88,7 +106,9 @@ export function ClientWebSSHPage() {
         }}
       />
       <Typography.Paragraph type="secondary" style={{ marginTop: 8 }}>
-        点击终端区域后可直接输入。若无法连接，请确认控制平台已安装 <code>ssh</code> 客户端且设备隧道已就绪。
+        点击终端区域后可直接输入。需在控制平台配置{" "}
+        <code>GFC_REVERSE_SSH_CLIENT_SHELL_PASSWORD</code>（设备 root 密码）或密钥路径；
+        并确认反向隧道已就绪。
       </Typography.Paragraph>
       <Link to="/client-devices">返回客户端列表</Link>
     </div>
