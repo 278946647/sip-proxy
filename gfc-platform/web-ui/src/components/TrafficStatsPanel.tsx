@@ -45,9 +45,6 @@ export function TrafficStatsPanel({ stats, updatedAt }: Props) {
           <Typography.Text type="secondary">更新于 {updatedAt}</Typography.Text>
         </div>
       </div>
-      <Typography.Text type="secondary" className="traffic-stats-hint">
-        仅统计经 gfctun 转发的国际代理流量，不含国内直连与物理口总流量；图表纵轴为 MB/s。
-      </Typography.Text>
       <TrafficChart stats={stats} height={140} />
     </div>
   );

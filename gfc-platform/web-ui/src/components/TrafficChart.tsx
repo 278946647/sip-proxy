@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type MouseEvent } from "react";
 import dayjs from "dayjs";
 import type { FlowStat } from "../types";
 
@@ -94,14 +94,18 @@ export function TrafficChart({ stats, height = 140 }: Props) {
 
   const yTicks = [0, 0.25, 0.5, 0.75, 1];
 
-  const pickHover = (clientX: number, svg: SVGSVGElement) => {
-    const rect = svg.getBoundingClientRect();
-    if (rect.width <= 0) return;
-    const xInView = ((clientX - rect.left) / rect.width) * VIEW_WIDTH;
+  const pickHover = (e: MouseEvent<SVGSVGElement>) => {
+    const svg = e.currentTarget;
+    const ctm = svg.getScreenCTM();
+    if (!ctm) return;
+    const pt = svg.createSVGPoint();
+    pt.x = e.clientX;
+    pt.y = e.clientY;
+    const local = pt.matrixTransform(ctm.inverse());
     let best = 0;
     let bestDist = Number.POSITIVE_INFINITY;
     coords.forEach((c, i) => {
-      const d = Math.abs(c.x - xInView);
+      const d = Math.abs(c.x - local.x);
       if (d < bestDist) {
         bestDist = d;
         best = i;
@@ -116,9 +120,9 @@ export function TrafficChart({ stats, height = 140 }: Props) {
         viewBox={`0 0 ${VIEW_WIDTH} ${height}`}
         width="100%"
         height={height}
-        preserveAspectRatio="xMidYMid meet"
+        preserveAspectRatio="none"
         onMouseLeave={() => setHoverIdx(null)}
-        onMouseMove={(e) => pickHover(e.clientX, e.currentTarget)}
+        onMouseMove={pickHover}
       >
         <rect
           x={pad.left}
