@@ -28,6 +28,7 @@ from .node_config import build_node_payload, payload_version
 from .monitor import monitor_loop
 from .node_health import emit_alert, process_heartbeat_metrics
 from .reverse_ssh import sync_authorized_keys
+from .webssh_keys import ensure_webssh_keypair
 from .schemas import (
     ActivateRequest,
     ActivateResponse,
@@ -69,6 +70,10 @@ async def _lifespan(_app: FastAPI):
                 await session.commit()
         await load_smtp_settings(session)
         await ensure_platform_secrets(session)
+        try:
+            ensure_webssh_keypair()
+        except Exception:
+            logger.exception("webssh keypair bootstrap failed (continuing)")
         try:
             await sync_authorized_keys(session)
         except Exception:

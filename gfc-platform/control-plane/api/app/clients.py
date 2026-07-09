@@ -38,6 +38,7 @@ from .reverse_ssh import (
     sync_authorized_keys,
     validate_ssh_public_key,
 )
+from .webssh_keys import webssh_public_key_line
 from .security import hash_token, load_token_secrets, new_token
 from .settings import settings
 from .timeutil import utc_now
@@ -287,7 +288,11 @@ async def client_heartbeat(
             ports=ReverseSSHPortsOut(**cmd["ports"]) if cmd.get("ports") else None,
             targets=cmd.get("targets") or [],
         )
-    return ClientHeartbeatResponse(server_time=utc_now(), reverse_ssh=reverse_ssh)
+    return ClientHeartbeatResponse(
+        server_time=utc_now(),
+        reverse_ssh=reverse_ssh,
+        webssh_authorized_key=webssh_public_key_line(),
+    )
 
 
 @router.get("/me/config", response_model=ConfigBundleOut)

@@ -85,7 +85,8 @@ func (c *Client) Activate(lineCode, deviceName, lanMAC, deviceID, proxyMode, age
 }
 
 type HeartbeatResult struct {
-	ReverseSSH map[string]any `json:"reverse_ssh"`
+	ReverseSSH          map[string]any `json:"reverse_ssh"`
+	WebSSHAuthorizedKey string         `json:"webssh_authorized_key"`
 }
 
 func (c *Client) Heartbeat(

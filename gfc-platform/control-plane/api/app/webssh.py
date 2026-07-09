@@ -13,6 +13,7 @@ from .models import ClientDevice
 from .reverse_ssh import session_active, tunnel_ready
 from .security import decode_access_token
 from .settings import settings
+from .webssh_keys import resolved_shell_identity_path
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin/ws", tags=["webssh"])
@@ -41,7 +42,7 @@ def _build_ssh_command(device: ClientDevice) -> list[str] | None:
         "-p",
         port,
     ]
-    identity = (settings.reverse_ssh_client_shell_identity_path or "").strip()
+    identity = resolved_shell_identity_path()
     if identity and Path(identity).is_file():
         ssh_opts.extend(["-i", identity, target])
         return ssh_opts
@@ -58,10 +59,10 @@ def _build_ssh_command(device: ClientDevice) -> list[str] | None:
 
 def _missing_auth_message() -> str:
     return (
-        "[webssh] 未配置设备 Shell 登录凭据。\n"
-        "在控制平台设置 GFC_REVERSE_SSH_CLIENT_SHELL_PASSWORD（ImmortalWrt root 密码），\n"
-        "或配置 GFC_REVERSE_SSH_CLIENT_SHELL_IDENTITY_PATH 指向 API 上的私钥，"
-        "并把对应公钥写入设备 /etc/dropbear/authorized_keys。\n"
+        "[webssh] 设备 Shell 登录凭据未就绪。\n"
+        "请确认控制平台 API 已启动并生成 /data/pki/webssh_id，"
+        "且客户端 agent 已通过心跳安装 webssh 公钥到 dropbear。\n"
+        "也可临时设置 GFC_REVERSE_SSH_CLIENT_SHELL_PASSWORD。\n"
     )
 
 

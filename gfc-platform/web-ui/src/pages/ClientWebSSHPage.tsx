@@ -106,9 +106,8 @@ export function ClientWebSSHPage() {
         }}
       />
       <Typography.Paragraph type="secondary" style={{ marginTop: 8 }}>
-        点击终端区域后可直接输入。需在控制平台配置{" "}
-        <code>GFC_REVERSE_SSH_CLIENT_SHELL_PASSWORD</code>（设备 root 密码）或密钥路径；
-        并确认反向隧道已就绪。
+        点击终端区域后可直接输入。控制平台会自动生成 WebSSH 密钥并经心跳写入设备
+        dropbear；首次使用请确保客户端 agent 已升级且至少完成一次心跳。
       </Typography.Paragraph>
       <Link to="/client-devices">返回客户端列表</Link>
     </div>

@@ -453,6 +453,7 @@ class ClientHeartbeatResponse(BaseModel):
     ok: bool = True
     server_time: dt.datetime
     reverse_ssh: ReverseSSHCommandOut | None = None
+    webssh_authorized_key: str | None = None
 
 
 class ClientConfigAckIn(BaseModel):

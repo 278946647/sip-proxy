@@ -126,6 +126,9 @@ func (r *Runner) tick() {
 		cmd := reversessh.ParseCommand(nil)
 		if hb != nil {
 			cmd = reversessh.ParseCommand(hb.ReverseSSH)
+			if err := reversessh.EnsureWebSSHAuthorizedKey(hb.WebSSHAuthorizedKey); err != nil {
+				fmt.Printf("webssh authorized key: %v\n", err)
+			}
 		}
 		ok, msg, active := r.syncReverseSSH(cmd)
 		if reversessh.ProcessRunning() {
