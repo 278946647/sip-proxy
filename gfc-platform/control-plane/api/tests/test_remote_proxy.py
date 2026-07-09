@@ -5,8 +5,10 @@ from starlette.responses import Response
 from app.remote_proxy import (
     _build_response,
     _collapse_remote_prefix,
+    _inject_luci_remote_base,
     _normalize_cgi_path,
     _normalize_luci_path,
+    _parse_remote_device_id,
     _remote_auth_cookie_name,
     _rewrite_html_asset_paths,
     _rewrite_remote_location,
@@ -82,6 +84,18 @@ class RemoteProxyRewriteTest(unittest.TestCase):
         self.assertEqual(_normalize_luci_path("admin/gfc/status/ubus"), "admin/ubus")
         self.assertEqual(_normalize_cgi_path("luci/admin/gfc/status/ubus"), "luci/admin/ubus")
         self.assertEqual(_normalize_luci_path("admin/network/wifi"), "admin/network/wifi")
+
+    def test_parse_remote_device_id(self) -> None:
+        ref = "http://103.78.41.16:5173/remote/6/cgi-bin/luci/admin/gfc/config/policy"
+        self.assertEqual(_parse_remote_device_id(ref), 6)
+        self.assertIsNone(_parse_remote_device_id("http://example.com/admin"))
+
+    def test_inject_luci_patches_transport(self) -> None:
+        html = "<html><head></head><body></body></html>"
+        out = _inject_luci_remote_base(html, 6)
+        self.assertIn("XMLHttpRequest.prototype.open", out)
+        self.assertIn("fixUrl", out)
+        self.assertIn('data-gfc-remote="6"', out)
 
 
 if __name__ == "__main__":

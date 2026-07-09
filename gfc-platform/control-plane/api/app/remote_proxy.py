@@ -20,6 +20,9 @@ from .timeutil import utc_now
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/remote", tags=["remote"])
+root_shim_router = APIRouter(tags=["remote-root-shim"])
+
+_LUCI_PROXY_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
 
 _SKIP_RESP_HEADERS = frozenset({
     "transfer-encoding",
@@ -119,7 +122,7 @@ async def proxy_dup_prefix(
     raise HTTPException(404, "unknown remote path")
 
 
-@router.api_route("/{device_id}/luci/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD"])
+@router.api_route("/{device_id}/luci/{path:path}", methods=_LUCI_PROXY_METHODS)
 async def proxy_luci(
     device_id: int,
     path: str,
@@ -177,7 +180,7 @@ async def proxy_luci_static(
     return await _proxy(request, upstream, device_id, token)
 
 
-@router.api_route("/{device_id}/cgi-bin/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD"])
+@router.api_route("/{device_id}/cgi-bin/{path:path}", methods=_LUCI_PROXY_METHODS)
 async def proxy_cgi(
     device_id: int,
     path: str,
@@ -438,6 +441,48 @@ def _normalize_cgi_path(path: str) -> str:
     return raw
 
 
+def _parse_remote_device_id(referer: str) -> int | None:
+    m = re.search(r"/remote/(\d+)(?:/|$)", referer or "")
+    if m:
+        return int(m.group(1))
+    return None
+
+
+def _device_id_from_request(request: Request) -> int:
+    device_id = _parse_remote_device_id(request.headers.get("referer", ""))
+    if device_id is not None:
+        return device_id
+    for key in request.cookies:
+        if key.startswith("gfc_remote_"):
+            suffix = key[len("gfc_remote_") :]
+            if suffix.isdigit():
+                return int(suffix)
+    raise HTTPException(404, "missing remote device context")
+
+
+@root_shim_router.api_route("/cgi-bin/{path:path}", methods=_LUCI_PROXY_METHODS)
+async def shim_root_cgi(
+    path: str,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    token: str | None = Query(default=None),
+) -> Response:
+    """LuCI sometimes calls /cgi-bin/... without /remote/{id}/ — resolve device from Referer."""
+    device_id = _device_id_from_request(request)
+    return await proxy_cgi(device_id, path, request, session, token)
+
+
+@root_shim_router.api_route("/luci-static/{path:path}", methods=["GET", "HEAD", "OPTIONS"])
+async def shim_root_luci_static(
+    path: str,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    token: str | None = Query(default=None),
+) -> Response:
+    device_id = _device_id_from_request(request)
+    return await proxy_luci_static(device_id, path, request, session, token)
+
+
 def _inject_luci_remote_base(html: str, device_id: int) -> str:
     """Pin LuCI base paths under /remote/{id}; patch L.url to avoid double prefix."""
     marker = f'data-gfc-remote="{device_id}"'
@@ -445,40 +490,67 @@ def _inject_luci_remote_base(html: str, device_id: int) -> str:
         return html
     script = f"""<script {marker}>(function(){{
 var DID={device_id};
-var BASE="/remote/"+DID+"/cgi-bin/luci";
-var STATIC="/remote/"+DID+"/luci-static";
+var P="/remote/"+DID;
+var BASE=P+"/cgi-bin/luci";
+var STATIC=P+"/luci-static";
 function dedupe(u){{
  if(typeof u!=="string")return u;
- var p="/remote/"+DID+"/";
- var d=p+"remote/"+DID+"/";
- while(u.indexOf(d)===0)u=u.slice(("/remote/"+DID).length);
- while(u.indexOf(p+p)===0)u=p+u.slice(p.length);
+ var prefix=P+"/";
+ while(u.indexOf(prefix+prefix)===0)u=prefix+u.slice(prefix.length);
+ var dup=P+"/remote/"+DID+"/";
+ while(u.indexOf(dup)===0)u=P+"/"+u.slice(dup.length);
  return u;
+}}
+function fixUrl(u){{
+ if(typeof u!=="string")return u;
+ u=dedupe(u);
+ if(u.indexOf(P+"/")===0||u.indexOf(P+"?")===0)return u;
+ if(u.charAt(0)==="/"&&(u.indexOf("/cgi-bin/")===0||u.indexOf("/luci-static/")===0||u.indexOf("/gfc/")===0))
+  return P+u;
+ return u;
+}}
+function patchTransport(){{
+ if(window.__gfcRemoteTransport)return;
+ var xo=XMLHttpRequest.prototype.open;
+ XMLHttpRequest.prototype.open=function(m,u){{
+  arguments[1]=fixUrl(u);
+  return xo.apply(this,arguments);
+ }};
+ if(window.fetch){{
+  var of=window.fetch;
+  window.fetch=function(input,init){{
+   if(typeof input==="string")input=fixUrl(input);
+   else if(input&&input.url)input=new Request(fixUrl(input.url),input);
+   return of.call(this,input,init);
+  }};
+ }}
+ window.__gfcRemoteTransport=true;
 }}
 function applyEnv(){{
  if(!window.L||!L.env)return;
  L.env.scriptname=BASE;
  var m=L.env.media||"";
- if(!m||m.indexOf("/remote/"+DID)!==0){{
+ if(!m||m.indexOf(P)!==0){{
   if(m.indexOf("/luci-static")===0)L.env.media=STATIC+m.slice("/luci-static".length);
-  else if(m)L.env.media=STATIC+"/resources";
+  else L.env.media=STATIC+"/resources";
  }}
 }}
 function patchUrl(){{
  if(!window.L||!L.prototype||L.prototype.__gfcRemote)return;
  var orig=L.prototype.url;
- if(typeof orig!=="function")return;
- L.prototype.url=function(){{return dedupe(orig.apply(this,arguments));}};
- if(L.prototype.resource){{
+ if(typeof orig==="function"){{
+  L.prototype.url=function(){{return fixUrl(orig.apply(this,arguments));}};
+ }}
+ if(typeof L.prototype.resource==="function"){{
   var or=L.prototype.resource;
-  L.prototype.resource=function(){{return dedupe(or.apply(this,arguments));}};
+  L.prototype.resource=function(){{return fixUrl(or.apply(this,arguments));}};
  }}
  L.prototype.__gfcRemote=true;
 }}
-function boot(){{applyEnv();patchUrl();}}
+function boot(){{patchTransport();applyEnv();patchUrl();}}
 boot();
 document.addEventListener("DOMContentLoaded",boot);
-var n=0,t=setInterval(function(){{boot();if(++n>50)clearInterval(t);}},100);
+var n=0,t=setInterval(function(){{boot();if(++n>60)clearInterval(t);}},100);
 }})();</script>"""
     lower = html.lower()
     head = lower.find("<head")
