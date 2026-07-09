@@ -155,6 +155,9 @@ LAN clients -> dnsmasq (DHCP only, port=0) -> DHCP option 6 = gateway
 `configure-dnsmasq-dhcp.sh` sets `dhcp.@dnsmasq[0].port=0` and advertises the LAN
 gateway as DNS. GFC nft DNS hijack redirects external DNS to local unbound.
 
+**fw4:** Stock ImmortalWrt `firewall` (fw4) must be **disabled** — GFC `gfc-routing` owns
+`inet nat` / `inet gfc` / `inet gfc_dns_hijack`. See `disable-immortalwrt-fw4.sh`.
+
 ## Dataplane Split
 
 The ImmortalWrt dataplane uses `inet gfc` nft tables and kernel-split sing-box:

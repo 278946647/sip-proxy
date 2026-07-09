@@ -94,6 +94,8 @@ stop_proxy_only() {
 
 start_direct() {
 	stop_proxy_only
+	_fw4_sh="${GFC_ROOT}/deploy/immortalwrt/disable-immortalwrt-fw4.sh"
+	[ -f "$_fw4_sh" ] && sh "$_fw4_sh" 2>/dev/null || true
 	nft delete table inet gfc_dns_hijack 2>/dev/null || true
 	nft delete table inet nat 2>/dev/null || true
 	apply_wan_nat
@@ -428,6 +430,11 @@ wait_tun() {
 
 start_rules() {
 	stop_rules
+	_fw4_sh="${GFC_ROOT}/deploy/immortalwrt/disable-immortalwrt-fw4.sh"
+	[ -f "$_fw4_sh" ] && sh "$_fw4_sh" 2>/dev/null || {
+		/etc/init.d/firewall stop 2>/dev/null || true
+		/etc/init.d/firewall disable 2>/dev/null || true
+	}
 	apply_wan_nat
 	apply_dns_hijack
 	apply_policy_table

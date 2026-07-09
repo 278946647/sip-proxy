@@ -37,9 +37,10 @@ LuCI GFC「回滚配置」仅回滚 **数据面**（`/dataplane/rollback`），*
 2. snapshotOpenWrtNetwork()     # 写 WAN 前备份 /etc/config/network（仅当 network-wan.json 存在）
 3. applyOpenWrtWAN()            # 按 JSON mode 写 UCI，并清理跨模式残留字段
 4. （可选）LAN/DHCP             # 仅 GFC_MANAGE_LAN=1
-5. routes / vlan / firewall
-6. uci commit + network restart
-7. reversessh restore 标记      # apply-network / upgrade 后由 agent 恢复隧道
+5. routes / vlan
+6. disable stock fw4（`disableOpenWrtFW4`，不 restart firewall）
+7. uci commit network/dhcp + network/dnsmasq restart
+8. reversessh restore 标记      # apply-network / upgrade 后由 agent 恢复隧道
 ```
 
 ### 3.1 WAN 写入前置条件

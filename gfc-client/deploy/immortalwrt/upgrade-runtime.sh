@@ -197,6 +197,15 @@ _ensure_unbound_dirs() {
 /etc/init.d/gfc-mosdns stop 2>/dev/null || true
 /etc/init.d/gfc-mosdns disable 2>/dev/null || true
 
+step "disable stock fw4 (GFC gfc-routing owns nft)"
+_fw4_sh="$GFC_ROOT/deploy/immortalwrt/disable-immortalwrt-fw4.sh"
+if [ -f "$_fw4_sh" ]; then
+	sh "$_fw4_sh" || true
+else
+	/etc/init.d/firewall stop 2>/dev/null || true
+	/etc/init.d/firewall disable 2>/dev/null || true
+fi
+
 start_dataplane() {
 	if [ "${GFC_SKIP_DATAPLANE:-0}" = "1" ]; then
 		echo "NOTE: GFC_SKIP_DATAPLANE=1, gfc-sing-box / gfc-routing not started"

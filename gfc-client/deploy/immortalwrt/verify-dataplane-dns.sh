@@ -78,6 +78,14 @@ else
 	fail "WAN masquerade missing (gfc-routing not applied)"
 fi
 
+if [ -x /etc/init.d/firewall ]; then
+	if /etc/init.d/firewall enabled >/dev/null 2>&1; then
+		fail "stock fw4 enabled — conflicts with GFC nft (run disable-immortalwrt-fw4.sh)"
+	else
+		ok "fw4 disabled"
+	fi
+fi
+
 if [ -f /etc/gfc-client/sing-box.json ]; then
 	ok "sing-box.json present"
 else

@@ -382,19 +382,22 @@ func (m *Manager) applyOpenWrt() (map[string]any, error) {
 		msgs = append(msgs, "firewall warning: "+err.Error())
 	}
 
-	for _, pkg := range []string{"network", "dhcp", "firewall"} {
+	for _, pkg := range []string{"network", "dhcp"} {
 		if out, err := uci("commit", pkg); err != nil {
 			return map[string]any{"messages": msgs, "output": out}, err
 		}
 	}
 	reload := []string{}
-	for _, svc := range []string{"network", "dnsmasq", "firewall"} {
+	for _, svc := range []string{"network", "dnsmasq"} {
 		out, err := initd(svc, "restart")
 		if err != nil {
 			reload = append(reload, svc+": "+strings.TrimSpace(out))
 			continue
 		}
 		reload = append(reload, svc+": restarted")
+	}
+	if err := disableOpenWrtFW4(); err == nil {
+		reload = append(reload, "firewall: stopped+disabled (GFC nft)")
 	}
 	_ = m.saveRoles(map[string]any{
 		"wan": wanString(wan, "interface", m.cfg.WanIface),
@@ -542,9 +545,7 @@ func (m *Manager) applyOpenWrtVLAN(cfg map[string]any, bridge map[string]any) er
 }
 
 func (m *Manager) applyOpenWrtFirewall() error {
-	_, _ = uci("set", "firewall.@zone[1].masq=1")
-	_, _ = uci("set", "firewall.@zone[1].mtu_fix=1")
-	return nil
+	return disableOpenWrtFW4()
 }
 
 func uci(args ...string) (string, error) {

@@ -57,19 +57,22 @@ func (m *Manager) rollbackOpenWrtNetwork() (map[string]any, error) {
 	if err := os.WriteFile(openWrtNetworkConfig, data, 0o600); err != nil {
 		return nil, err
 	}
-	for _, pkg := range []string{"network", "dhcp", "firewall"} {
+	for _, pkg := range []string{"network", "dhcp"} {
 		if _, err := uci("commit", pkg); err != nil {
 			return nil, err
 		}
 	}
 	reload := []string{}
-	for _, svc := range []string{"network", "dnsmasq", "firewall"} {
+	for _, svc := range []string{"network", "dnsmasq"} {
 		out, err := initd(svc, "restart")
 		if err != nil {
 			reload = append(reload, svc+": "+strings.TrimSpace(out))
 			continue
 		}
 		reload = append(reload, svc+": restarted")
+	}
+	if err := disableOpenWrtFW4(); err == nil {
+		reload = append(reload, "firewall: stopped+disabled (GFC nft)")
 	}
 	return map[string]any{
 		"ok":       true,

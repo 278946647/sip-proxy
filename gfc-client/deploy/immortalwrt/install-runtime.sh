@@ -158,6 +158,14 @@ chmod +x "$GFC_ROOT"/deploy/apply-tc-htb.sh 2>/dev/null || true
 /etc/init.d/mosdns stop 2>/dev/null || true
 /etc/init.d/mosdns disable 2>/dev/null || true
 
+_fw4_sh="$GFC_ROOT/deploy/immortalwrt/disable-immortalwrt-fw4.sh"
+if [ -f "$_fw4_sh" ]; then
+	sh "$_fw4_sh" || true
+else
+	/etc/init.d/firewall stop 2>/dev/null || true
+	/etc/init.d/firewall disable 2>/dev/null || true
+fi
+
 _ensure_unbound_dirs() {
 	_sh="$GFC_ROOT/deploy/immortalwrt/ensure-unbound-dirs.sh"
 	[ -f "$_sh" ] && sh "$_sh" || mkdir -p /etc/unbound/conf.d /var/lib/unbound
