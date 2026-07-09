@@ -8,12 +8,17 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/278946647/sip-proxy/gfc-client/internal/config"
 	"github.com/278946647/sip-proxy/gfc-client/internal/platform"
 )
 
-const defaultPortBase = 6001
+const (
+	defaultPortBase   = 6001
+	openWrtRunnerPath = "/usr/lib/gfc-client/reverse-ssh-run.sh"
+	openWrtInitPath   = "/etc/init.d/gfc-reverse-ssh"
+)
 
 type Command struct {
 	Enabled   bool
@@ -148,18 +153,39 @@ func (m *Manager) SyncCommand(cmd *Command) (bool, string) {
 }
 
 func (m *Manager) isActive() bool {
+	if autosshProcessRunning() {
+		return true
+	}
 	if platform.IsOpenWrt() {
-		return exec.Command("/etc/init.d/gfc-reverse-ssh", "running").Run() == nil
+		if exec.Command(openWrtInitPath, "running").Run() == nil {
+			return true
+		}
+		out, _ := exec.Command(openWrtInitPath, "status").CombinedOutput()
+		return strings.Contains(strings.ToLower(string(out)), "running")
 	}
 	out, _ := exec.Command("systemctl", "is-active", "gfc-reverse-ssh.service").Output()
 	return strings.TrimSpace(string(out)) == "active"
 }
 
+func autosshBin() (string, error) {
+	for _, name := range []string{"autossh", "/usr/bin/autossh", "/usr/sbin/autossh"} {
+		if path, err := exec.LookPath(name); err == nil {
+			return path, nil
+		}
+	}
+	return "", fmt.Errorf("autossh not installed (opkg install autossh)")
+}
+
+func autosshProcessRunning() bool {
+	out, err := exec.Command("pidof", "autossh").Output()
+	return err == nil && strings.TrimSpace(string(out)) != ""
+}
+
 func (m *Manager) stopUnit() (bool, string) {
 	m.lastCmd = ""
 	if platform.IsOpenWrt() {
-		_ = exec.Command("/etc/init.d/gfc-reverse-ssh", "stop").Run()
-		_ = exec.Command("/etc/init.d/gfc-reverse-ssh", "disable").Run()
+		_ = exec.Command(openWrtInitPath, "stop").Run()
+		_ = exec.Command(openWrtInitPath, "disable").Run()
 		return true, "reverse ssh disabled"
 	}
 	_ = exec.Command("systemctl", "stop", "gfc-reverse-ssh.service").Run()
@@ -179,14 +205,15 @@ func (m *Manager) Status() map[string]any {
 }
 
 func (m *Manager) syncSystemd(host, user string, sshdPort, revSSH, revHTTP int, targets []string) (bool, string) {
-	unitPath := "/etc/systemd/system/gfc-reverse-ssh.service"
-	identity := filepath.Join(m.cfg.Paths.Etc, "reverse_ssh_id")
-	script := m.buildScript(host, user, sshdPort, revSSH, revHTTP, targets, identity)
-	if err := os.WriteFile(unitPath, []byte(script), 0o644); err != nil {
+	bin, err := autosshBin()
+	if err != nil {
 		return false, err.Error()
 	}
-	if _, err := exec.LookPath("autossh"); err != nil {
-		return false, "autossh not installed"
+	unitPath := "/etc/systemd/system/gfc-reverse-ssh.service"
+	identity := filepath.Join(m.cfg.Paths.Etc, "reverse_ssh_id")
+	script := m.buildScript(bin, host, user, sshdPort, revSSH, revHTTP, targets, identity)
+	if err := os.WriteFile(unitPath, []byte(script), 0o644); err != nil {
+		return false, err.Error()
 	}
 	_ = exec.Command("systemctl", "daemon-reload").Run()
 	_ = exec.Command("systemctl", "enable", "gfc-reverse-ssh.service").Run()
@@ -194,25 +221,94 @@ func (m *Manager) syncSystemd(host, user string, sshdPort, revSSH, revHTTP int, 
 	if err != nil {
 		return false, strings.TrimSpace(string(out))
 	}
-	return true, fmt.Sprintf("reverse ssh :%d/:+1 -> %s:%d", revSSH, host, sshdPort)
+	time.Sleep(2 * time.Second)
+	if !m.isActive() {
+		return false, "gfc-reverse-ssh service not running after restart"
+	}
+	return true, fmt.Sprintf("reverse ssh active :%d -> %s:%d", revSSH, host, sshdPort)
 }
 
 func (m *Manager) syncOpenWrt(host, user string, sshdPort, revSSH, revHTTP int, targets []string) (bool, string) {
-	if _, err := exec.LookPath("autossh"); err != nil {
-		return false, "autossh not installed"
-	}
-	identity := filepath.Join(m.cfg.Paths.Etc, "reverse_ssh_id")
-	script := m.buildOpenWrtInit(host, user, sshdPort, revSSH, revHTTP, targets, identity)
-	path := "/etc/init.d/gfc-reverse-ssh"
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+	bin, err := autosshBin()
+	if err != nil {
 		return false, err.Error()
 	}
-	_ = exec.Command(path, "enable").Run()
-	out, err := exec.Command(path, "restart").CombinedOutput()
+	identity := filepath.Join(m.cfg.Paths.Etc, "reverse_ssh_id")
+	if err := m.writeOpenWrtRunner(bin, host, user, sshdPort, revSSH, revHTTP, targets, identity); err != nil {
+		return false, err.Error()
+	}
+	script := m.buildOpenWrtInit()
+	if err := os.WriteFile(openWrtInitPath, []byte(script), 0o755); err != nil {
+		return false, err.Error()
+	}
+	if msg := m.probeSSHAuth(bin, host, user, sshdPort, identity); msg != "" {
+		return false, msg
+	}
+	_ = exec.Command(openWrtInitPath, "enable").Run()
+	out, err := exec.Command(openWrtInitPath, "restart").CombinedOutput()
 	if err != nil {
 		return false, strings.TrimSpace(string(out))
 	}
-	return true, fmt.Sprintf("reverse ssh :%d -> %s:%d", revSSH, host, sshdPort)
+	time.Sleep(2 * time.Second)
+	if m.isActive() {
+		return true, fmt.Sprintf("reverse ssh active :%d -> %s:%d", revSSH, host, sshdPort)
+	}
+	diag := strings.TrimSpace(string(out))
+	if diag == "" {
+		diag = "see logread and /usr/lib/gfc-client/reverse-ssh-run.sh"
+	}
+	return false, fmt.Sprintf("gfc-reverse-ssh not running: %s", diag)
+}
+
+func (m *Manager) probeSSHAuth(_ string, host, user string, sshdPort int, identity string) string {
+	sshBin, err := exec.LookPath("ssh")
+	if err != nil {
+		return "ssh client not installed"
+	}
+	test := exec.Command(
+		sshBin,
+		"-p", strconv.Itoa(sshdPort),
+		"-i", identity,
+		"-o", "BatchMode=yes",
+		"-o", "ConnectTimeout=10",
+		"-o", "StrictHostKeyChecking=accept-new",
+		fmt.Sprintf("%s@%s", user, host),
+		"true",
+	)
+	out, err := test.CombinedOutput()
+	if err == nil {
+		return ""
+	}
+	msg := strings.TrimSpace(string(out))
+	if msg == "" {
+		msg = err.Error()
+	}
+	return fmt.Sprintf("ssh auth/connect failed: %s", trimLine(msg, 200))
+}
+
+func (m *Manager) writeOpenWrtRunner(
+	bin, host, user string,
+	sshdPort, revSSH, revHTTP int,
+	targets []string,
+	identity string,
+) error {
+	localSSH := envInt("GFC_SSH_PORT", 212)
+	remote := m.buildRemoteArgs(revSSH, revHTTP, targets, localSSH)
+	script := fmt.Sprintf(`#!/bin/sh
+set -eu
+AUTOSSH_BIN=%q
+IDENTITY=%q
+[ -x "$AUTOSSH_BIN" ] || { echo "autossh missing: $AUTOSSH_BIN" >&2; exit 127; }
+[ -f "$IDENTITY" ] || { echo "identity missing: $IDENTITY" >&2; exit 1; }
+export AUTOSSH_GATETIME=0
+exec "$AUTOSSH_BIN" -M 0 -N -p %d \
+  -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new \
+  -i "$IDENTITY" %s %s@%s
+`, bin, identity, sshdPort, remote, user, host)
+	if err := os.MkdirAll(filepath.Dir(openWrtRunnerPath), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(openWrtRunnerPath, []byte(script), 0o755)
 }
 
 func (m *Manager) buildRemoteArgs(revSSH, revHTTP int, targets []string, localSSH int) string {
@@ -230,7 +326,7 @@ func (m *Manager) buildRemoteArgs(revSSH, revHTTP int, targets []string, localSS
 	return strings.Join(parts, " ")
 }
 
-func (m *Manager) buildScript(host, user string, sshdPort, revSSH, revHTTP int, targets []string, identity string) string {
+func (m *Manager) buildScript(autosshBin, host, user string, sshdPort, revSSH, revHTTP int, targets []string, identity string) string {
 	localSSH := envInt("GFC_SSH_PORT", 212)
 	remote := m.buildRemoteArgs(revSSH, revHTTP, targets, localSSH)
 	return fmt.Sprintf(`[Unit]
@@ -240,33 +336,34 @@ Wants=network-online.target
 
 [Service]
 Environment=AUTOSSH_GATETIME=0
-ExecStart=/usr/bin/autossh -M 0 -N -p %d -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new -i %s %s %s@%s
+ExecStart=%s -M 0 -N -p %d -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new -i %s %s %s@%s
 Restart=always
 RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
-`, sshdPort, identity, remote, user, host)
+`, autosshBin, sshdPort, identity, remote, user, host)
 }
 
-func (m *Manager) buildOpenWrtInit(host, user string, sshdPort, revSSH, revHTTP int, targets []string, identity string) string {
-	localSSH := envInt("GFC_SSH_PORT", 212)
-	remote := m.buildRemoteArgs(revSSH, revHTTP, targets, localSSH)
+func (m *Manager) buildOpenWrtInit() string {
 	return fmt.Sprintf(`#!/bin/sh /etc/rc.common
 START=93
 STOP=17
 USE_PROCD=1
 
 start_service() {
+	[ -x %s ] || {
+		echo "gfc-reverse-ssh: missing %s" >&2
+		return 1
+	}
 	procd_open_instance
-	procd_set_param command /usr/bin/autossh -M 0 -N -p %d -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new -i %s %s %s@%s
-	procd_set_param env AUTOSSH_GATETIME=0
-	procd_set_param respawn 5 10 0
+	procd_set_param command %s
+	procd_set_param respawn 3600 5 0
 	procd_set_param stdout 1
 	procd_set_param stderr 1
 	procd_close_instance
 }
-`, sshdPort, identity, remote, user, host)
+`, openWrtRunnerPath, openWrtRunnerPath, openWrtRunnerPath)
 }
 
 // Port is deprecated; kept for status display compatibility.
@@ -300,4 +397,12 @@ func envInt(key string, def int) int {
 		return def
 	}
 	return n
+}
+
+func trimLine(s string, max int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "..."
 }
