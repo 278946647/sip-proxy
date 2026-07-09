@@ -128,6 +128,9 @@ func (r *Runner) tick() {
 			cmd = reversessh.ParseCommand(hb.ReverseSSH)
 		}
 		ok, msg, active := r.syncReverseSSH(cmd)
+		if reversessh.ProcessRunning() {
+			active = true
+		}
 		status := map[string]any{"active": active}
 		if !active && ok && msg == "reverse ssh disabled" {
 			status["active"] = false

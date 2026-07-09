@@ -182,6 +182,10 @@ func autosshProcessRunning() bool {
 	return err == nil && strings.TrimSpace(string(out)) != ""
 }
 
+func ProcessRunning() bool {
+	return autosshProcessRunning()
+}
+
 func (m *Manager) stopUnit() (bool, string) {
 	m.lastCmd = ""
 	if platform.IsOpenWrt() {
@@ -229,13 +233,42 @@ func (m *Manager) syncSystemd(host, user string, sshdPort, revSSH, revHTTP int, 
 	return true, fmt.Sprintf("reverse ssh active :%d -> %s:%d", revSSH, host, sshdPort)
 }
 
+func sshForwardOpts() string {
+	// Dropbear/busybox ssh on ImmortalWrt rejects ServerAliveCountMax.
+	return "-o ServerAliveInterval=30 -o StrictHostKeyChecking=accept-new"
+}
+
+func (m *Manager) openWrtRunnerContent(
+	bin, host, user string,
+	sshdPort, revSSH, revHTTP int,
+	targets []string,
+	identity string,
+) string {
+	localSSH := envInt("GFC_SSH_PORT", 212)
+	remote := m.buildRemoteArgs(revSSH, revHTTP, targets, localSSH)
+	opts := sshForwardOpts()
+	return fmt.Sprintf(`#!/bin/sh
+set -eu
+AUTOSSH_BIN=%q
+IDENTITY=%q
+[ -x "$AUTOSSH_BIN" ] || { echo "autossh missing: $AUTOSSH_BIN" >&2; exit 127; }
+[ -f "$IDENTITY" ] || { echo "identity missing: $IDENTITY" >&2; exit 1; }
+export AUTOSSH_GATETIME=0
+exec "$AUTOSSH_BIN" -M 0 -N -p %d %s -i "$IDENTITY" %s %s@%s
+`, bin, identity, sshdPort, opts, remote, user, host)
+}
+
 func (m *Manager) syncOpenWrt(host, user string, sshdPort, revSSH, revHTTP int, targets []string) (bool, string) {
 	bin, err := autosshBin()
 	if err != nil {
 		return false, err.Error()
 	}
 	identity := filepath.Join(m.cfg.Paths.Etc, "reverse_ssh_id")
-	if err := m.writeOpenWrtRunner(bin, host, user, sshdPort, revSSH, revHTTP, targets, identity); err != nil {
+	runner := m.openWrtRunnerContent(bin, host, user, sshdPort, revSSH, revHTTP, targets, identity)
+	if cur, err := os.ReadFile(openWrtRunnerPath); err == nil && string(cur) == runner && m.isActive() {
+		return true, fmt.Sprintf("reverse ssh active :%d -> %s:%d", revSSH, host, sshdPort)
+	}
+	if err := m.writeOpenWrtRunner(runner); err != nil {
 		return false, err.Error()
 	}
 	script := m.buildOpenWrtInit()
@@ -292,29 +325,11 @@ func (m *Manager) probeSSHAuth(_ string, host, user string, sshdPort int, identi
 	return fmt.Sprintf("ssh connect failed: %s", trimLine(msg, 200))
 }
 
-func (m *Manager) writeOpenWrtRunner(
-	bin, host, user string,
-	sshdPort, revSSH, revHTTP int,
-	targets []string,
-	identity string,
-) error {
-	localSSH := envInt("GFC_SSH_PORT", 212)
-	remote := m.buildRemoteArgs(revSSH, revHTTP, targets, localSSH)
-	script := fmt.Sprintf(`#!/bin/sh
-set -eu
-AUTOSSH_BIN=%q
-IDENTITY=%q
-[ -x "$AUTOSSH_BIN" ] || { echo "autossh missing: $AUTOSSH_BIN" >&2; exit 127; }
-[ -f "$IDENTITY" ] || { echo "identity missing: $IDENTITY" >&2; exit 1; }
-export AUTOSSH_GATETIME=0
-exec "$AUTOSSH_BIN" -M 0 -N -p %d \
-  -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new \
-  -i "$IDENTITY" %s %s@%s
-`, bin, identity, sshdPort, remote, user, host)
+func (m *Manager) writeOpenWrtRunner(content string) error {
 	if err := os.MkdirAll(filepath.Dir(openWrtRunnerPath), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(openWrtRunnerPath, []byte(script), 0o755)
+	return os.WriteFile(openWrtRunnerPath, []byte(content), 0o755)
 }
 
 func (m *Manager) buildRemoteArgs(revSSH, revHTTP int, targets []string, localSSH int) string {
@@ -335,6 +350,7 @@ func (m *Manager) buildRemoteArgs(revSSH, revHTTP int, targets []string, localSS
 func (m *Manager) buildScript(autosshBin, host, user string, sshdPort, revSSH, revHTTP int, targets []string, identity string) string {
 	localSSH := envInt("GFC_SSH_PORT", 212)
 	remote := m.buildRemoteArgs(revSSH, revHTTP, targets, localSSH)
+	opts := sshForwardOpts()
 	return fmt.Sprintf(`[Unit]
 Description=GFC Reverse SSH Tunnel
 After=network-online.target
@@ -342,13 +358,13 @@ Wants=network-online.target
 
 [Service]
 Environment=AUTOSSH_GATETIME=0
-ExecStart=%s -M 0 -N -p %d -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new -i %s %s %s@%s
+ExecStart=%s -M 0 -N -p %d %s -i %s %s %s@%s
 Restart=always
 RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
-`, autosshBin, sshdPort, identity, remote, user, host)
+`, autosshBin, sshdPort, opts, identity, remote, user, host)
 }
 
 func (m *Manager) buildOpenWrtInit() string {
