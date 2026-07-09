@@ -15,6 +15,8 @@ SAMPLE_INTERVAL_SECONDS = 300  # 5 minutes — matches UI collection cadence
 RECENT_INCREMENT_MINUTES = 7
 HOURS_24 = 24
 RETENTION_HOURS = 24 * 45
+TRAFFIC_QUOTA_WARN_PERCENT = 85
+TRAFFIC_QUOTA_CRITICAL_PERCENT = 95
 
 
 def _default_billing_start() -> dt.datetime:
@@ -145,7 +147,7 @@ async def build_node_traffic_overview(session: AsyncSession, node: Node) -> dict
     quota_used_percent = None
     if quota_gb and quota_gb > 0:
         quota_bytes = quota_gb * (1024**3)
-        quota_used_percent = round(min(100.0, billing_period_bytes / quota_bytes * 100), 1)
+        quota_used_percent = int(min(100, billing_period_bytes / quota_bytes * 100))
 
     online = node_is_online(node)
     has_samples = node.traffic_last_sample_at is not None

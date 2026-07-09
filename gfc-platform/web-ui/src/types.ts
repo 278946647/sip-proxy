@@ -22,6 +22,8 @@ export type NodeRow = {
   lastSeenAt: string | null;
   currentConfigVersion: string | null;
   createdAt: string | null;
+  monthlyQuotaGb: number | null;
+  quotaUsedPercent: number | null;
 };
 
 export type LineListItem = {
@@ -302,13 +304,47 @@ export function mapNode(raw: Record<string, unknown>): NodeRow {
     lastSeenAt: (raw.lastSeenAt as string) || null,
     currentConfigVersion: (raw.currentConfigVersion as string) || null,
     createdAt: (raw.createdAt as string) || null,
+    monthlyQuotaGb: (raw.monthlyQuotaGb as number | null) ?? null,
+    quotaUsedPercent: (raw.quotaUsedPercent as number | null) ?? null,
   };
+}
+
+export function quotaPercentInt(percent: number | null | undefined): number | null {
+  if (percent == null) return null;
+  return Math.round(percent);
+}
+
+export function trafficUsageTagColor(
+  percent: number | null,
+  hasQuota: boolean
+): "default" | "green" | "orange" | "red" {
+  if (!hasQuota) return "default";
+  if (percent == null) return "default";
+  if (percent >= 95) return "red";
+  if (percent >= 85) return "orange";
+  return "green";
+}
+
+export function trafficUsageLabel(node: Pick<NodeRow, "monthlyQuotaGb" | "quotaUsedPercent">): string {
+  if (!node.monthlyQuotaGb) return "无限制";
+  const pct = quotaPercentInt(node.quotaUsedPercent);
+  return pct == null ? "—" : `${pct}%`;
 }
 
 export function nodeOptionLabel(n: NodeRow): string {
   const ip = n.publicIp ? ` ${n.publicIp}` : "";
   const st = n.online ? "在线" : "离线";
-  return `#${n.id} ${n.name} (${n.region})${ip} [${st}]`;
+  let traffic = "";
+  if (n.monthlyQuotaGb) {
+    const pct = quotaPercentInt(n.quotaUsedPercent);
+    if (pct != null) {
+      const warn = pct >= 95 ? " ⚠⚠" : pct >= 85 ? " ⚠" : "";
+      traffic = ` · 流量 ${pct}%${warn}`;
+    }
+  } else {
+    traffic = " · 无限制";
+  }
+  return `#${n.id} ${n.name} (${n.region})${ip} [${st}]${traffic}`;
 }
 
 export function mapDashboard(raw: Record<string, unknown>): Dashboard {
@@ -327,7 +363,12 @@ export function mapDashboard(raw: Record<string, unknown>): Dashboard {
 
 export function alertCategory(type: string): "socks" | "node" | "other" {
   if (type.startsWith("socks_down_")) return "socks";
-  if (type.startsWith("service_down_") || type === "node_offline" || type === "config_apply_failed") {
+  if (
+    type.startsWith("service_down_") ||
+    type === "node_offline" ||
+    type === "config_apply_failed" ||
+    type.startsWith("traffic_quota_")
+  ) {
     return "node";
   }
   return "other";

@@ -19,6 +19,7 @@ import { MinusCircleOutlined, PlusOutlined as PlusIcon } from "@ant-design/icons
 import { useEffect, useMemo, useState } from "react";
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from "../api/client";
 import { copyToClipboard } from "../utils/clipboard";
+import { trafficUsageLabel, trafficUsageTagColor } from "../types";
 import type { StaticRoute } from "../types";
 
 type VpnSummary = {
@@ -50,6 +51,8 @@ type NodeRow = {
   createdAt: string | null;
   staticRoutes: StaticRoute[];
   lastMetrics: { services?: Record<string, { active: boolean; status: string }> } | null;
+  monthlyQuotaGb: number | null;
+  quotaUsedPercent: number | null;
 };
 
 type VpnConfig = {
@@ -102,6 +105,8 @@ export function NodesPage() {
         lastSeenAt: r.lastSeenAt as string | null,
         staticRoutes: (r.staticRoutes as StaticRoute[]) || [],
         lastMetrics: r.lastMetrics as NodeRow["lastMetrics"],
+        monthlyQuotaGb: (r.monthlyQuotaGb as number | null) ?? null,
+        quotaUsedPercent: (r.quotaUsedPercent as number | null) ?? null,
       }))
     );
   };
@@ -179,11 +184,6 @@ export function NodesPage() {
   return (
     <div>
       <Typography.Title level={4}>转发节点管理</Typography.Title>
-      <Typography.Paragraph type="secondary">
-        以 <strong>ID</strong>、<strong>节点指纹 nodeKey</strong>、<strong>公网 IP</strong> 区分同名节点。
-        OpenVPN 模式下控制台下发客户端配置，Agent 自动写入 <code>/etc/openvpn/gfc-backbone/</code> 并重启服务；
-        TPROXY 入口网卡随隧道 <code>dev</code> 下发（无需再手工设 <code>GFC_TPROXY_IFACE=tun0</code>）。
-      </Typography.Paragraph>
       <Card>
         <Table
           rowKey="id"
@@ -196,21 +196,11 @@ export function NodesPage() {
                 <Space>
                   {r.name}
                   {dupNames.has(r.name) && (
-                    <Tooltip title="存在同名节点，请用 ID / nodeKey / 公网 IP 区分">
+                    <Tooltip title="存在同名节点，请用 ID / 公网 IP 区分">
                       <Tag color="orange">重名</Tag>
                     </Tooltip>
                   )}
                 </Space>
-              ),
-            },
-            {
-              title: "指纹",
-              dataIndex: "nodeKey",
-              ellipsis: true,
-              render: (k: string) => (
-                <Typography.Text copyable code style={{ fontSize: 11 }}>
-                  {k ? k.slice(0, 12) : "-"}
-                </Typography.Text>
               ),
             },
             { title: "公网 IP", dataIndex: "publicIp", render: (v) => v || "-" },
@@ -253,12 +243,16 @@ export function NodesPage() {
                 );
               },
             },
-            { title: "Agent", dataIndex: "agentVersion", render: (v) => v || "-" },
             {
-              title: "配置版本",
-              dataIndex: "currentConfigVersion",
-              ellipsis: true,
-              render: (v) => v || "-",
+              title: "流量用度",
+              render: (_, r) => {
+                const label = trafficUsageLabel(r);
+                const hasQuota = Boolean(r.monthlyQuotaGb);
+                const pct = hasQuota ? r.quotaUsedPercent : null;
+                return (
+                  <Tag color={trafficUsageTagColor(pct, hasQuota)}>{label}</Tag>
+                );
+              },
             },
             {
               title: "操作",

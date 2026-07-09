@@ -18,7 +18,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import dayjs from "dayjs";
 import { apiGet, apiPatch, apiPost } from "../api/client";
 import { formatBytes } from "../components/TrafficChart";
-import { mapNodeTrafficOverview, type NodeTrafficOverview } from "../types";
+import { mapNodeTrafficOverview, quotaPercentInt, type NodeTrafficOverview } from "../types";
 
 function maskIp(ip: string | null) {
   if (!ip) return "-";
@@ -172,11 +172,31 @@ export function TrafficPage() {
                   {row.monthlyQuotaGb ? (
                     <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                       配额 {row.monthlyQuotaGb} GB
-                      {row.quotaUsedPercent != null ? ` · ${row.quotaUsedPercent}%` : ""}
                     </Typography.Text>
                   ) : null}
                 </Space>
               ),
+            },
+            {
+              title: "流量用度",
+              render: (_, row) => {
+                if (!row.monthlyQuotaGb) {
+                  return <Tag>无限制</Tag>;
+                }
+                const pct = quotaPercentInt(row.quotaUsedPercent);
+                if (pct == null) return "—";
+                return (
+                  <Space direction="vertical" size={4} style={{ minWidth: 120 }}>
+                    <Progress
+                      percent={pct}
+                      size="small"
+                      status={pct >= 95 ? "exception" : "active"}
+                      strokeColor={pct >= 85 && pct < 95 ? "#faad14" : undefined}
+                      format={(p) => `${p}%`}
+                    />
+                  </Space>
+                );
+              },
             },
             {
               title: "状态",
@@ -237,7 +257,16 @@ export function TrafficPage() {
           </Form.Item>
           {editing?.monthlyQuotaGb && editing.quotaUsedPercent != null ? (
             <Form.Item label="配额使用">
-              <Progress percent={editing.quotaUsedPercent} status={editing.quotaUsedPercent >= 90 ? "exception" : "active"} />
+              <Progress
+                percent={quotaPercentInt(editing.quotaUsedPercent) ?? 0}
+                status={editing.quotaUsedPercent >= 95 ? "exception" : "active"}
+                strokeColor={
+                  editing.quotaUsedPercent >= 85 && editing.quotaUsedPercent < 95
+                    ? "#faad14"
+                    : undefined
+                }
+                format={(p) => `${p}%`}
+              />
             </Form.Item>
           ) : null}
         </Form>

@@ -8,6 +8,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import Node, SocksProfile
 from .node_online import node_is_online
+from .node_traffic import (
+    TRAFFIC_QUOTA_CRITICAL_PERCENT,
+    TRAFFIC_QUOTA_WARN_PERCENT,
+    build_node_traffic_overview,
+)
 from .socks_parse import format_socks_address
 from .timeutil import ensure_utc, utc_now
 
@@ -80,6 +85,42 @@ async def compute_active_alerts(session: AsyncSession) -> list[dict[str, Any]]:
                     "created_at": now,
                 }
             )
+
+        traffic = await build_node_traffic_overview(session, node)
+        quota_gb = traffic.get("monthly_quota_gb")
+        pct = traffic.get("quota_used_percent")
+        if quota_gb and pct is not None:
+            pct_int = int(pct)
+            if pct_int >= TRAFFIC_QUOTA_CRITICAL_PERCENT:
+                out.append(
+                    {
+                        "id": _alert_id("traffic_quota_critical_95", node.id),
+                        "node_id": node.id,
+                        "line_id": None,
+                        "level": "critical",
+                        "type": "traffic_quota_critical_95",
+                        "message": (
+                            f"Node {node.name}(#{node.id}) monthly traffic quota at {pct_int}% "
+                            f"({quota_gb} GB limit)"
+                        ),
+                        "created_at": now,
+                    }
+                )
+            elif pct_int >= TRAFFIC_QUOTA_WARN_PERCENT:
+                out.append(
+                    {
+                        "id": _alert_id("traffic_quota_warn_85", node.id),
+                        "node_id": node.id,
+                        "line_id": None,
+                        "level": "warn",
+                        "type": "traffic_quota_warn_85",
+                        "message": (
+                            f"Node {node.name}(#{node.id}) monthly traffic quota at {pct_int}% "
+                            f"({quota_gb} GB limit)"
+                        ),
+                        "created_at": now,
+                    }
+                )
 
     socks_rows = (await session.execute(select(SocksProfile).order_by(SocksProfile.id))).scalars().all()
     for sp in socks_rows:

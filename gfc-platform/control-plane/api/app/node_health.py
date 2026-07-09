@@ -7,11 +7,50 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .alerts import send_email
+from .alerts import notify_alert, send_email
 from .models import AlertEvent, Node
-from .node_traffic import record_node_network_traffic
+from .node_traffic import (
+    TRAFFIC_QUOTA_CRITICAL_PERCENT,
+    TRAFFIC_QUOTA_WARN_PERCENT,
+    build_node_traffic_overview,
+    record_node_network_traffic,
+)
 from .settings import settings
 from .timeutil import utc_now
+
+
+async def _check_traffic_quota_alerts(session: AsyncSession, node: Node) -> None:
+    overview = await build_node_traffic_overview(session, node)
+    quota_gb = overview.get("monthly_quota_gb")
+    pct = overview.get("quota_used_percent")
+    if not quota_gb or pct is None:
+        return
+
+    pct_int = int(pct)
+    if pct_int >= TRAFFIC_QUOTA_CRITICAL_PERCENT:
+        level = "critical"
+        alert_type = "traffic_quota_critical_95"
+        subject = f"[GFC] Traffic quota critical ({pct_int}%): {node.name}"
+    elif pct_int >= TRAFFIC_QUOTA_WARN_PERCENT:
+        level = "warn"
+        alert_type = "traffic_quota_warn_85"
+        subject = f"[GFC] Traffic quota warning ({pct_int}%): {node.name}"
+    else:
+        return
+
+    msg = (
+        f"Node {node.name}(#{node.id}) monthly traffic quota at {pct_int}% "
+        f"({quota_gb} GB billing period limit)"
+    )
+    created = await emit_alert(
+        session,
+        node_id=node.id,
+        level=level,
+        alert_type=alert_type,
+        message=msg,
+    )
+    if created:
+        notify_alert(subject=subject, body=msg)
 
 
 async def emit_alert(
@@ -63,6 +102,7 @@ async def process_heartbeat_metrics(
     session.add(node)
 
     await record_node_network_traffic(session, node, metrics.get("network_traffic"))
+    await _check_traffic_quota_alerts(session, node)
 
     services = metrics.get("services") or {}
     for svc, info in services.items():

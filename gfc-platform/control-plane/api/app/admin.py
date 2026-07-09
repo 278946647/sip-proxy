@@ -321,6 +321,7 @@ async def list_nodes(session: AsyncSession = Depends(get_session)) -> list[dict[
         seen = ensure_utc(n.last_seen_at)
         ago = seconds_ago(n.last_seen_at)
         online = ago is not None and ago < settings.node_offline_threshold_seconds
+        traffic = await build_node_traffic_overview(session, n)
         out.append(
             {
                 "id": n.id,
@@ -343,8 +344,11 @@ async def list_nodes(session: AsyncSession = Depends(get_session)) -> list[dict[
                 ),
                 "staticRoutes": _parse_static_routes_json(n.static_routes_json),
                 "createdAt": ensure_utc(n.created_at).isoformat() if n.created_at else None,
+                "monthlyQuotaGb": traffic["monthly_quota_gb"],
+                "quotaUsedPercent": traffic["quota_used_percent"],
             }
         )
+    await session.commit()
     return out
 
 

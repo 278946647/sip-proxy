@@ -32,3 +32,14 @@ def send_test_email(cfg: SmtpConfig) -> None:
         cfg=cfg,
     )
 
+
+def send_feishu(text: str, *, webhook_url: str | None = None) -> None:
+    """Reserved for Feishu/Lark webhook notifications (phase 2)."""
+    _ = (text, webhook_url)
+
+
+def notify_alert(subject: str, body: str) -> None:
+    """Deliver operational alert via configured channels."""
+    send_email(subject=subject, body=body)
+    send_feishu(f"{subject}\n{body}")
+
