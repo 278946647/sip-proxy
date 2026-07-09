@@ -17,7 +17,7 @@ services:
       GFC_PUBLIC_PORT: ${GFC_PUBLIC_PORT:-8080}
     volumes:
       - gfc-data:/data
-      - /var/lib/gfc/reverse-ssh/authorized_keys:/data/reverse-ssh/authorized_keys
+      - /var/lib/gfc/reverse-ssh:/data/reverse-ssh
     healthcheck:
       test:
         [
@@ -47,7 +47,7 @@ services:
       - "host.docker.internal:host-gateway"
     depends_on:
       api:
-        condition: service_healthy
+        condition: service_started
     logging:
       driver: json-file
       options:

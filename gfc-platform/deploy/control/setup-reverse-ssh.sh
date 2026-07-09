@@ -23,6 +23,10 @@ else
 fi
 
 mkdir -p /var/lib/gfc/reverse-ssh
+if [[ -d /var/lib/gfc/reverse-ssh/authorized_keys ]]; then
+  echo "WARN: authorized_keys is a directory (docker file-mount mistake); fixing"
+  rm -rf /var/lib/gfc/reverse-ssh/authorized_keys
+fi
 touch "$AUTH_KEYS"
 chmod 600 "$AUTH_KEYS"
 chown root:root "$AUTH_KEYS"

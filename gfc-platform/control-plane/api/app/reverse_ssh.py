@@ -183,12 +183,22 @@ async def sync_authorized_keys(session: AsyncSession) -> None:
     path = (settings.reverse_ssh_authorized_keys_path or "").strip()
     if not path:
         return
-    stmt = select(ClientDevice).where(ClientDevice.ssh_public_key.is_not(None))
-    devices = (await session.execute(stmt)).scalars().all()
-    content = render_authorized_keys(list(devices))
-    target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    tmp = target.with_suffix(target.suffix + ".tmp")
-    tmp.write_text(content, encoding="utf-8")
-    os.replace(tmp, target)
-    logger.info("updated reverse ssh authorized_keys (%d devices)", len(devices))
+    try:
+        stmt = select(ClientDevice).where(ClientDevice.ssh_public_key.is_not(None))
+        devices = (await session.execute(stmt)).scalars().all()
+        content = render_authorized_keys(list(devices))
+        target = Path(path)
+        if target.exists() and target.is_dir():
+            logger.error(
+                "authorized_keys path is a directory — on host run: "
+                "rm -rf /var/lib/gfc/reverse-ssh/authorized_keys && "
+                "install -m 600 /dev/null /var/lib/gfc/reverse-ssh/authorized_keys"
+            )
+            return
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_suffix(target.suffix + ".tmp")
+        tmp.write_text(content, encoding="utf-8")
+        os.replace(tmp, target)
+        logger.info("updated reverse ssh authorized_keys (%d devices)", len(devices))
+    except OSError as exc:
+        logger.error("failed to sync authorized_keys at %s: %s", path, exc)

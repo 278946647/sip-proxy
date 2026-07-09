@@ -69,7 +69,10 @@ async def _lifespan(_app: FastAPI):
                 await session.commit()
         await load_smtp_settings(session)
         await ensure_platform_secrets(session)
-        await sync_authorized_keys(session)
+        try:
+            await sync_authorized_keys(session)
+        except Exception:
+            logger.exception("reverse ssh authorized_keys sync failed (continuing)")
 
     stop = asyncio.Event()
     task = asyncio.create_task(monitor_loop(stop))
