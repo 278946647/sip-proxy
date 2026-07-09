@@ -1,6 +1,9 @@
 import unittest
 
+from starlette.responses import Response
+
 from app.remote_proxy import (
+    _build_response,
     _rewrite_remote_location,
     _rewrite_set_cookie,
     _rewrite_text_paths,
@@ -39,6 +42,20 @@ class RemoteProxyRewriteTest(unittest.TestCase):
     def test_rewrite_location(self) -> None:
         loc = _rewrite_remote_location("/cgi-bin/luci/admin/", 6)
         self.assertEqual(loc, "/remote/6/cgi-bin/luci/admin/")
+
+    def test_build_response_multiple_set_cookie(self) -> None:
+        resp = _build_response(
+            b"ok",
+            200,
+            [
+                ("Content-Type", "text/html"),
+                ("Set-Cookie", "a=1; Path=/cgi-bin/luci/"),
+                ("Set-Cookie", "b=2; Path=/cgi-bin/luci/"),
+            ],
+        )
+        self.assertIsInstance(resp, Response)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.headers.getlist("set-cookie"), ["a=1; Path=/cgi-bin/luci/", "b=2; Path=/cgi-bin/luci/"])
 
 
 if __name__ == "__main__":

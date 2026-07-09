@@ -186,7 +186,7 @@ async def _proxy(
                 break
         if content and _should_rewrite_body(ctype):
             content = _rewrite_body_paths(content, device_id)
-        return Response(content=content, status_code=resp.status_code, headers=out_headers)
+        return _build_response(content, resp.status_code, out_headers)
     except HTTPException:
         raise
     except httpx.HTTPError as exc:
@@ -194,6 +194,21 @@ async def _proxy(
     except Exception as exc:
         logger.exception("remote proxy failed device=%s upstream=%s", device_id, upstream)
         raise HTTPException(500, f"remote proxy error: {exc}") from exc
+
+
+def _build_response(
+    content: bytes,
+    status_code: int,
+    header_pairs: list[tuple[str, str]],
+) -> Response:
+    """Apply response headers (supports multiple Set-Cookie values)."""
+    response = Response(content=content, status_code=status_code)
+    for key, value in header_pairs:
+        if key.lower() == "set-cookie":
+            response.headers.append(key, value)
+        else:
+            response.headers[key] = value
+    return response
 
 
 def _response_headers(resp: httpx.Response, device_id: int) -> list[tuple[str, str]]:
