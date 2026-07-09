@@ -159,7 +159,10 @@ Renderer may patch paths if files exist:
 | Key | Ubuntu default | OpenWrt candidates |
 |-----|----------------|-------------------|
 | `tls-cert-bundle` | `/etc/ssl/certs/ca-certificates.crt` | `/etc/ssl/cert.pem`, `/etc/ssl/cacert.pem` |
-| `auto-trust-anchor-file` | `/var/lib/unbound/root.key` | `/etc/unbound/root.key` |
+| `chroot` | (unset) | `""` (disable ImmortalWrt default chroot for checkconf) |
+| `auto-trust-anchor-file` | `/var/lib/unbound/root.key` | **same** — never `/etc/unbound/root.key` under chroot |
+
+`ensure-unbound-dirs.sh` / `EnsureTrustAnchorLayout()` create `/var/lib/unbound/root.key` and chroot mirror before `unbound-checkconf`.
 
 No other silent rewrites.
 

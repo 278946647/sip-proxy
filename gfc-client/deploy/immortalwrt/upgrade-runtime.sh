@@ -240,10 +240,19 @@ elif [ -x /usr/bin/gfc-bootstrap ]; then
 		GFC_LOG_DIR="$GFC_LOG_DIR" \
 		gfc-bootstrap "$@"
 	}
-	if [ -f "$GFC_LIB/state/config_bundle.json" ]; then
-		run_bootstrap --reapply || echo "WARN: active dataplane reapply failed; keeping existing config" >&2
-	else
-		run_bootstrap || true
+	_bootstrap_ok() {
+		if [ -f "$GFC_LIB/state/config_bundle.json" ]; then
+			run_bootstrap --reapply
+			return $?
+		fi
+		run_bootstrap
+	}
+	if ! _bootstrap_ok; then
+		echo "WARN: bootstrap failed; retry after ensure-unbound-dirs" >&2
+		_ensure_unbound_dirs
+		if ! _bootstrap_ok; then
+			echo "WARN: bootstrap still failed; gfc-unbound may not start until gfc-bootstrap succeeds" >&2
+		fi
 	fi
 fi
 

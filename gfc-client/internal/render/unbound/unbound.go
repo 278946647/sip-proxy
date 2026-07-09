@@ -66,14 +66,8 @@ func (r *Renderer) EnsureTree() error {
 			return err
 		}
 	}
-	// unbound-checkconf fails if auto-trust-anchor parent dir is missing.
-	anchor := "/var/lib/unbound/root.key"
-	if _, err := os.Stat(anchor); os.IsNotExist(err) {
-		if alt := "/etc/unbound/root.key"; fileExists(alt) {
-			anchor = alt
-		} else if f, err := os.OpenFile(anchor, os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
-			_ = f.Close()
-		}
+	if err := EnsureTrustAnchorLayout(); err != nil {
+		return err
 	}
 	files := map[string]string{
 		filepath.Join(bundle, "domains-insecure.conf"): r.cfg.Paths.UnboundDomainsInsecure,
@@ -163,20 +157,63 @@ func patchOpenWrtPaths(text string) string {
 			break
 		}
 	}
-	anchorCandidates := []string{
-		"/var/lib/unbound/root.key",
-		"/etc/unbound/root.key",
-	}
-	for _, anchor := range anchorCandidates {
-		if _, err := os.Stat(anchor); err == nil {
-			text = strings.ReplaceAll(text,
-				`auto-trust-anchor-file: "/var/lib/unbound/root.key"`,
-				fmt.Sprintf(`auto-trust-anchor-file: "%s"`, anchor),
-			)
-			break
-		}
+	// ImmortalWrt unbound-checkconf validates paths inside default chroot
+	// (/var/lib/unbound). Never point auto-trust-anchor at /etc/unbound/root.key.
+	if !strings.Contains(text, "\n    chroot:") {
+		text = strings.Replace(text, "server:\n", "server:\n    chroot: \"\"\n", 1)
 	}
 	return text
+}
+
+const (
+	defaultTrustAnchorPath = "/var/lib/unbound/root.key"
+	opkgTrustAnchorPath    = "/etc/unbound/root.key"
+	chrootAnchorDir        = "/var/lib/unbound/etc/unbound"
+)
+
+// EnsureTrustAnchorLayout prepares DNSSEC anchor files for unbound-checkconf on OpenWrt.
+func EnsureTrustAnchorLayout() error {
+	return ensureTrustAnchorLayoutAt("/var/lib/unbound", defaultTrustAnchorPath, chrootAnchorDir)
+}
+
+func ensureTrustAnchorLayoutAt(baseDir, anchorPath, chrootEtcDir string) error {
+	if err := os.MkdirAll(baseDir, 0o755); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(chrootEtcDir, 0o755); err != nil {
+		return err
+	}
+	chrootAnchor := filepath.Join(chrootEtcDir, "root.key")
+	if st, err := os.Stat(anchorPath); err != nil || st.Size() == 0 {
+		if data, readErr := os.ReadFile(opkgTrustAnchorPath); readErr == nil && len(data) > 0 {
+			if writeErr := os.WriteFile(anchorPath, data, 0o644); writeErr != nil {
+				return writeErr
+			}
+		} else if f, createErr := os.OpenFile(anchorPath, os.O_CREATE|os.O_WRONLY, 0o644); createErr == nil {
+			_ = f.Close()
+		} else if createErr != nil {
+			return createErr
+		}
+	}
+	anchorData, err := os.ReadFile(anchorPath)
+	if err != nil {
+		return err
+	}
+	if len(anchorData) == 0 {
+		if f, createErr := os.OpenFile(anchorPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644); createErr == nil {
+			_ = f.Close()
+		}
+	}
+	if existing, readErr := os.ReadFile(chrootAnchor); readErr != nil || len(existing) == 0 {
+		data, _ := os.ReadFile(anchorPath)
+		if len(data) == 0 {
+			data = []byte{}
+		}
+		if writeErr := os.WriteFile(chrootAnchor, data, 0o644); writeErr != nil {
+			return writeErr
+		}
+	}
+	return nil
 }
 
 func fileExists(path string) bool {
@@ -203,6 +240,11 @@ func BinaryInstalled() bool {
 }
 
 func CheckConfig(path string) error {
+	if platform.IsOpenWrt() {
+		if err := EnsureTrustAnchorLayout(); err != nil {
+			return fmt.Errorf("trust anchor layout: %w", err)
+		}
+	}
 	bin := findBinary("unbound-checkconf")
 	if bin == "" {
 		bin = findBinary("unbound")
