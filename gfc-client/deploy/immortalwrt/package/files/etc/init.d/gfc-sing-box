@@ -46,7 +46,7 @@ start_service() {
 	procd_set_param stderr 1
 	procd_close_instance
 	(
-		sleep 2
+		sleep 8
 		/usr/lib/gfc-client/deploy/immortalwrt/gfc-routing.sh start >/dev/null 2>&1 || true
 	) &
 }

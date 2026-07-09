@@ -10,6 +10,8 @@ UNBOUND_CONF="/etc/unbound/unbound.conf"
 
 	start_service() {
 	[ -f /etc/gfc-client/gfc.env ] && . /etc/gfc-client/gfc.env
+	_ensure_sh="/usr/lib/gfc-client/deploy/immortalwrt/ensure-unbound-dirs.sh"
+	[ -f "$_ensure_sh" ] && sh "$_ensure_sh" || mkdir -p /etc/unbound/conf.d /var/lib/unbound
 	local bin="/usr/sbin/unbound"
 	[ -x "$bin" ] || bin="$(command -v unbound 2>/dev/null || true)"
 	[ -n "$bin" ] && [ -x "$bin" ] || {

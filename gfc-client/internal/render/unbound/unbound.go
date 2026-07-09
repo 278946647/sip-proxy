@@ -59,10 +59,20 @@ func (r *Renderer) EnsureTree() error {
 	dirs := []string{
 		r.cfg.Paths.UnboundConfD,
 		filepath.Dir(r.cfg.Paths.UnboundConfig),
+		"/var/lib/unbound",
 	}
 	for _, d := range dirs {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			return err
+		}
+	}
+	// unbound-checkconf fails if auto-trust-anchor parent dir is missing.
+	anchor := "/var/lib/unbound/root.key"
+	if _, err := os.Stat(anchor); os.IsNotExist(err) {
+		if alt := "/etc/unbound/root.key"; fileExists(alt) {
+			anchor = alt
+		} else if f, err := os.OpenFile(anchor, os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
+			_ = f.Close()
 		}
 	}
 	files := map[string]string{
@@ -167,6 +177,11 @@ func patchOpenWrtPaths(text string) string {
 		}
 	}
 	return text
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 func copyIfChanged(src, dst string) error {

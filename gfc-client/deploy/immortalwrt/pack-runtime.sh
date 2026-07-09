@@ -57,7 +57,12 @@ step() { echo "==> [install] $*"; }
 
 elf_machine() {
 	# ELF e_machine @ offset 18 (little-endian), e.g. 3e00=x86_64 b700=aarch64
-	dd if="$1" bs=1 skip=18 count=2 2>/dev/null | od -An -tx1 | tr -d ' \n'
+	if command -v od >/dev/null 2>&1; then
+		dd if="$1" bs=1 skip=18 count=2 2>/dev/null | od -An -tx1 | tr -d ' \n'
+		return
+	fi
+	# BusyBox images may omit od(1); skip arch check when unavailable.
+	echo ""
 }
 
 want_machine() {

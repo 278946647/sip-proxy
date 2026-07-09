@@ -158,9 +158,15 @@ chmod +x "$GFC_ROOT"/deploy/apply-tc-htb.sh 2>/dev/null || true
 /etc/init.d/mosdns stop 2>/dev/null || true
 /etc/init.d/mosdns disable 2>/dev/null || true
 
+_ensure_unbound_dirs() {
+	_sh="$GFC_ROOT/deploy/immortalwrt/ensure-unbound-dirs.sh"
+	[ -f "$_sh" ] && sh "$_sh" || mkdir -p /etc/unbound/conf.d /var/lib/unbound
+}
+
 if [ "${GFC_SAFE_INSTALL:-0}" = "1" ]; then
 	echo "safe install: bootstrap reapply skipped (GFC_SAFE_INSTALL=1)"
 elif [ -x /usr/bin/gfc-bootstrap ]; then
+	_ensure_unbound_dirs
 	run_bootstrap() {
 		GFC_PLATFORM=immortalwrt \
 		GFC_ROOT="$GFC_ROOT" \

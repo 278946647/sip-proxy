@@ -186,6 +186,11 @@ if [ -d "$INIT_SRC" ]; then
 	done
 fi
 
+_ensure_unbound_dirs() {
+	_sh="$GFC_ROOT/deploy/immortalwrt/ensure-unbound-dirs.sh"
+	[ -f "$_sh" ] && sh "$_sh" || mkdir -p /etc/unbound/conf.d /var/lib/unbound
+}
+
 # Stock unbound (UCI recursive) must not own :53; GFC uses gfc-unbound + GFC conf.
 /etc/init.d/unbound stop 2>/dev/null || true
 /etc/init.d/unbound disable 2>/dev/null || true
@@ -208,9 +213,22 @@ start_dataplane() {
 	step "start gfc-sing-box + gfc-routing"
 	start_service gfc-sing-box
 	start_service gfc-routing
+	# sing-box creates gfctun asynchronously; retry policy route once TUN is up.
+	(
+		i=0
+		while [ "$i" -lt 30 ]; do
+			if ip link show "${GFC_TUN_INTERFACE:-gfctun}" >/dev/null 2>&1; then
+				/usr/lib/gfc-client/deploy/immortalwrt/gfc-routing.sh start >/dev/null 2>&1 || true
+				break
+			fi
+			i=$((i + 1))
+			sleep 1
+		done
+	) &
 }
 
 step "bootstrap / reapply dataplane config"
+_ensure_unbound_dirs
 if [ "${GFC_SAFE_INSTALL:-0}" = "1" ]; then
 	echo "safe install: bootstrap reapply skipped (GFC_SAFE_INSTALL=1)"
 elif [ -x /usr/bin/gfc-bootstrap ]; then
