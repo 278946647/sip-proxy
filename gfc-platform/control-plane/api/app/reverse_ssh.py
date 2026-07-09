@@ -79,6 +79,15 @@ async def allocate_reverse_ports(session: AsyncSession) -> tuple[int, int]:
     raise RuntimeError(f"reverse ssh port pool exhausted ({lo}-{settings.client_ssh_port_max})")
 
 
+async def ensure_device_reverse_ports(session: AsyncSession, device: ClientDevice) -> None:
+    """Allocate reverse SSH/HTTP ports for legacy devices missing the port pair."""
+    if device.reverse_ssh_port and device.reverse_http_port:
+        return
+    ssh_port, http_port = await allocate_reverse_ports(session)
+    device.reverse_ssh_port = ssh_port
+    device.reverse_http_port = http_port
+
+
 def session_active(device: ClientDevice) -> bool:
     exp = ensure_utc(device.reverse_ssh_session_expires_at)
     if exp is None:
@@ -115,10 +124,12 @@ def build_reverse_ssh_command(device: ClientDevice) -> dict[str, Any] | None:
         return None
     targets = parse_session_targets(device) or ["ssh"]
     ports: dict[str, int] = {}
-    if "ssh" in targets and device.reverse_ssh_port:
+    if device.reverse_ssh_port:
         ports["ssh"] = device.reverse_ssh_port
-    if any(t in targets for t in ("web", "flash")) and device.reverse_http_port:
+    if device.reverse_http_port:
         ports["http"] = device.reverse_http_port
+    if not ports:
+        return None
     return {
         "enabled": True,
         "host": bastion_host(),

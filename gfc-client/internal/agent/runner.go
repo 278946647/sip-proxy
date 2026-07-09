@@ -135,7 +135,7 @@ func (r *Runner) tick() {
 		if active {
 			status["active"] = true
 		}
-		if _, err := client.Heartbeat(m, r.cfg.DeviceName, intPtr(cmdSSHPort(cmd)), intPtr(cmdHTTPPort(cmd)), "", status, r.cfg.ProxyMode, config.Version); err != nil {
+		if _, err := client.Heartbeat(m, r.cfg.DeviceName, nil, nil, "", status, r.cfg.ProxyMode, config.Version); err != nil {
 			fmt.Printf("heartbeat status: %v\n", err)
 		}
 		if msg != "" {
@@ -293,27 +293,6 @@ func (r *Runner) envServers() []string {
 		}
 	}
 	return urls
-}
-
-func intPtr(v int) *int {
-	if v <= 0 {
-		return nil
-	}
-	return &v
-}
-
-func cmdSSHPort(cmd *reversessh.Command) int {
-	if cmd == nil {
-		return 0
-	}
-	return cmd.SSHPort
-}
-
-func cmdHTTPPort(cmd *reversessh.Command) int {
-	if cmd == nil {
-		return 0
-	}
-	return cmd.HTTPPort
 }
 
 func (r *Runner) syncReverseSSH(cmd *reversessh.Command) (bool, string, bool) {

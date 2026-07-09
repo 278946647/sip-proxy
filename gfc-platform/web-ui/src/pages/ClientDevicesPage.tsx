@@ -303,21 +303,21 @@ export function ClientDevicesPage() {
                   size="small"
                   type="primary"
                   ghost
-                  disabled={!row.online || !row.sshPublicKeyRegistered}
+                  disabled={!row.online || !row.sshPublicKeyRegistered || !row.reverseSshPort}
                   onClick={() => void openRemoteTarget(row.id, "ssh", row.name)}
                 >
                   远程 SSH
                 </Button>
                 <Button
                   size="small"
-                  disabled={!row.online || !row.sshPublicKeyRegistered}
+                  disabled={!row.online || !row.sshPublicKeyRegistered || !row.reverseSshPort}
                   onClick={() => void openRemoteTarget(row.id, "web", row.name)}
                 >
                   Web 管理
                 </Button>
                 <Button
                   size="small"
-                  disabled={!row.online || !row.sshPublicKeyRegistered}
+                  disabled={!row.online || !row.sshPublicKeyRegistered || !row.reverseSshPort}
                   onClick={() => void openRemoteTarget(row.id, "flash", row.name)}
                 >
                   刷码协助

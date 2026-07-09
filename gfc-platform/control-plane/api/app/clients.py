@@ -32,8 +32,8 @@ from .schemas import (
     ReverseSSHPortsOut,
 )
 from .reverse_ssh import (
-    allocate_reverse_ports,
     build_reverse_ssh_command,
+    ensure_device_reverse_ports,
     session_active,
     sync_authorized_keys,
     validate_ssh_public_key,
@@ -80,11 +80,7 @@ def _device_key_from_mac(lan_mac: str | None, device_id: str | None) -> str:
 
 
 async def _ensure_reverse_ports(session: AsyncSession, device: ClientDevice) -> None:
-    if device.reverse_ssh_port and device.reverse_http_port:
-        return
-    ssh_port, http_port = await allocate_reverse_ports(session)
-    device.reverse_ssh_port = ssh_port
-    device.reverse_http_port = http_port
+    await ensure_device_reverse_ports(session, device)
 
 
 @router.post("/activate", response_model=ClientActivateResponse)
@@ -249,12 +245,10 @@ async def client_heartbeat(
         device.name = body.device_name
     if body.agent_version:
         device.agent_version = body.agent_version
-    if body.reverse_ssh_port is not None:
-        device.reverse_ssh_port = body.reverse_ssh_port
-    if body.reverse_http_port is not None:
-        device.reverse_http_port = body.reverse_http_port
     if body.proxy_mode:
         device.proxy_mode = body.proxy_mode
+
+    await ensure_device_reverse_ports(session, device)
 
     key_updated = False
     if body.ssh_public_key:

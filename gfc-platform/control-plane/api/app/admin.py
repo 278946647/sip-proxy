@@ -31,6 +31,7 @@ from .platform_secrets import (
 from .client_config import encode_platform_bootstrap_code, line_code_fingerprint, refresh_line_code
 from .models import AlertEvent, ClientDevice, FlowStat, Line, Node, OperationLog, PlatformUser, SocksProfile
 from .reverse_ssh import (
+    ensure_device_reverse_ports,
     session_active,
     session_state,
     tunnel_ready,
@@ -1586,6 +1587,10 @@ async def start_reverse_ssh_session(
         raise HTTPException(400, "device offline")
     if not device.ssh_public_key:
         raise HTTPException(400, "device ssh public key not registered")
+    try:
+        await ensure_device_reverse_ports(session, device)
+    except RuntimeError as exc:
+        raise HTTPException(503, str(exc)) from exc
     if not device.reverse_ssh_port or not device.reverse_http_port:
         raise HTTPException(400, "reverse ports not allocated")
 

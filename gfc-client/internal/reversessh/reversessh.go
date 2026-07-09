@@ -83,12 +83,14 @@ func ParseCommand(raw map[string]any) *Command {
 		Port:      port,
 	}
 	if ports, ok := raw["ports"].(map[string]any); ok {
-		if v, ok := ports["ssh"].(float64); ok {
-			cmd.SSHPort = int(v)
-		}
-		if v, ok := ports["http"].(float64); ok {
-			cmd.HTTPPort = int(v)
-		}
+		cmd.SSHPort = jsonInt(ports["ssh"])
+		cmd.HTTPPort = jsonInt(ports["http"])
+	}
+	if cmd.SSHPort <= 0 {
+		cmd.SSHPort = jsonInt(raw["reverse_ssh_port"])
+	}
+	if cmd.HTTPPort <= 0 {
+		cmd.HTTPPort = jsonInt(raw["reverse_http_port"])
 	}
 	if targets, ok := raw["targets"].([]any); ok {
 		for _, t := range targets {
@@ -96,6 +98,25 @@ func ParseCommand(raw map[string]any) *Command {
 		}
 	}
 	return cmd
+}
+
+func jsonInt(v any) int {
+	switch n := v.(type) {
+	case float64:
+		return int(n)
+	case int:
+		return n
+	case int64:
+		return int(n)
+	case json.Number:
+		i, _ := n.Int64()
+		return int(i)
+	case string:
+		i, _ := strconv.Atoi(strings.TrimSpace(n))
+		return i
+	default:
+		return 0
+	}
 }
 
 func (m *Manager) SyncCommand(cmd *Command) (bool, string) {
