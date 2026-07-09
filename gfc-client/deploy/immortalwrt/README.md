@@ -73,6 +73,20 @@ explicitly saved and applied. Even when `gfc-bootstrap --apply-network` runs,
 GFC will not write `network.lan` or `dhcp.lan` unless `GFC_MANAGE_LAN=1` is set
 or the saved network config contains `manageLan: true`.
 
+WAN is handled the same way:
+
+- Without `/etc/gfc-client/network-wan.json`, the first `gfc-bootstrap --apply-network`
+  **imports the current UCI `network.wan` into `network-wan.json`** and does not
+  overwrite WAN unless that file already existed.
+- To force WAN apply without a saved file, set `GFC_MANAGE_WAN=1`.
+- Before any WAN UCI write, `/etc/config/network` is snapshotted under
+  `/var/lib/gfc-client/backups/network-<timestamp>/`.
+- Roll back with:
+
+```sh
+gfc-bootstrap --rollback-network
+```
+
 ## Manual Runtime Install
 
 For early device testing, compile on Ubuntu/VM and upload binaries plus `deploy`

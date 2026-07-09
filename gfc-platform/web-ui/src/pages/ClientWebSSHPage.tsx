@@ -1,35 +1,69 @@
 import { Button, Typography, message } from "antd";
+import { FitAddon } from "@xterm/addon-fit";
+import { Terminal } from "@xterm/xterm";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { getToken } from "../api/auth";
 import { websshUrl } from "../lib/reverseSsh";
+import "@xterm/xterm/css/xterm.css";
 
 export function ClientWebSSHPage() {
   const { id } = useParams();
   const [search] = useSearchParams();
   const nav = useNavigate();
-  const termRef = useRef<HTMLPreElement>(null);
+  const hostRef = useRef<HTMLDivElement>(null);
+  const termRef = useRef<Terminal | null>(null);
+  const fitRef = useRef<FitAddon | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const [phase, setPhase] = useState<"connecting" | "shell" | "failed">("connecting");
 
   useEffect(() => {
-    if (!id) return;
+    if (!id || !hostRef.current) return;
     const token = search.get("token") || getToken();
     if (!token) {
       message.error("未登录");
       nav("/login");
       return;
     }
+
+    const term = new Terminal({
+      cursorBlink: true,
+      fontSize: 13,
+      fontFamily: "Consolas, 'Courier New', monospace",
+      theme: {
+        background: "#0f172a",
+        foreground: "#e2e8f0",
+        cursor: "#e2e8f0",
+      },
+      allowProposedApi: true,
+    });
+    const fitAddon = new FitAddon();
+    term.loadAddon(fitAddon);
+    term.open(hostRef.current);
+    fitAddon.fit();
+    termRef.current = term;
+    fitRef.current = fitAddon;
+
+    const onResize = () => fitAddon.fit();
+    window.addEventListener("resize", onResize);
+
+    term.writeln("[正在连接设备 Shell…]");
+
     const ws = new WebSocket(websshUrl(Number(id)));
     ws.binaryType = "arraybuffer";
     wsRef.current = ws;
+
     ws.onopen = () => {
-      append("\r\n[正在连接设备 Shell…]\r\n");
+      term.focus();
     };
+
     ws.onmessage = (ev) => {
-      const text =
-        typeof ev.data === "string" ? ev.data : new TextDecoder().decode(ev.data);
-      append(text);
+      if (typeof ev.data === "string") {
+        term.write(ev.data);
+      } else {
+        term.write(new Uint8Array(ev.data));
+      }
+      const text = typeof ev.data === "string" ? ev.data : new TextDecoder().decode(ev.data);
       if (
         text.includes("Permission denied") ||
         text.includes("未配置设备 Shell") ||
@@ -44,42 +78,33 @@ export function ClientWebSSHPage() {
         setPhase("shell");
       }
     };
+
     ws.onclose = () => {
       setPhase((p) => (p === "shell" ? "shell" : "failed"));
-      append("\r\n[连接已关闭]\r\n");
+      term.writeln("\r\n[连接已关闭]");
     };
+
     ws.onerror = () => {
       setPhase("failed");
       message.error("WebSSH 连接失败");
     };
-    return () => ws.close();
-  }, [id, nav, search]);
 
-  const append = (text: string) => {
-    const el = termRef.current;
-    if (!el) return;
-    el.textContent = (el.textContent || "") + text;
-    el.scrollTop = el.scrollHeight;
-  };
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const ws = wsRef.current;
-      if (!ws || ws.readyState !== WebSocket.OPEN) return;
-      if (e.key.length === 1) {
-        ws.send(e.key);
-        e.preventDefault();
-      } else if (e.key === "Enter") {
-        ws.send("\r");
-        e.preventDefault();
-      } else if (e.key === "Backspace") {
-        ws.send("\x7f");
-        e.preventDefault();
+    const dataDisposable = term.onData((data) => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(new TextEncoder().encode(data));
       }
+    });
+
+    return () => {
+      dataDisposable.dispose();
+      window.removeEventListener("resize", onResize);
+      ws.close();
+      term.dispose();
+      termRef.current = null;
+      fitRef.current = null;
+      wsRef.current = null;
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [id, nav, search]);
 
   const statusText =
     phase === "shell" ? "Shell 已连接" : phase === "failed" ? "连接失败" : "连接中…";
@@ -117,19 +142,13 @@ export function ClientWebSSHPage() {
           </Button>
         </div>
       </div>
-      <pre
-        ref={termRef}
-        tabIndex={0}
+      <div
+        ref={hostRef}
         style={{
           flex: 1,
-          margin: 0,
+          minHeight: 0,
+          padding: 4,
           background: "#0f172a",
-          color: "#e2e8f0",
-          padding: 12,
-          overflow: "auto",
-          fontFamily: "Consolas, monospace",
-          fontSize: 13,
-          outline: "none",
         }}
       />
     </div>

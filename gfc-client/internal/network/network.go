@@ -322,24 +322,54 @@ func (m *Manager) applyOpenWrt() (map[string]any, error) {
 		return nil, fmt.Errorf("uci not found; not an OpenWrt/ImmortalWrt runtime")
 	}
 	var msgs []string
+	seeded, seedErr := m.ensureWANConfigFromUCI()
+	if seedErr != nil {
+		msgs = append(msgs, "network.wan seed warning: "+seedErr.Error())
+	} else if seeded {
+		msgs = append(msgs, "network.wan seeded from uci to network-wan.json")
+	}
+
 	bridge := m.loadBridge()
 	wan := m.LoadWAN()
 	dhcp := m.LoadDHCP()
 	routes := m.LoadRoutes()
 	vlan := m.LoadVLAN()
 
-	if err := m.applyOpenWrtLAN(bridge); err != nil {
-		return nil, err
+	if manageOpenWrtLAN(bridge) {
+		if err := m.applyOpenWrtLAN(bridge); err != nil {
+			return nil, err
+		}
+		msgs = append(msgs, "network.lan updated")
+	} else {
+		msgs = append(msgs, "network.lan skipped (GFC_MANAGE_LAN not enabled)")
 	}
-	msgs = append(msgs, "network.lan updated")
-	if err := m.applyOpenWrtWAN(wan); err != nil {
-		return nil, err
+
+	if m.wanConfigFileExists() {
+		backupID, err := m.snapshotOpenWrtNetwork()
+		if err != nil {
+			return nil, fmt.Errorf("network backup failed: %w", err)
+		}
+		if backupID != "" {
+			msgs = append(msgs, "network backup: "+backupID)
+		}
+		if err := m.applyOpenWrtWAN(wan); err != nil {
+			return nil, err
+		}
+		msgs = append(msgs, "network.wan updated")
+	} else if manageOpenWrtWAN(wan) {
+		return nil, fmt.Errorf("GFC_MANAGE_WAN enabled but network-wan.json missing and uci import failed")
+	} else {
+		msgs = append(msgs, "network.wan skipped (no network-wan.json)")
 	}
-	msgs = append(msgs, "network.wan updated")
-	if err := m.applyOpenWrtDHCP(dhcp); err != nil {
-		return nil, err
+
+	if manageOpenWrtLAN(bridge) {
+		if err := m.applyOpenWrtDHCP(dhcp); err != nil {
+			return nil, err
+		}
+		msgs = append(msgs, "dhcp.lan updated")
+	} else {
+		msgs = append(msgs, "dhcp.lan skipped (GFC_MANAGE_LAN not enabled)")
 	}
-	msgs = append(msgs, "dhcp.lan updated")
 	if err := m.applyOpenWrtRoutes(routes); err != nil {
 		return nil, err
 	}
@@ -452,6 +482,11 @@ func (m *Manager) applyOpenWrtWAN(cfg map[string]any) error {
 		if len(dns) > 0 {
 			_, _ = uci("set", "network.wan.dns="+strings.Join(dns, " "))
 		}
+	} else if mode == "dhcp" {
+		_, _ = uci("delete", "network.wan.ipaddr")
+		_, _ = uci("delete", "network.wan.netmask")
+		_, _ = uci("delete", "network.wan.gateway")
+		_, _ = uci("delete", "network.wan.dns")
 	}
 	return nil
 }
@@ -641,6 +676,24 @@ func manageOpenWrtLAN(cfg map[string]any) bool {
 	default:
 		return false
 	}
+}
+
+func manageOpenWrtWAN(cfg map[string]any) bool {
+	if boolValue(cfg["manageWan"], false) {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("GFC_MANAGE_WAN"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func (m *Manager) wanConfigFileExists() bool {
+	path := filepath.Join(m.cfg.Paths.Etc, "network-wan.json")
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 func text(v any) string {

@@ -24,6 +24,15 @@ func main() {
 	defer st.Close()
 
 	engine := dataplane.New(cfg)
+	if len(os.Args) > 1 && os.Args[1] == "--rollback-network" {
+		result, err := network.New(cfg).RollbackNetwork()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "rollback network failed: %s\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("%v\n", result)
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "--apply-network" {
 		result, err := network.New(cfg).ApplyNetwork()
 		if err != nil {

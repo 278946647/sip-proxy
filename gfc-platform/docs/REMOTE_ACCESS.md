@@ -68,8 +68,16 @@ ImmortalWrt 客户端（gfc-reverse-ssh + gfc-agent）
 |--------|------|
 | `apply-network` / UCI 网络重载 | 写入 `/var/run/gfc-restore-reverse-ssh`，重启活跃 autossh |
 | `gfc-bootstrap --apply-network` | 同上 + 立即尝试 restart |
+| `gfc-bootstrap --rollback-network` | 从 `/var/lib/gfc-client/backups/network-*` 恢复 `/etc/config/network` |
 | `upgrade-runtime.sh` | 升级后若 autossh 在跑则 restart init |
 | `gfc-agent` 每轮 tick | 消费 restore 标记，`ClearLastCommand` + 加快心跳 |
+
+### apply-network 与 WAN 安全（A+C）
+
+- 无 `network-wan.json` 时：**先从当前 UCI 导入**生成该文件，不凭空写 dhcp
+- 仅当 `network-wan.json` 存在时才写 `network.wan`（写前自动快照）
+- `mode=dhcp` 时会清理 UCI 中残留的 `ipaddr/gateway`（修复 proto 与地址不一致）
+- 回滚：`gfc-bootstrap --rollback-network`
 
 ---
 
@@ -78,6 +86,7 @@ ImmortalWrt 客户端（gfc-reverse-ssh + gfc-agent）
 - 控制面自动生成 `/data/pki/webssh_id`，经心跳下发 `webssh_authorized_key` 到设备 `authorized_keys`
 - WebSSH WebSocket 使用平台登录 JWT 鉴权
 - 设备 shell 经 `127.0.0.1:{reverse_ssh_port}` 连接
+- 浏览器端使用 **xterm.js** 终端仿真（支持 Backspace/Delete/方向键）；SSH 子进程 `TERM=xterm-256color`
 
 ---
 

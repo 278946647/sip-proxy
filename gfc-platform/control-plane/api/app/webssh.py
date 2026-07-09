@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import shutil
 from pathlib import Path
 
@@ -98,11 +99,14 @@ async def webssh_device(
         return
 
     try:
+        env = os.environ.copy()
+        env["TERM"] = "xterm-256color"
         proc = await asyncio.create_subprocess_exec(
             *ssh_args,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
+            env=env,
         )
     except FileNotFoundError as exc:
         await websocket.send_text(f"[webssh] missing ssh client: {exc}\n")
