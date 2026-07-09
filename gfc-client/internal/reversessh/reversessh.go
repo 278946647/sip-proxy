@@ -1,6 +1,7 @@
 package reversessh
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -265,25 +266,30 @@ func (m *Manager) probeSSHAuth(_ string, host, user string, sshdPort int, identi
 	if err != nil {
 		return "ssh client not installed"
 	}
-	test := exec.Command(
+	// gfc-reverse uses nologin — "ssh … true" fails even when port-forward auth works.
+	// Probe with -N; successful auth keeps the session open until we cancel.
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	test := exec.CommandContext(
+		ctx,
 		sshBin,
 		"-p", strconv.Itoa(sshdPort),
 		"-i", identity,
 		"-o", "BatchMode=yes",
-		"-o", "ConnectTimeout=10",
 		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "ServerAliveInterval=3",
+		"-N",
 		fmt.Sprintf("%s@%s", user, host),
-		"true",
 	)
-	out, err := test.CombinedOutput()
-	if err == nil {
+	err = test.Run()
+	if err == nil || ctx.Err() == context.DeadlineExceeded {
 		return ""
 	}
-	msg := strings.TrimSpace(string(out))
-	if msg == "" {
-		msg = err.Error()
+	msg := strings.TrimSpace(err.Error())
+	if strings.Contains(msg, "not available") {
+		return ""
 	}
-	return fmt.Sprintf("ssh auth/connect failed: %s", trimLine(msg, 200))
+	return fmt.Sprintf("ssh connect failed: %s", trimLine(msg, 200))
 }
 
 func (m *Manager) writeOpenWrtRunner(

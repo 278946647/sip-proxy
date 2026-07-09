@@ -17,7 +17,7 @@ echo "==> GFC reverse SSH host setup"
 
 if ! id gfc-reverse &>/dev/null; then
   useradd -m -s /usr/sbin/nologin gfc-reverse
-  echo "    created user gfc-reverse"
+  echo "    created user gfc-reverse (nologin — OK for autossh -N port forward)"
 else
   echo "    user gfc-reverse exists"
 fi
