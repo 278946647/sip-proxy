@@ -19,6 +19,8 @@ import dayjs from "dayjs";
 import { apiGet, apiPatch, apiPost } from "../api/client";
 import { formatBytes } from "../components/TrafficChart";
 import { mapNodeTrafficOverview, quotaPercentInt, type NodeTrafficOverview } from "../types";
+import { getUser } from "../api/auth";
+import { permissionsFromUser } from "../utils/permissions";
 
 function maskIp(ip: string | null) {
   if (!ip) return "-";
@@ -35,6 +37,7 @@ function statusTag(status: string) {
 
 export function TrafficPage() {
   const [rows, setRows] = useState<NodeTrafficOverview[]>([]);
+  const perms = permissionsFromUser(getUser());
   const [loading, setLoading] = useState(false);
   const [lastRefresh, setLastRefresh] = useState(dayjs());
   const [editOpen, setEditOpen] = useState(false);
@@ -205,11 +208,12 @@ export function TrafficPage() {
             },
             {
               title: "操作",
-              render: (_, row) => (
+              render: (_, row) =>
+                perms.canWriteTrafficBilling ? (
                 <Button size="small" icon={<SettingOutlined />} onClick={() => openEdit(row)}>
                   计费设置
                 </Button>
-              ),
+                ) : null,
             },
           ]}
         />

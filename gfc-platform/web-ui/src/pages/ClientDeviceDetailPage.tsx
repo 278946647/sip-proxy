@@ -7,6 +7,8 @@ import relativeTime from "dayjs/plugin/relativeTime";
 import { apiDelete, apiGet } from "../api/client";
 import { openRemoteTarget } from "../lib/openRemote";
 import { confirmDeleteClientDevice } from "../utils/dangerousConfirm";
+import { getUser } from "../api/auth";
+import { isOperatorDeletableClient, permissionsFromUser } from "../utils/permissions";
 import { mapClientDeviceDetail, type ClientDeviceDetail } from "../types";
 
 dayjs.extend(relativeTime);
@@ -39,6 +41,7 @@ export function ClientDeviceDetailPage() {
   const { id } = useParams();
   const nav = useNavigate();
   const [device, setDevice] = useState<ClientDeviceDetail | null>(null);
+  const perms = permissionsFromUser(getUser());
 
   const load = async () => {
     const raw = await apiGet<Record<string, unknown>>(`/admin/client-devices/${id}`);
@@ -81,7 +84,7 @@ export function ClientDeviceDetailPage() {
             <Button type="link">查看关联线路</Button>
           </Link>
         )}
-        {device.reverseSshPort && device.sshPublicKeyRegistered && device.managementState === "online" && (
+        {perms.canRemoteAccess && device.reverseSshPort && device.sshPublicKeyRegistered && device.managementState === "online" && (
           <Space>
             <Button type="primary" onClick={() => void openRemoteTarget(device.id, "ssh", device.name)}>
               远程 SSH
@@ -90,6 +93,7 @@ export function ClientDeviceDetailPage() {
             <Button onClick={() => void openRemoteTarget(device.id, "flash", device.name)}>刷码协助</Button>
           </Space>
         )}
+        {device && (perms.canDeleteStructural || isOperatorDeletableClient(device)) && (
         <Button
           danger
           icon={<DeleteOutlined />}
@@ -97,6 +101,7 @@ export function ClientDeviceDetailPage() {
         >
           删除
         </Button>
+        )}
       </Space>
 
       <Typography.Title level={4}>

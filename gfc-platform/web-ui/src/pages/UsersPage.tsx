@@ -5,6 +5,7 @@ import dayjs from "dayjs";
 import { getUser } from "../api/auth";
 import { apiGet, apiPatch, apiPost } from "../api/client";
 import { confirmResetUserPassword } from "../utils/dangerousConfirm";
+import { roleLabel } from "../utils/permissions";
 import type { PlatformUser } from "../types";
 
 export function UsersPage() {
@@ -54,7 +55,7 @@ export function UsersPage() {
           {
             title: "角色",
             dataIndex: "role",
-            render: (r: string) => <Tag color={r === "admin" ? "blue" : "default"}>{r}</Tag>,
+            render: (r: string) => <Tag color={r === "admin" ? "blue" : "default"}>{roleLabel(r)}</Tag>,
           },
           {
             title: "状态",
@@ -114,9 +115,9 @@ export function UsersPage() {
           <Form.Item name="role" label="角色" initialValue="operator">
             <Select
               options={[
-                { label: "管理员", value: "admin" },
+                { label: "超级管理员", value: "admin" },
                 { label: "运维", value: "operator" },
-                { label: "只读", value: "readonly" },
+                { label: "审计", value: "auditor" },
               ]}
             />
           </Form.Item>

@@ -20,6 +20,8 @@ import { openRemoteTarget } from "../lib/openRemote";
 import { confirmDeleteClientDevice } from "../utils/dangerousConfirm";
 import { mapClientDevice, type ClientDeviceListItem, type LineListItem } from "../types";
 import { mapLineItem } from "../types";
+import { getUser } from "../api/auth";
+import { isOperatorDeletableClient, permissionsFromUser } from "../utils/permissions";
 
 dayjs.extend(relativeTime);
 
@@ -83,6 +85,7 @@ export function ClientDevicesPage() {
   const [drafts, setDrafts] = useState<Record<number, RowDraft>>({});
   const [lastRefresh, setLastRefresh] = useState(dayjs());
   const [activeTab, setActiveTab] = useState<DeviceTab>("all");
+  const perms = permissionsFromUser(getUser());
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -296,9 +299,13 @@ export function ClientDevicesPage() {
             title: "操作",
             render: (_, row) => (
               <Space wrap>
+                {perms.actions.includes("write_safe") && (
                 <Button size="small" type="primary" onClick={() => void saveRow(row)}>
                   保存
                 </Button>
+                )}
+                {perms.canRemoteAccess && (
+                <>
                 <Button
                   size="small"
                   type="primary"
@@ -322,11 +329,14 @@ export function ClientDevicesPage() {
                 >
                   刷码协助
                 </Button>
+                </>
+                )}
                 <Button
                   size="small"
                   icon={<EyeOutlined />}
                   onClick={() => nav(`/client-devices/${row.id}`)}
                 />
+                {(perms.canDeleteStructural || isOperatorDeletableClient(row)) && (
                 <Button
                   size="small"
                   danger
@@ -337,6 +347,7 @@ export function ClientDevicesPage() {
                 >
                   删除
                 </Button>
+                )}
               </Space>
             ),
           },

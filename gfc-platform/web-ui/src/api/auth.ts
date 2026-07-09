@@ -1,3 +1,11 @@
+export type UserPermissions = {
+  actions: string[];
+  menus: string[];
+  canRemoteAccess: boolean;
+  canDeleteStructural: boolean;
+  canWriteTrafficBilling: boolean;
+};
+
 export type AuthUser = {
   id: number;
   username: string;
@@ -5,6 +13,7 @@ export type AuthUser = {
   isActive: boolean;
   createdAt: string;
   mustChangePassword?: boolean;
+  permissions?: UserPermissions;
 };
 
 const TOKEN_KEY = "gfc_token";
@@ -38,6 +47,7 @@ export function mapUser(
   raw: Record<string, unknown>,
   mustChangePassword = false
 ): AuthUser {
+  const perms = raw.permissions as Record<string, unknown> | undefined;
   return {
     id: raw.id as number,
     username: raw.username as string,
@@ -45,5 +55,14 @@ export function mapUser(
     isActive: raw.is_active as boolean,
     createdAt: raw.created_at as string,
     mustChangePassword,
+    permissions: perms
+      ? {
+          actions: (perms.actions as string[]) ?? [],
+          menus: (perms.menus as string[]) ?? [],
+          canRemoteAccess: Boolean(perms.can_remote_access),
+          canDeleteStructural: Boolean(perms.can_delete_structural),
+          canWriteTrafficBilling: Boolean(perms.can_write_traffic_billing),
+        }
+      : undefined,
   };
 }

@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .db import get_session
 from .models import ClientDevice, PlatformUser
 from .reverse_ssh import session_active, tunnel_ready
+from .permissions import can_remote_access
 from .security import decode_access_token
 from .settings import settings
 from .timeutil import utc_now
@@ -45,6 +46,8 @@ async def _resolve_user(
     row = await session.get(PlatformUser, _token_user_id(payload))
     if not row or not row.is_active:
         raise HTTPException(401, "user disabled or missing")
+    if not can_remote_access(row.role):
+        raise HTTPException(403, "permission denied")
     return row
 
 

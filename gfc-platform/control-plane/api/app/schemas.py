@@ -343,11 +343,11 @@ class ChangePasswordIn(BaseModel):
 class UserIn(BaseModel):
     username: str = Field(min_length=1, max_length=64)
     password: str = Field(min_length=6, max_length=128)
-    role: str = "operator"
+    role: str = Field(default="operator", pattern="^(admin|operator|auditor)$")
 
 
 class UserUpdateIn(BaseModel):
-    role: str | None = None
+    role: str | None = Field(default=None, pattern="^(admin|operator|auditor)$")
     is_active: bool | None = None
     password: str | None = Field(default=None, min_length=6, max_length=128)
 
@@ -383,12 +383,21 @@ class SecuritySettingsIn(BaseModel):
     )
 
 
+class UserPermissionsOut(BaseModel):
+    actions: list[str]
+    menus: list[str]
+    can_remote_access: bool = False
+    can_delete_structural: bool = False
+    can_write_traffic_billing: bool = False
+
+
 class UserOut(BaseModel):
     id: int
     username: str
     role: str
     is_active: bool
     created_at: dt.datetime
+    permissions: UserPermissionsOut | None = None
 
 
 class OperationLogOut(BaseModel):

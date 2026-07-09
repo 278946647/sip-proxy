@@ -18,6 +18,8 @@ import {
 import { MinusCircleOutlined, PlusOutlined as PlusIcon } from "@ant-design/icons";
 import { useEffect, useMemo, useState } from "react";
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from "../api/client";
+import { getUser } from "../api/auth";
+import { canWrite, permissionsFromUser } from "../utils/permissions";
 import { copyToClipboard } from "../utils/clipboard";
 import { trafficUsageLabel, trafficUsageTagColor } from "../types";
 import type { StaticRoute } from "../types";
@@ -86,6 +88,8 @@ export function NodesPage() {
   const [form] = Form.useForm();
   const [vpnForm] = Form.useForm();
   const [routesForm] = Form.useForm();
+  const perms = permissionsFromUser(getUser());
+  const writable = canWrite(getUser());
 
   const load = async () => {
     const rows = await apiGet<Record<string, unknown>[]>("/admin/nodes");
@@ -258,6 +262,7 @@ export function NodesPage() {
               title: "操作",
               render: (_, r) => (
                 <Space wrap>
+                  {writable && (
                   <Button
                     type="link"
                     onClick={() => {
@@ -272,6 +277,9 @@ export function NodesPage() {
                   >
                     改名/模式
                   </Button>
+                  )}
+                  {perms.canDeleteStructural && (
+                  <>
                   <Button
                     type="link"
                     onClick={() => {
@@ -307,6 +315,8 @@ export function NodesPage() {
                         删除
                       </Button>
                     </Popconfirm>
+                  )}
+                  </>
                   )}
                 </Space>
               ),
@@ -435,6 +445,7 @@ export function NodesPage() {
         onCancel={() => setVpnOpen(false)}
         footer={(_, { OkBtn, CancelBtn }) => (
           <>
+            {perms.canDeleteStructural && (
             <Button
               danger
               onClick={async () => {
@@ -450,6 +461,7 @@ export function NodesPage() {
             >
               清除 VPN
             </Button>
+            )}
             <CancelBtn />
             <OkBtn />
           </>

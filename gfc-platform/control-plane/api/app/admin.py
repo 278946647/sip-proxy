@@ -15,7 +15,7 @@ from sqlalchemy.orm import selectinload
 
 from .active_alerts import compute_active_alerts
 from .alerts import send_test_email
-from .auth_deps import get_current_user, require_admin
+from .auth_deps import get_current_user, require_action, require_admin
 from .db import get_session
 from .email_settings import (
     _dict_to_config,
@@ -39,6 +39,14 @@ from .reverse_ssh import (
     sync_authorized_keys,
     tunnel_ready,
 )
+from .policies import (
+    assert_client_device_deletable,
+    assert_line_code_refresh_allowed,
+    filter_client_device_update,
+    filter_line_update,
+    filter_node_update,
+)
+from .permissions import user_out
 from .security import hash_password
 from .timeutil import ensure_utc, parse_json_field, seconds_ago, utc_now
 from .metrics_util import sanitize_last_metrics
@@ -379,7 +387,7 @@ async def get_node(node_id: int, session: AsyncSession = Depends(get_session)) -
     }
 
 
-@router.put("/nodes/{node_id}/routes")
+@router.put("/nodes/{node_id}/routes", dependencies=[Depends(require_action("write_critical"))])
 async def set_node_routes(
     node_id: int,
     body: list[StaticRouteIn],
@@ -399,7 +407,7 @@ async def set_node_routes(
     return await get_node(node_id, session)
 
 
-@router.delete("/nodes/{node_id}")
+@router.delete("/nodes/{node_id}", dependencies=[Depends(require_action("delete"))])
 async def delete_node(
     node_id: int,
     session: AsyncSession = Depends(get_session),
@@ -422,16 +430,17 @@ async def delete_node(
     return {"ok": True}
 
 
-@router.patch("/nodes/{node_id}")
+@router.patch("/nodes/{node_id}", dependencies=[Depends(require_action("write_safe"))])
 async def update_node(
     node_id: int,
     body: NodeUpdateIn,
     session: AsyncSession = Depends(get_session),
-    operator: str = Query("admin"),
+    operator: PlatformUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     n = await session.get(Node, node_id)
     if not n:
         raise HTTPException(404, "node not found")
+    body = filter_node_update(operator.role, body)
     data = body.model_dump(exclude_unset=True)
     if "vpn_config" in data:
         vpn = data.pop("vpn_config")
@@ -450,7 +459,7 @@ async def update_node(
     for k, v in data.items():
         setattr(n, k, v)
     session.add(n)
-    await _log_op(session, operator, "update_node", n.name)
+    await _log_op(session, operator.username, "update_node", n.name)
     await session.commit()
     return await get_node(node_id, session)
 
@@ -475,7 +484,7 @@ async def suggest_node_vpn_tunnel(
     }
 
 
-@router.put("/nodes/{node_id}/vpn")
+@router.put("/nodes/{node_id}/vpn", dependencies=[Depends(require_action("write_critical"))])
 async def set_node_vpn(
     node_id: int,
     body: NodeVpnConfigIn,
@@ -500,7 +509,7 @@ async def set_node_vpn(
     return await get_node(node_id, session)
 
 
-@router.delete("/nodes/{node_id}/vpn")
+@router.delete("/nodes/{node_id}/vpn", dependencies=[Depends(require_action("write_critical"))])
 async def clear_node_vpn(
     node_id: int,
     session: AsyncSession = Depends(get_session),
@@ -551,7 +560,7 @@ async def vpn_pki_status() -> dict[str, Any]:
     return pki_status(Path(settings.pki_dir))
 
 
-@router.post("/nodes/{node_id}/vpn/pki")
+@router.post("/nodes/{node_id}/vpn/pki", dependencies=[Depends(require_action("write_critical"))])
 async def issue_node_vpn_pki(
     node_id: int,
     body: VpnPkiIssueIn,
@@ -603,7 +612,7 @@ async def issue_node_vpn_pki(
     return result
 
 
-@router.post("/nodes/{node_id}/vpn/static-key")
+@router.post("/nodes/{node_id}/vpn/static-key", dependencies=[Depends(require_action("write_critical"))])
 async def issue_node_vpn_static_key(
     node_id: int,
     body: VpnStaticKeyIssueIn,
@@ -751,7 +760,7 @@ async def get_line(line_id: int, session: AsyncSession = Depends(get_session)) -
     )
 
 
-@router.post("/lines", response_model=LineDetailOut)
+@router.post("/lines", response_model=LineDetailOut, dependencies=[Depends(require_action("write_safe"))])
 async def create_line(
     body: LineCreateIn,
     session: AsyncSession = Depends(get_session),
@@ -805,17 +814,18 @@ async def create_line(
     return await get_line(line.id, session)
 
 
-@router.patch("/lines/{line_id}", response_model=LineDetailOut)
+@router.patch("/lines/{line_id}", response_model=LineDetailOut, dependencies=[Depends(require_action("write_safe"))])
 async def update_line(
     line_id: int,
     body: LineUpdateIn,
     session: AsyncSession = Depends(get_session),
-    operator: str = Query("admin"),
+    operator: PlatformUser = Depends(get_current_user),
 ) -> LineDetailOut:
     line = await session.get(Line, line_id)
     if not line:
         raise HTTPException(404, "line not found")
 
+    body = filter_line_update(operator.role, body)
     data = body.model_dump(exclude_unset=True)
     if "source_cidrs" in data and data["source_cidrs"] is not None:
         data["source_cidrs"] = ",".join(data["source_cidrs"])
@@ -824,12 +834,12 @@ async def update_line(
     for k, v in data.items():
         setattr(line, k, v)
     session.add(line)
-    await _log_op(session, operator, "update_line", line.tid)
+    await _log_op(session, operator.username, "update_line", line.tid)
     await session.commit()
     return await get_line(line_id, session)
 
 
-@router.delete("/lines/{line_id}")
+@router.delete("/lines/{line_id}", dependencies=[Depends(require_action("delete"))])
 async def delete_line(
     line_id: int,
     session: AsyncSession = Depends(get_session),
@@ -852,7 +862,7 @@ async def list_socks(session: AsyncSession = Depends(get_session)) -> list[Socks
     return [_socks_to_out(r, line_binding_count=bindings.get(r.id, 0)) for r in rows]
 
 
-@router.post("/socks", response_model=SocksProfileOut)
+@router.post("/socks", response_model=SocksProfileOut, dependencies=[Depends(require_action("write_safe"))])
 async def create_socks(
     body: SocksProfileIn,
     session: AsyncSession = Depends(get_session),
@@ -867,7 +877,7 @@ async def create_socks(
     return _socks_to_out(sp)
 
 
-@router.patch("/socks/{socks_id}", response_model=SocksProfileOut)
+@router.patch("/socks/{socks_id}", response_model=SocksProfileOut, dependencies=[Depends(require_action("write_safe"))])
 async def update_socks(
     socks_id: int,
     body: SocksProfileUpdate,
@@ -894,7 +904,7 @@ async def update_socks(
     return _socks_to_out(sp)
 
 
-@router.post("/socks/{socks_id}/probe")
+@router.post("/socks/{socks_id}/probe", dependencies=[Depends(require_action("write_safe"))])
 async def probe_socks_profile(
     socks_id: int,
     session: AsyncSession = Depends(get_session),
@@ -917,7 +927,7 @@ async def probe_socks_profile(
     return {"ok": ok, "detail": detail, "profile": _socks_to_out(sp).model_dump()}
 
 
-@router.delete("/socks/{socks_id}")
+@router.delete("/socks/{socks_id}", dependencies=[Depends(require_action("delete"))])
 async def delete_socks(socks_id: int, session: AsyncSession = Depends(get_session)) -> dict[str, bool]:
     sp = await session.get(SocksProfile, socks_id)
     if not sp:
@@ -927,7 +937,7 @@ async def delete_socks(socks_id: int, session: AsyncSession = Depends(get_sessio
     return {"ok": True}
 
 
-@router.delete("/alerts")
+@router.delete("/alerts", dependencies=[Depends(require_action("write_safe"))])
 async def clear_alerts(
     session: AsyncSession = Depends(get_session),
     operator: str = Depends(get_current_user),
@@ -1103,7 +1113,7 @@ async def node_traffic_overview(
     return items
 
 
-@router.patch("/nodes/{node_id}/traffic-billing", response_model=NodeTrafficOverviewOut)
+@router.patch("/nodes/{node_id}/traffic-billing", response_model=NodeTrafficOverviewOut, dependencies=[Depends(require_action("write_critical"))])
 async def update_node_traffic_billing(
     node_id: int,
     body: NodeTrafficBillingIn,
@@ -1133,7 +1143,7 @@ async def update_node_traffic_billing(
     return NodeTrafficOverviewOut(**row)
 
 
-@router.post("/nodes/{node_id}/traffic-billing/reset-cycle", response_model=NodeTrafficOverviewOut)
+@router.post("/nodes/{node_id}/traffic-billing/reset-cycle", response_model=NodeTrafficOverviewOut, dependencies=[Depends(require_action("write_critical"))])
 async def reset_node_traffic_billing_cycle(
     node_id: int,
     session: AsyncSession = Depends(get_session),
@@ -1181,7 +1191,7 @@ async def put_email_settings(
     return smtp_to_public(stored)
 
 
-@router.get("/settings/security", dependencies=[Depends(require_admin)])
+@router.get("/settings/security", dependencies=[Depends(require_action("read_sensitive"))])
 async def get_security_settings(session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
     data = await load_security_settings(session)
     if not data:
@@ -1233,16 +1243,7 @@ async def test_email_settings(
 @router.get("/users", response_model=list[UserOut])
 async def list_users(session: AsyncSession = Depends(get_session)) -> list[UserOut]:
     rows = (await session.execute(select(PlatformUser).order_by(PlatformUser.id))).scalars().all()
-    return [
-        UserOut(
-            id=u.id,
-            username=u.username,
-            role=u.role,
-            is_active=u.is_active,
-            created_at=u.created_at,
-        )
-        for u in rows
-    ]
+    return [user_out(u) for u in rows]
 
 
 @router.post("/users", response_model=UserOut, dependencies=[Depends(require_admin)])
@@ -1267,13 +1268,7 @@ async def create_user(
     await _log_op(session, operator.username, "create_user", u.username)
     await session.commit()
     await session.refresh(u)
-    return UserOut(
-        id=u.id,
-        username=u.username,
-        role=u.role,
-        is_active=u.is_active,
-        created_at=u.created_at,
-    )
+    return user_out(u)
 
 
 @router.patch("/users/{user_id}", response_model=UserOut, dependencies=[Depends(require_admin)])
@@ -1295,13 +1290,7 @@ async def update_user(
     await _log_op(session, operator.username, "update_user", u.username)
     await session.commit()
     await session.refresh(u)
-    return UserOut(
-        id=u.id,
-        username=u.username,
-        role=u.role,
-        is_active=u.is_active,
-        created_at=u.created_at,
-    )
+    return user_out(u)
 
 
 @router.get("/operation-logs", response_model=list[OperationLogOut])
@@ -1525,17 +1514,18 @@ async def get_client_device(
     )
 
 
-@router.patch("/client-devices/{device_id}", response_model=ClientDeviceDetailOut)
+@router.patch("/client-devices/{device_id}", response_model=ClientDeviceDetailOut, dependencies=[Depends(require_action("write_safe"))])
 async def update_client_device(
     device_id: int,
     body: ClientDeviceUpdateIn,
     session: AsyncSession = Depends(get_session),
-    operator: str = Query("admin"),
+    operator: PlatformUser = Depends(get_current_user),
 ) -> ClientDeviceDetailOut:
     device = await session.get(ClientDevice, device_id)
     if not device:
         raise HTTPException(404, "client device not found")
 
+    body = filter_client_device_update(operator.role, body)
     data = body.model_dump(exclude_unset=True)
     if "line_id" in data and data["line_id"] is not None:
         line = await session.get(Line, data["line_id"])
@@ -1555,16 +1545,16 @@ async def update_client_device(
     for k, v in data.items():
         setattr(device, k, v)
     session.add(device)
-    await _log_op(session, operator, "update_client_device", device.device_key)
+    await _log_op(session, operator.username, "update_client_device", device.device_key)
     await session.commit()
     return await get_client_device(device_id, session)
 
 
-@router.delete("/client-devices/{device_id}")
+@router.delete("/client-devices/{device_id}", dependencies=[Depends(require_action("write_safe"))])
 async def delete_client_device(
     device_id: int,
     session: AsyncSession = Depends(get_session),
-    operator: str = Query("admin"),
+    operator: PlatformUser = Depends(get_current_user),
     confirm: bool = Query(False, description="Must be true to delete device record"),
 ) -> dict[str, str | bool]:
     if not confirm:
@@ -1576,9 +1566,15 @@ async def delete_client_device(
     if not device:
         raise HTTPException(404, "client device not found")
 
+    assert_client_device_deletable(
+        operator.role,
+        device,
+        online=_client_device_online(device),
+    )
+
     label = device.name or device.device_key
     await release_device_reverse_ports(session, device)
-    await _log_op(session, operator, "delete_client_device", label, f"id={device_id}")
+    await _log_op(session, operator.username, "delete_client_device", label, f"id={device_id}")
     await session.delete(device)
     await session.commit()
     await sync_authorized_keys(session)
@@ -1592,12 +1588,12 @@ async def delete_client_device(
     }
 
 
-@router.post("/client-devices/{device_id}/reverse-ssh/session", response_model=ReverseSSHSessionOut)
+@router.post("/client-devices/{device_id}/reverse-ssh/session", response_model=ReverseSSHSessionOut, dependencies=[Depends(require_action("write_safe"))])
 async def start_reverse_ssh_session(
     device_id: int,
     body: ReverseSSHSessionIn,
     session: AsyncSession = Depends(get_session),
-    operator: str = Query("admin"),
+    operator: PlatformUser = Depends(get_current_user),
 ) -> ReverseSSHSessionOut:
     device = await session.get(ClientDevice, device_id)
     if not device:
@@ -1636,7 +1632,7 @@ async def start_reverse_ssh_session(
     if not already_ready or targets_changed:
         device.reverse_ssh_tunnel_reported_at = None
     session.add(device)
-    await _log_op(session, operator, "reverse_ssh_session_start", device.device_key, ",".join(merged))
+    await _log_op(session, operator.username, "reverse_ssh_session_start", device.device_key, ",".join(merged))
     await session.commit()
     return _reverse_session_out(device)
 
@@ -1658,11 +1654,11 @@ async def get_reverse_ssh_session(
     return _reverse_session_out(device)
 
 
-@router.delete("/client-devices/{device_id}/reverse-ssh/session", response_model=ReverseSSHSessionOut)
+@router.delete("/client-devices/{device_id}/reverse-ssh/session", response_model=ReverseSSHSessionOut, dependencies=[Depends(require_action("write_safe"))])
 async def stop_reverse_ssh_session(
     device_id: int,
     session: AsyncSession = Depends(get_session),
-    operator: str = Query("admin"),
+    operator: PlatformUser = Depends(get_current_user),
 ) -> ReverseSSHSessionOut:
     device = await session.get(ClientDevice, device_id)
     if not device:
@@ -1671,12 +1667,12 @@ async def stop_reverse_ssh_session(
     device.reverse_ssh_tunnel_reported_at = None
     device.reverse_ssh_session_targets = None
     session.add(device)
-    await _log_op(session, operator, "reverse_ssh_session_stop", device.device_key)
+    await _log_op(session, operator.username, "reverse_ssh_session_stop", device.device_key)
     await session.commit()
     return _reverse_session_out(device)
 
 
-@router.get("/lines/{line_id}/line-code")
+@router.get("/lines/{line_id}/line-code", dependencies=[Depends(require_action("read_sensitive"))])
 async def get_line_code(
     line_id: int,
     session: AsyncSession = Depends(get_session),
@@ -1691,14 +1687,15 @@ async def get_line_code(
     return _line_code_response(line, code)
 
 
-@router.post("/lines/{line_id}/line-code/refresh")
+@router.post("/lines/{line_id}/line-code/refresh", dependencies=[Depends(require_action("write_safe"))])
 async def refresh_line_code_endpoint(
     line_id: int,
     rotate_uuid: bool = Query(False, description="生成新 UUID 并使旧线码失效"),
     session: AsyncSession = Depends(get_session),
-    operator: str = Query("admin"),
+    operator: PlatformUser = Depends(get_current_user),
 ) -> dict[str, str]:
     """Re-encode line code from current DB fields (uuid/node/server). Fixes uuid mismatch."""
+    assert_line_code_refresh_allowed(operator.role, rotate_uuid=rotate_uuid)
     stmt = select(Line).where(Line.id == line_id).options(selectinload(Line.node))
     line = (await session.execute(stmt)).scalars().first()
     if not line or not line.node:
@@ -1708,12 +1705,12 @@ async def refresh_line_code_endpoint(
     if rotate_uuid or not line.client_uuid:
         line.client_uuid = str(uuid.uuid4())
     code = await _sync_line_code(session, line, line.node, commit=False)
-    await _log_op(session, operator, "refresh_line_code", line.tid)
+    await _log_op(session, operator.username, "refresh_line_code", line.tid)
     await session.commit()
     return _line_code_response(line, code)
 
 
-@router.get("/platform/bootstrap-code")
+@router.get("/platform/bootstrap-code", dependencies=[Depends(require_action("read_sensitive"))])
 async def get_platform_bootstrap_code() -> dict[str, str]:
     """Platform-only flash code (control-plane URL); client line codes already embed the same URLs."""
     return {"bootstrap_code_b32": encode_platform_bootstrap_code()}

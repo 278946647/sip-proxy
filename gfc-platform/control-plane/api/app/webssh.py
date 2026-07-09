@@ -10,7 +10,8 @@ from pathlib import Path
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from .db import async_session_factory
-from .models import ClientDevice
+from .models import ClientDevice, PlatformUser
+from .permissions import can_remote_access
 from .reverse_ssh import session_active, tunnel_ready
 from .security import decode_access_token
 from .settings import settings
@@ -81,6 +82,15 @@ async def webssh_device(
         bearer = token.strip()
     if not bearer or not decode_access_token(bearer):
         await websocket.close(code=4401)
+        return
+
+    payload = decode_access_token(bearer)
+    assert payload is not None
+    user_id = int(payload.get("uid") or 0)
+    async with async_session_factory() as session:
+        user = await session.get(PlatformUser, user_id)
+    if not user or not user.is_active or not can_remote_access(user.role):
+        await websocket.close(code=4403)
         return
 
     device = await _load_device(device_id)

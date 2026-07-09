@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from fastapi import Depends, Header, HTTPException
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .db import get_session
 from .models import PlatformUser
+from .permissions import Action, assert_role_action
 from .security import decode_access_token
 
 
@@ -30,3 +30,11 @@ async def require_admin(user: PlatformUser = Depends(get_current_user)) -> Platf
     if user.role != "admin":
         raise HTTPException(status_code=403, detail="admin required")
     return user
+
+
+def require_action(action: Action):
+    async def _dep(user: PlatformUser = Depends(get_current_user)) -> PlatformUser:
+        assert_role_action(user.role, action)
+        return user
+
+    return _dep

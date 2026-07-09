@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .auth_deps import get_current_user
 from .db import get_session
 from .models import PlatformUser
+from .permissions import user_out
 from .platform_secrets import load_security_settings, password_change_required, save_security_settings
 from .schemas import (
     ChangePasswordIn,
@@ -48,13 +49,7 @@ async def login(body: LoginIn, session: AsyncSession = Depends(get_session)) -> 
     token = create_access_token(user.id, user.username)
     return LoginOut(
         token=token,
-        user=UserOut(
-            id=user.id,
-            username=user.username,
-            role=user.role,
-            is_active=user.is_active,
-            created_at=user.created_at,
-        ),
+        user=user_out(user),
         must_change_password=must_change,
     )
 
@@ -76,26 +71,14 @@ async def initial_password_change(
     token = create_access_token(user.id, user.username)
     return LoginOut(
         token=token,
-        user=UserOut(
-            id=user.id,
-            username=user.username,
-            role=user.role,
-            is_active=user.is_active,
-            created_at=user.created_at,
-        ),
+        user=user_out(user),
         must_change_password=False,
     )
 
 
 @router.get("/me", response_model=UserOut)
 async def me(user: PlatformUser = Depends(get_current_user)) -> UserOut:
-    return UserOut(
-        id=user.id,
-        username=user.username,
-        role=user.role,
-        is_active=user.is_active,
-        created_at=user.created_at,
-    )
+    return user_out(user)
 
 
 @router.post("/change-password")

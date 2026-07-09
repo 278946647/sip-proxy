@@ -23,6 +23,8 @@ import { apiDelete, apiGet, apiPatch, apiPost } from "../api/client";
 import { confirmLineEnableChange } from "../utils/lineEnableConfirm";
 import { confirmDeleteLine } from "../utils/dangerousConfirm";
 import { mapLineDetail, type FlowStat, type LineDetail } from "../types";
+import { getUser } from "../api/auth";
+import { canWrite, permissionsFromUser } from "../utils/permissions";
 
 function mapFlowRows(flow: Record<string, unknown>[]) {
   return flow.map((x) => ({
@@ -51,6 +53,8 @@ export function LineDetailPage() {
   const [lineCode, setLineCode] = useState("");
   const [codeMeta, setCodeMeta] = useState<{ fingerprint?: string; lineId?: string }>({});
   const [codeLoading, setCodeLoading] = useState(false);
+  const perms = permissionsFromUser(getUser());
+  const writable = canWrite(getUser());
 
   const loadLineCode = async () => {
     if (!id) return;
@@ -221,6 +225,7 @@ export function LineDetailPage() {
         <Button icon={<ArrowLeftOutlined />} onClick={() => nav("/lines")}>
           返回列表
         </Button>
+        {perms.canDeleteStructural && (
         <Button
           danger
           onClick={() =>
@@ -233,6 +238,7 @@ export function LineDetailPage() {
         >
           删除线路
         </Button>
+        )}
       </Space>
 
       <Typography.Title level={4}>线路详情 - {line.tid}</Typography.Title>

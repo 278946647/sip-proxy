@@ -28,6 +28,8 @@ import {
   type SocksProfile,
 } from "../types";
 import { mapSocks } from "../types";
+import { getUser } from "../api/auth";
+import { canWrite, permissionsFromUser } from "../utils/permissions";
 import { SocksProfileSelect } from "../components/SocksProfileSelect";
 
 export function LinesPage() {
@@ -40,6 +42,8 @@ export function LinesPage() {
   const [loading, setLoading] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [form] = Form.useForm();
+  const perms = permissionsFromUser(getUser());
+  const writable = canWrite(getUser());
 
   const [filters, setFilters] = useState({
     nodeId: undefined as number | undefined,
@@ -123,6 +127,7 @@ export function LinesPage() {
         <Typography.Title level={4} style={{ margin: 0 }}>
           线路管理
         </Typography.Title>
+        {writable && (
         <Button
           type="primary"
           icon={<PlusOutlined />}
@@ -133,6 +138,7 @@ export function LinesPage() {
         >
           添加线路
         </Button>
+        )}
       </div>
 
       <div className="gfc-filter-bar">
@@ -257,6 +263,7 @@ export function LinesPage() {
             render: (_, r) => (
               <Space>
                 <Button type="link" icon={<EyeOutlined />} onClick={() => nav(`/lines/${r.id}`)} />
+                {perms.canDeleteStructural && (
                 <Button
                   type="link"
                   danger
@@ -269,6 +276,7 @@ export function LinesPage() {
                     })
                   }
                 />
+                )}
               </Space>
             ),
           },

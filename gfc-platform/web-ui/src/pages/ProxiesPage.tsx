@@ -17,12 +17,16 @@ import { apiDelete, apiGet, apiPatch, apiPost } from "../api/client";
 import { confirmDeleteSocks } from "../utils/dangerousConfirm";
 import { mapSocks, type SocksProfile } from "../types";
 import { formatSocksAddress } from "../utils/socksAddress";
+import { getUser } from "../api/auth";
+import { canWrite, permissionsFromUser } from "../utils/permissions";
 
 export function ProxiesPage() {
   const [rows, setRows] = useState<SocksProfile[]>([]);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<SocksProfile | null>(null);
   const [form] = Form.useForm();
+  const perms = permissionsFromUser(getUser());
+  const writable = canWrite(getUser());
 
   const load = async () => {
     const s = await apiGet<Record<string, unknown>[]>("/admin/socks");
@@ -74,6 +78,7 @@ export function ProxiesPage() {
         <Typography.Title level={4} style={{ margin: 0 }}>
           Socks5 代理配置
         </Typography.Title>
+        {writable && (
         <Button
           type="primary"
           icon={<PlusOutlined />}
@@ -85,6 +90,7 @@ export function ProxiesPage() {
         >
           添加代理
         </Button>
+        )}
       </div>
 
       <Space size="large" style={{ marginBottom: 16 }}>
@@ -126,6 +132,7 @@ export function ProxiesPage() {
             title: "操作",
             render: (_, r) => (
               <>
+                {writable && (
                 <Button
                   type="link"
                   onClick={async () => {
@@ -145,6 +152,8 @@ export function ProxiesPage() {
                 >
                   检测
                 </Button>
+                )}
+                {writable && (
                 <Button
                   type="link"
                   onClick={() => {
@@ -161,6 +170,8 @@ export function ProxiesPage() {
                 >
                   编辑
                 </Button>
+                )}
+                {perms.canDeleteStructural && (
                 <Button
                   type="link"
                   danger
@@ -174,6 +185,7 @@ export function ProxiesPage() {
                 >
                   删除
                 </Button>
+                )}
               </>
             ),
           },

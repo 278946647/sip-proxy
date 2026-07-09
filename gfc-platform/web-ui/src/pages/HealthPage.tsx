@@ -2,11 +2,14 @@ import { Button, Card, Popconfirm, Table, Tag, Typography, message } from "antd"
 import { useEffect, useState } from "react";
 import dayjs from "dayjs";
 import { apiDelete, apiGet } from "../api/client";
+import { getUser } from "../api/auth";
+import { canWrite } from "../utils/permissions";
 import type { AlertEvent, NodeRow } from "../types";
 
 export function HealthPage() {
   const [nodes, setNodes] = useState<NodeRow[]>([]);
   const [alerts, setAlerts] = useState<AlertEvent[]>([]);
+  const writable = canWrite(getUser());
 
   useEffect(() => {
     const load = async () => {
@@ -62,6 +65,7 @@ export function HealthPage() {
       <Card
         title="当前告警"
         extra={
+          writable ? (
           <Popconfirm
             title="清空全部历史告警？"
             description="仅删除数据库中的告警记录，不影响当前监控"
@@ -90,6 +94,7 @@ export function HealthPage() {
               清空历史告警
             </Button>
           </Popconfirm>
+          ) : null
         }
       >
         <Table

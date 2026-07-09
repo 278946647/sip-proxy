@@ -3,7 +3,8 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { getToken } from "../api/auth";
+import { getToken, getUser } from "../api/auth";
+import { permissionsFromUser } from "../utils/permissions";
 import { websshUrl } from "../lib/reverseSsh";
 import "@xterm/xterm/css/xterm.css";
 
@@ -18,6 +19,11 @@ export function ClientWebSSHPage() {
   const [phase, setPhase] = useState<"connecting" | "shell" | "failed">("connecting");
 
   useEffect(() => {
+    if (!permissionsFromUser(getUser()).canRemoteAccess) {
+      message.error("当前角色无权使用远程 Shell");
+      nav("/client-devices");
+      return;
+    }
     if (!id || !hostRef.current) return;
     const token = search.get("token") || getToken();
     if (!token) {

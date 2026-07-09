@@ -18,21 +18,22 @@ import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useState } from "react";
 import { clearAuth, getUser } from "../api/auth";
 import { apiPost } from "../api/client";
+import { canMenu, roleLabel } from "../utils/permissions";
 
 const { Header, Sider, Content } = Layout;
 
-const menuItems = [
-  { key: "/", icon: <DashboardOutlined />, label: "仪表盘" },
-  { key: "/nodes", icon: <ClusterOutlined />, label: "转发节点" },
-  { key: "/lines", icon: <GlobalOutlined />, label: "线路管理" },
-  { key: "/client-devices", icon: <MobileOutlined />, label: "客户端管理" },
-  { key: "/traffic", icon: <LineChartOutlined />, label: "节点流量" },
-  { key: "/health", icon: <HeartOutlined />, label: "健康检查" },
-  { key: "/proxies", icon: <CloudServerOutlined />, label: "代理配置" },
-  { key: "/settings", icon: <SettingOutlined />, label: "系统设置" },
-  { key: "/users", icon: <UserOutlined />, label: "用户管理" },
-  { key: "/logs", icon: <FileTextOutlined />, label: "操作日志" },
-  { key: "/help", icon: <QuestionCircleOutlined />, label: "使用说明" },
+const allMenuItems = [
+  { key: "/", icon: <DashboardOutlined />, label: "仪表盘", perm: "dashboard" },
+  { key: "/nodes", icon: <ClusterOutlined />, label: "转发节点", perm: "nodes" },
+  { key: "/lines", icon: <GlobalOutlined />, label: "线路管理", perm: "lines" },
+  { key: "/client-devices", icon: <MobileOutlined />, label: "客户端管理", perm: "client-devices" },
+  { key: "/traffic", icon: <LineChartOutlined />, label: "节点流量", perm: "traffic" },
+  { key: "/health", icon: <HeartOutlined />, label: "健康检查", perm: "health" },
+  { key: "/proxies", icon: <CloudServerOutlined />, label: "代理配置", perm: "proxies" },
+  { key: "/settings", icon: <SettingOutlined />, label: "系统设置", perm: "settings" },
+  { key: "/users", icon: <UserOutlined />, label: "用户管理", perm: "users" },
+  { key: "/logs", icon: <FileTextOutlined />, label: "操作日志", perm: "logs" },
+  { key: "/help", icon: <QuestionCircleOutlined />, label: "使用说明", perm: "help" },
 ];
 
 export function MainLayout() {
@@ -40,12 +41,16 @@ export function MainLayout() {
   const loc = useLocation();
   const { token } = theme.useToken();
   const user = getUser();
-  const [pwdOpen, setPwdOpen] = useState(false);
-  const [pwdForm] = Form.useForm();
+  const menuItems = allMenuItems
+    .filter((m) => canMenu(user, m.perm))
+    .map(({ perm: _perm, ...item }) => item);
 
   const selected = menuItems.find((m) =>
     m.key === "/" ? loc.pathname === "/" : loc.pathname.startsWith(m.key)
-  )?.key ?? "/lines";
+  )?.key ?? menuItems[0]?.key ?? "/";
+
+  const [pwdOpen, setPwdOpen] = useState(false);
+  const [pwdForm] = Form.useForm();
 
   const logout = () => {
     clearAuth();
@@ -99,7 +104,7 @@ export function MainLayout() {
           >
             <Space style={{ cursor: "pointer" }}>
               <span>{user?.username || "用户"}</span>
-              <Tag>{user?.role || "-"}</Tag>
+              <Tag>{roleLabel(user?.role || "-")}</Tag>
             </Space>
           </Dropdown>
         </Header>
