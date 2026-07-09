@@ -1,6 +1,7 @@
 """HTTP reverse proxy to client LuCI / flash via local reverse HTTP port."""
 from __future__ import annotations
 
+import datetime as dt
 import logging
 import re
 from urllib.parse import parse_qs, urlencode
@@ -13,6 +14,8 @@ from .db import get_session
 from .models import ClientDevice, PlatformUser
 from .reverse_ssh import session_active, tunnel_ready
 from .security import decode_access_token
+from .settings import settings
+from .timeutil import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -30,12 +33,9 @@ async def _resolve_user(
     request: Request,
     session: AsyncSession,
     token: str | None = None,
+    device_id: int | None = None,
 ) -> PlatformUser:
-    bearer = (token or "").strip()
-    if not bearer:
-        auth = request.headers.get("authorization") or ""
-        if auth.lower().startswith("bearer "):
-            bearer = auth.split(" ", 1)[1].strip()
+    bearer = _extract_bearer(request, token, device_id)
     payload = decode_access_token(bearer) if bearer else None
     if not payload:
         raise HTTPException(401, "not authenticated")
@@ -43,6 +43,25 @@ async def _resolve_user(
     if not row or not row.is_active:
         raise HTTPException(401, "user disabled or missing")
     return row
+
+
+def _remote_auth_cookie_name(device_id: int) -> str:
+    return f"gfc_remote_{device_id}"
+
+
+def _extract_bearer(
+    request: Request,
+    token: str | None,
+    device_id: int | None,
+) -> str:
+    bearer = (token or "").strip()
+    if not bearer and device_id is not None:
+        bearer = (request.cookies.get(_remote_auth_cookie_name(device_id)) or "").strip()
+    if not bearer:
+        auth = request.headers.get("authorization") or ""
+        if auth.lower().startswith("bearer "):
+            bearer = auth.split(" ", 1)[1].strip()
+    return bearer
 
 
 def _token_user_id(payload: dict) -> int:
@@ -58,7 +77,7 @@ async def _device_with_session(
     request: Request,
     token: str | None = None,
 ) -> ClientDevice:
-    await _resolve_user(request, session, token)
+    await _resolve_user(request, session, token, device_id)
     device = await session.get(ClientDevice, device_id)
     if not device:
         raise HTTPException(404, "device not found")
@@ -66,6 +85,11 @@ async def _device_with_session(
         raise HTTPException(400, "reverse http port not allocated")
     if not session_active(device):
         raise HTTPException(403, "reverse ssh session not active")
+    device.reverse_ssh_session_expires_at = utc_now() + dt.timedelta(
+        seconds=settings.reverse_ssh_session_ttl_seconds
+    )
+    session.add(device)
+    await session.commit()
     if not tunnel_ready(device):
         raise HTTPException(503, "reverse tunnel not ready")
     return device
@@ -163,11 +187,7 @@ async def _proxy(
     query = _upstream_query(request)
     if query:
         upstream = f"{upstream}?{query}"
-    headers = {
-        k: v
-        for k, v in request.headers.items()
-        if k.lower() not in {"host", "content-length", "connection"}
-    }
+    headers = _upstream_headers(request, device_id)
     body = await request.body()
     try:
         async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
@@ -186,7 +206,11 @@ async def _proxy(
                 break
         if content and _should_rewrite_body(ctype):
             content = _rewrite_body_paths(content, device_id)
-        return _build_response(content, resp.status_code, out_headers)
+        response = _build_response(content, resp.status_code, out_headers)
+        auth_token = _extract_bearer(request, token, device_id)
+        if auth_token:
+            _attach_remote_auth_cookie(response, device_id, auth_token)
+        return response
     except HTTPException:
         raise
     except httpx.HTTPError as exc:
@@ -209,6 +233,47 @@ def _build_response(
         else:
             response.headers[key] = value
     return response
+
+
+def _attach_remote_auth_cookie(response: Response, device_id: int, token: str) -> None:
+    """Persist platform JWT for follow-up luci-static/cgi-bin requests (no ?token=)."""
+    response.headers.append(
+        "set-cookie",
+        _safe_header_value(
+            f"{_remote_auth_cookie_name(device_id)}={token}; "
+            f"Path=/remote/{device_id}/; HttpOnly; SameSite=Lax; Max-Age=86400"
+        ),
+    )
+
+
+def _upstream_headers(request: Request, device_id: int) -> dict[str, str]:
+    headers: dict[str, str] = {}
+    for key, value in request.headers.items():
+        kl = key.lower()
+        if kl in {"host", "content-length", "connection", "cookie"}:
+            continue
+        headers[key] = value
+    cookie = _upstream_cookie(request, device_id)
+    if cookie:
+        headers["cookie"] = cookie
+    return headers
+
+
+def _upstream_cookie(request: Request, device_id: int) -> str:
+    raw = request.headers.get("cookie") or ""
+    if not raw:
+        return ""
+    our_name = _remote_auth_cookie_name(device_id)
+    kept: list[str] = []
+    for item in raw.split(";"):
+        item = item.strip()
+        if not item:
+            continue
+        name = item.split("=", 1)[0].strip()
+        if name == our_name:
+            continue
+        kept.append(item)
+    return "; ".join(kept)
 
 
 def _response_headers(resp: httpx.Response, device_id: int) -> list[tuple[str, str]]:

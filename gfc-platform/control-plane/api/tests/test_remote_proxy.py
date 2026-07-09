@@ -4,9 +4,11 @@ from starlette.responses import Response
 
 from app.remote_proxy import (
     _build_response,
+    _remote_auth_cookie_name,
     _rewrite_remote_location,
     _rewrite_set_cookie,
     _rewrite_text_paths,
+    _upstream_cookie,
 )
 
 
@@ -56,6 +58,23 @@ class RemoteProxyRewriteTest(unittest.TestCase):
         self.assertIsInstance(resp, Response)
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.headers.getlist("set-cookie"), ["a=1; Path=/cgi-bin/luci/", "b=2; Path=/cgi-bin/luci/"])
+
+    def test_upstream_cookie_strips_platform_auth(self) -> None:
+        from starlette.requests import Request
+
+        scope = {
+            "type": "http",
+            "headers": [(b"cookie", b"gfc_remote_6=jwt; sysauth=abc")],
+            "method": "GET",
+            "path": "/",
+        }
+        req = Request(scope)
+        out = _upstream_cookie(req, 6)
+        self.assertNotIn("gfc_remote_6", out)
+        self.assertIn("sysauth=abc", out)
+
+    def test_remote_auth_cookie_name(self) -> None:
+        self.assertEqual(_remote_auth_cookie_name(6), "gfc_remote_6")
 
 
 if __name__ == "__main__":
