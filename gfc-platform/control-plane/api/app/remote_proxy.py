@@ -4,7 +4,7 @@ from __future__ import annotations
 import datetime as dt
 import logging
 import re
-from urllib.parse import parse_qs, urlencode
+from urllib.parse import parse_qs, unquote, urlencode
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
@@ -64,6 +64,11 @@ def _extract_bearer(
         auth = request.headers.get("authorization") or ""
         if auth.lower().startswith("bearer "):
             bearer = auth.split(" ", 1)[1].strip()
+    if not bearer:
+        referer = request.headers.get("referer") or ""
+        m = re.search(r"[?&]token=([^&]+)", referer)
+        if m:
+            bearer = unquote(m.group(1)).strip()
     return bearer
 
 
@@ -272,7 +277,7 @@ def _attach_remote_auth_cookie(response: Response, device_id: int, token: str) -
         "set-cookie",
         _safe_header_value(
             f"{_remote_auth_cookie_name(device_id)}={token}; "
-            f"Path=/remote/{device_id}/; HttpOnly; SameSite=Lax; Max-Age=86400"
+            f"Path=/; HttpOnly; SameSite=Lax; Max-Age=86400"
         ),
     )
 
@@ -355,7 +360,11 @@ def _rewrite_set_cookie(value: str, device_id: int) -> str:
             return match.group(0)
         if path == "/":
             return f"Path={prefix}/"
-        return f"Path={prefix}{path}"
+        # Broader than /cgi-bin/luci/ so subpaths like .../admin/ubus receive sysauth.
+        scoped = f"{prefix}{path}"
+        if path.startswith("/cgi-bin/"):
+            scoped = f"{prefix}/"
+        return f"Path={scoped}"
 
     return re.sub(r"Path=(/[^;]*)", repl, value, flags=re.IGNORECASE)
 
@@ -493,6 +502,7 @@ var DID={device_id};
 var P="/remote/"+DID;
 var BASE=P+"/cgi-bin/luci";
 var STATIC=P+"/luci-static";
+var TKEY="gfc_remote_token_"+DID;
 function dedupe(u){{
  if(typeof u!=="string")return u;
  var prefix=P+"/";
@@ -501,26 +511,63 @@ function dedupe(u){{
  while(u.indexOf(dup)===0)u=P+"/"+u.slice(dup.length);
  return u;
 }}
+function fixPath(path){{
+ if(typeof path!=="string")return path;
+ path=dedupe(path);
+ if(path.indexOf(P+"/")===0)return path;
+ if(path.charAt(0)==="/"&&(path.indexOf("/cgi-bin/")===0||path.indexOf("/luci-static/")===0||path.indexOf("/gfc/")===0))
+  return P+path;
+ return path;
+}}
 function fixUrl(u){{
  if(typeof u!=="string")return u;
- u=dedupe(u);
- if(u.indexOf(P+"/")===0||u.indexOf(P+"?")===0)return u;
- if(u.charAt(0)==="/"&&(u.indexOf("/cgi-bin/")===0||u.indexOf("/luci-static/")===0||u.indexOf("/gfc/")===0))
-  return P+u;
- return u;
+ if(u.indexOf("://")>0)try{{
+  var pu=new URL(u);
+  var np=fixPath(pu.pathname);
+  if(np!==pu.pathname)return pu.origin+np+pu.search+pu.hash;
+  return u;
+ }}catch(e){{}}
+ return fixPath(u);
 }}
+function authUrl(u){{
+ if(typeof u!=="string")return false;
+ return u.indexOf("/cgi-bin/")>=0||u.indexOf(P+"/")===0||u.indexOf("/luci-static/")>=0||u.indexOf("/gfc/")>=0;
+}}
+function loadToken(){{
+ try{{
+  var q=location.search.match(/[?&]token=([^&]+)/);
+  if(q){{var t=decodeURIComponent(q[1]);sessionStorage.setItem(TKEY,t);return t;}}
+  return sessionStorage.getItem(TKEY)||"";
+ }}catch(e){{return "";}}
+}}
+var TOKEN=loadToken();
 function patchTransport(){{
  if(window.__gfcRemoteTransport)return;
  var xo=XMLHttpRequest.prototype.open;
- XMLHttpRequest.prototype.open=function(m,u){{
-  arguments[1]=fixUrl(u);
+ var xs=XMLHttpRequest.prototype.send;
+ XMLHttpRequest.prototype.open=function(){{
+  if(arguments.length>1&&typeof arguments[1]==="string")
+   arguments[1]=fixUrl(arguments[1]);
+  this.__gfcAuth=TOKEN&&arguments.length>1&&authUrl(String(arguments[1]));
   return xo.apply(this,arguments);
+ }};
+ XMLHttpRequest.prototype.send=function(body){{
+  if(this.__gfcAuth)try{{this.setRequestHeader("Authorization","Bearer "+TOKEN);}}catch(e){{}}
+  return xs.call(this,body);
  }};
  if(window.fetch){{
   var of=window.fetch;
   window.fetch=function(input,init){{
-   if(typeof input==="string")input=fixUrl(input);
-   else if(input&&input.url)input=new Request(fixUrl(input.url),input);
+   var url=typeof input==="string"?input:(input&&input.url)||"";
+   url=fixUrl(url);
+   if(typeof input==="string")input=url;
+   else if(input&&input.url)input=new Request(url,input);
+   if(TOKEN&&authUrl(url)){{
+    init=init?Object.assign({{}},init):{{}};
+    var h=new Headers(init.headers||{{}});
+    if(!h.has("Authorization"))h.set("Authorization","Bearer "+TOKEN);
+    init.headers=h;
+   }}
    return of.call(this,input,init);
   }};
  }}

@@ -39,7 +39,7 @@ class RemoteProxyRewriteTest(unittest.TestCase):
     def test_rewrite_set_cookie_path(self) -> None:
         raw = "sysauth=abc; Path=/cgi-bin/luci/; HttpOnly"
         out = _rewrite_set_cookie(raw, 6)
-        self.assertIn("Path=/remote/6/cgi-bin/luci/", out)
+        self.assertIn("Path=/remote/6/", out)
 
     def test_rewrite_location(self) -> None:
         loc = _rewrite_remote_location("/cgi-bin/luci/admin/", 6)
@@ -95,6 +95,7 @@ class RemoteProxyRewriteTest(unittest.TestCase):
         out = _inject_luci_remote_base(html, 6)
         self.assertIn("XMLHttpRequest.prototype.open", out)
         self.assertIn("fixUrl", out)
+        self.assertIn("Authorization", out)
         self.assertIn('data-gfc-remote="6"', out)
 
 
