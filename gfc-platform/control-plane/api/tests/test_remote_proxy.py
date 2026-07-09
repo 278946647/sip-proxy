@@ -4,39 +4,35 @@ from starlette.responses import Response
 
 from app.remote_proxy import (
     _build_response,
+    _collapse_remote_prefix,
     _normalize_cgi_path,
     _normalize_luci_path,
     _remote_auth_cookie_name,
+    _rewrite_html_asset_paths,
     _rewrite_remote_location,
     _rewrite_set_cookie,
-    _rewrite_text_paths,
     _upstream_cookie,
 )
 
 
 class RemoteProxyRewriteTest(unittest.TestCase):
-    def test_rewrite_text_paths_quotes(self) -> None:
-        text = 'src="/luci-static/luci.js" fetch(\'/cgi-bin/luci/admin/ubus\')'
-        out = _rewrite_text_paths(text, 6)
-        self.assertIn('/remote/6/luci-static/', out)
-        self.assertIn('/remote/6/cgi-bin/', out)
-        self.assertNotIn('/remote/6/remote/6/', out)
+    def test_rewrite_html_asset_paths(self) -> None:
+        text = '<link href="/luci-static/luci.css"><script src="/cgi-bin/luci/admin/ubus"></script>'
+        out = _rewrite_html_asset_paths(text, 6)
+        self.assertIn('href="/remote/6/luci-static/', out)
+        self.assertIn('src="/remote/6/cgi-bin/', out)
 
-    def test_rewrite_text_paths_json_escaped(self) -> None:
-        text = '{"media":"\\/luci-static\\/openwrt.org","path":"\\/cgi-bin\\/luci"}'
-        out = _rewrite_text_paths(text, 6)
-        self.assertIn("\\/remote\\/6\\/luci-static\\/", out)
-        self.assertIn("\\/remote\\/6\\/cgi-bin\\/", out)
+    def test_rewrite_html_skips_inline_js_literals(self) -> None:
+        text = "fetch('/cgi-bin/luci/admin/ubus')"
+        out = _rewrite_html_asset_paths(text, 6)
+        self.assertEqual(out, text)
 
-    def test_rewrite_text_paths_luci_base(self) -> None:
-        text = 'L = new LuCI({ url: "/cgi-bin/luci" });'
-        out = _rewrite_text_paths(text, 6)
-        self.assertIn('"/remote/6/cgi-bin/luci"', out)
-
-    def test_rewrite_text_paths_css_url(self) -> None:
-        text = "background:url(/luci-static/foo.css)"
-        out = _rewrite_text_paths(text, 7)
-        self.assertIn("url(/remote/7/luci-static/foo.css)", out)
+    def test_collapse_remote_prefix(self) -> None:
+        path = "/remote/6/remote/6/cgi-bin/luci/admin/ubus"
+        self.assertEqual(
+            _collapse_remote_prefix(path, 6),
+            "/remote/6/cgi-bin/luci/admin/ubus",
+        )
 
     def test_rewrite_set_cookie_path(self) -> None:
         raw = "sysauth=abc; Path=/cgi-bin/luci/; HttpOnly"
@@ -45,6 +41,10 @@ class RemoteProxyRewriteTest(unittest.TestCase):
 
     def test_rewrite_location(self) -> None:
         loc = _rewrite_remote_location("/cgi-bin/luci/admin/", 6)
+        self.assertEqual(loc, "/remote/6/cgi-bin/luci/admin/")
+
+    def test_rewrite_location_collapses_double_prefix(self) -> None:
+        loc = _rewrite_remote_location("/remote/6/remote/6/cgi-bin/luci/admin/", 6)
         self.assertEqual(loc, "/remote/6/cgi-bin/luci/admin/")
 
     def test_build_response_multiple_set_cookie(self) -> None:

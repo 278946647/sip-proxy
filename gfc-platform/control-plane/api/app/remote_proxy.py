@@ -95,6 +95,30 @@ async def _device_with_session(
     return device
 
 
+@router.api_route(
+    "/{device_id}/remote/{dup_id}/{path:path}",
+    methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
+)
+async def proxy_dup_prefix(
+    device_id: int,
+    dup_id: int,
+    path: str,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    token: str | None = Query(default=None),
+) -> Response:
+    """Handle double /remote/{id}/remote/{id}/... from mixed rewrite + L.url()."""
+    if dup_id != device_id:
+        raise HTTPException(404, "device path mismatch")
+    if path.startswith("cgi-bin/"):
+        return await proxy_cgi(device_id, path, request, session, token)
+    if path.startswith("luci-static/"):
+        return await proxy_luci_static(device_id, path[len("luci-static/") :], request, session, token)
+    if path.startswith("luci/"):
+        return await proxy_luci(device_id, path[len("luci/") :], request, session, token)
+    raise HTTPException(404, "unknown remote path")
+
+
 @router.api_route("/{device_id}/luci/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD"])
 async def proxy_luci(
     device_id: int,
@@ -208,6 +232,8 @@ async def _proxy(
                 break
         if content and _should_rewrite_body(ctype):
             content = _rewrite_body_paths(content, device_id)
+        elif content and _should_rewrite_css(ctype):
+            content = _rewrite_css_paths(content, device_id)
         response = _build_response(content, resp.status_code, out_headers)
         auth_token = _extract_bearer(request, token, device_id)
         if auth_token:
@@ -337,6 +363,7 @@ def _rewrite_remote_location(location: str, device_id: int) -> str:
     if not loc:
         return loc
     prefix = f"/remote/{device_id}"
+    loc = _collapse_remote_prefix(loc, device_id)
     if loc.startswith(prefix):
         return loc
     if loc.startswith("/cgi-bin/"):
@@ -354,17 +381,21 @@ def _rewrite_remote_location(location: str, device_id: int) -> str:
 _PATH_SEGMENTS = ("cgi-bin", "luci-static", "gfc")
 
 
+def _collapse_remote_prefix(path: str, device_id: int) -> str:
+    prefix = f"/remote/{device_id}"
+    double = f"{prefix}{prefix}"
+    while double in path:
+        path = path.replace(double, prefix)
+    return path
+
+
 def _should_rewrite_body(ctype: str) -> bool:
-    return any(
-        t in ctype
-        for t in (
-            "text/html",
-            "text/css",
-            "javascript",
-            "application/json",
-            "text/plain",
-        )
-    )
+    # Only rewrite HTML shell — JS/CSS keep originals; LuCI base URL is injected in HTML.
+    return "text/html" in ctype
+
+
+def _should_rewrite_css(ctype: str) -> bool:
+    return "text/css" in ctype
 
 
 def _rewrite_body_paths(content: bytes, device_id: int) -> bytes:
@@ -373,12 +404,23 @@ def _rewrite_body_paths(content: bytes, device_id: int) -> bytes:
     except UnicodeDecodeError:
         return content
     try:
-        text = _rewrite_text_paths(text, device_id)
+        text = _collapse_remote_prefix(text, device_id)
+        text = _rewrite_html_asset_paths(text, device_id)
         if "<html" in text.lower():
             text = _inject_luci_remote_base(text, device_id)
         return text.encode("utf-8")
     except UnicodeEncodeError:
         return content
+
+
+def _rewrite_css_paths(content: bytes, device_id: int) -> bytes:
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError:
+        return content
+    prefix = f"/remote/{device_id}"
+    text = text.replace("url(/luci-static/", f"url({prefix}/luci-static/")
+    return text.encode("utf-8")
 
 
 def _normalize_luci_path(path: str) -> str:
@@ -397,17 +439,47 @@ def _normalize_cgi_path(path: str) -> str:
 
 
 def _inject_luci_remote_base(html: str, device_id: int) -> str:
-    """Pin LuCI.scriptname under /remote/{id} so RPC/menu URLs stay proxied."""
-    script_name = f"/remote/{device_id}/cgi-bin/luci"
+    """Pin LuCI base paths under /remote/{id}; patch L.url to avoid double prefix."""
     marker = f'data-gfc-remote="{device_id}"'
     if marker in html:
         return html
-    script = (
-        f'<script {marker}>(function(){{var s="{script_name}";'
-        f'function apply(){{if(window.L&&L.env){{L.env.scriptname=s;}}}}'
-        f'apply();document.addEventListener("DOMContentLoaded",apply);'
-        f'}})();</script>'
-    )
+    script = f"""<script {marker}>(function(){{
+var DID={device_id};
+var BASE="/remote/"+DID+"/cgi-bin/luci";
+var STATIC="/remote/"+DID+"/luci-static";
+function dedupe(u){{
+ if(typeof u!=="string")return u;
+ var p="/remote/"+DID+"/";
+ var d=p+"remote/"+DID+"/";
+ while(u.indexOf(d)===0)u=u.slice(("/remote/"+DID).length);
+ while(u.indexOf(p+p)===0)u=p+u.slice(p.length);
+ return u;
+}}
+function applyEnv(){{
+ if(!window.L||!L.env)return;
+ L.env.scriptname=BASE;
+ var m=L.env.media||"";
+ if(!m||m.indexOf("/remote/"+DID)!==0){{
+  if(m.indexOf("/luci-static")===0)L.env.media=STATIC+m.slice("/luci-static".length);
+  else if(m)L.env.media=STATIC+"/resources";
+ }}
+}}
+function patchUrl(){{
+ if(!window.L||!L.prototype||L.prototype.__gfcRemote)return;
+ var orig=L.prototype.url;
+ if(typeof orig!=="function")return;
+ L.prototype.url=function(){{return dedupe(orig.apply(this,arguments));}};
+ if(L.prototype.resource){{
+  var or=L.prototype.resource;
+  L.prototype.resource=function(){{return dedupe(or.apply(this,arguments));}};
+ }}
+ L.prototype.__gfcRemote=true;
+}}
+function boot(){{applyEnv();patchUrl();}}
+boot();
+document.addEventListener("DOMContentLoaded",boot);
+var n=0,t=setInterval(function(){{boot();if(++n>50)clearInterval(t);}},100);
+}})();</script>"""
     lower = html.lower()
     head = lower.find("<head")
     if head < 0:
@@ -418,26 +490,10 @@ def _inject_luci_remote_base(html: str, device_id: int) -> str:
     return html[: close + 1] + script + html[close + 1 :]
 
 
-def _rewrite_text_paths(text: str, device_id: int) -> str:
-    """Rewrite root-relative LuCI paths in HTML/JS/CSS so XHR and assets stay proxied."""
+def _rewrite_html_asset_paths(text: str, device_id: int) -> str:
+    """Rewrite only HTML tag asset/link URLs — do not touch external .js files."""
     prefix = f"/remote/{device_id}"
-    double = f"{prefix}{prefix}"
-    while double in text:
-        text = text.replace(double, prefix)
-
-    esc_prefix = "\\/remote\\/" + str(device_id)
-    for seg in _PATH_SEGMENTS:
-        for quote in ('"', "'", "`"):
-            text = text.replace(f"{quote}/{seg}/", f"{quote}{prefix}/{seg}/")
-            text = text.replace(f'{quote}/{seg}"', f'{quote}{prefix}/{seg}"')
-            text = text.replace(f"{quote}/{seg}'", f"{quote}{prefix}/{seg}'")
-        text = text.replace(f"url(/{seg}/", f"url({prefix}/{seg}/")
-        text = text.replace(f"\\/{seg}\\/", f"{esc_prefix}\\/{seg}\\/")
-        text = text.replace(f"href=/{seg}/", f"href={prefix}/{seg}/")
-        text = text.replace(f"action=/{seg}/", f"action={prefix}/{seg}/")
-
-    # LuCI base path without trailing segment, e.g. "/cgi-bin/luci"
-    text = text.replace('"/cgi-bin/luci"', f'"{prefix}/cgi-bin/luci"')
-    text = text.replace("'/cgi-bin/luci'", f"'{prefix}/cgi-bin/luci'")
-    text = text.replace("\\/cgi-bin\\/luci", f"{esc_prefix}\\/cgi-bin\\/luci")
+    text = _collapse_remote_prefix(text, device_id)
+    pattern = r'\b(src|href|action)=(["\'])/(luci-static|cgi-bin|gfc)/'
+    text = re.sub(pattern, rf"\1=\2{prefix}/\3/", text)
     return text
