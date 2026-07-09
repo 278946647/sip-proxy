@@ -4,6 +4,8 @@ from starlette.responses import Response
 
 from app.remote_proxy import (
     _build_response,
+    _normalize_cgi_path,
+    _normalize_luci_path,
     _remote_auth_cookie_name,
     _rewrite_remote_location,
     _rewrite_set_cookie,
@@ -75,6 +77,11 @@ class RemoteProxyRewriteTest(unittest.TestCase):
 
     def test_remote_auth_cookie_name(self) -> None:
         self.assertEqual(_remote_auth_cookie_name(6), "gfc_remote_6")
+
+    def test_normalize_ubus_paths(self) -> None:
+        self.assertEqual(_normalize_luci_path("admin/gfc/status/ubus"), "admin/ubus")
+        self.assertEqual(_normalize_cgi_path("luci/admin/gfc/status/ubus"), "luci/admin/ubus")
+        self.assertEqual(_normalize_luci_path("admin/network/wifi"), "admin/network/wifi")
 
 
 if __name__ == "__main__":

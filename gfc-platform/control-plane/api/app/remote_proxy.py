@@ -105,6 +105,7 @@ async def proxy_luci(
 ) -> Response:
     try:
         device = await _device_with_session(device_id, session, request, token)
+        path = _normalize_luci_path(path)
         upstream = f"http://127.0.0.1:{device.reverse_http_port}/cgi-bin/luci/{path}"
         return await _proxy(request, upstream, device_id, token)
     except HTTPException:
@@ -161,6 +162,7 @@ async def proxy_cgi(
     token: str | None = Query(default=None),
 ) -> Response:
     device = await _device_with_session(device_id, session, request, token)
+    path = _normalize_cgi_path(path)
     upstream = f"http://127.0.0.1:{device.reverse_http_port}/cgi-bin/{path}"
     return await _proxy(request, upstream, device_id, token)
 
@@ -371,9 +373,49 @@ def _rewrite_body_paths(content: bytes, device_id: int) -> bytes:
     except UnicodeDecodeError:
         return content
     try:
-        return _rewrite_text_paths(text, device_id).encode("utf-8")
+        text = _rewrite_text_paths(text, device_id)
+        if "<html" in text.lower():
+            text = _inject_luci_remote_base(text, device_id)
+        return text.encode("utf-8")
     except UnicodeEncodeError:
         return content
+
+
+def _normalize_luci_path(path: str) -> str:
+    """LuCI RPC must hit admin/ubus, not a page-relative .../status/ubus."""
+    raw = (path or "").strip().lstrip("/")
+    if raw == "ubus" or (raw.endswith("/ubus") and raw != "admin/ubus"):
+        return "admin/ubus"
+    return raw
+
+
+def _normalize_cgi_path(path: str) -> str:
+    raw = (path or "").strip().lstrip("/")
+    if raw.endswith("/ubus") and raw not in {"luci/admin/ubus", "admin/ubus"}:
+        return "luci/admin/ubus"
+    return raw
+
+
+def _inject_luci_remote_base(html: str, device_id: int) -> str:
+    """Pin LuCI.scriptname under /remote/{id} so RPC/menu URLs stay proxied."""
+    script_name = f"/remote/{device_id}/cgi-bin/luci"
+    marker = f'data-gfc-remote="{device_id}"'
+    if marker in html:
+        return html
+    script = (
+        f'<script {marker}>(function(){{var s="{script_name}";'
+        f'function apply(){{if(window.L&&L.env){{L.env.scriptname=s;}}}}'
+        f'apply();document.addEventListener("DOMContentLoaded",apply);'
+        f'}})();</script>'
+    )
+    lower = html.lower()
+    head = lower.find("<head")
+    if head < 0:
+        return script + html
+    close = html.find(">", head)
+    if close < 0:
+        return script + html
+    return html[: close + 1] + script + html[close + 1 :]
 
 
 def _rewrite_text_paths(text: str, device_id: int) -> str:
@@ -391,6 +433,8 @@ def _rewrite_text_paths(text: str, device_id: int) -> str:
             text = text.replace(f"{quote}/{seg}'", f"{quote}{prefix}/{seg}'")
         text = text.replace(f"url(/{seg}/", f"url({prefix}/{seg}/")
         text = text.replace(f"\\/{seg}\\/", f"{esc_prefix}\\/{seg}\\/")
+        text = text.replace(f"href=/{seg}/", f"href={prefix}/{seg}/")
+        text = text.replace(f"action=/{seg}/", f"action={prefix}/{seg}/")
 
     # LuCI base path without trailing segment, e.g. "/cgi-bin/luci"
     text = text.replace('"/cgi-bin/luci"', f'"{prefix}/cgi-bin/luci"')
