@@ -1,5 +1,8 @@
 import { apiGet, apiPost } from "../api/client";
 
+/** SSH + HTTP forwarded together — avoids reconnect when switching SSH ↔ Web. */
+export const REMOTE_SESSION_TARGETS = ["ssh", "web"] as const;
+
 export type ReverseSSHSession = {
   state: string;
   expiresAt: string | null;
@@ -48,7 +51,7 @@ export async function getReverseSession(deviceId: number): Promise<ReverseSSHSes
 export async function waitForTunnel(
   deviceId: number,
   timeoutMs = 90000,
-  intervalMs = 3000
+  intervalMs = 800
 ): Promise<ReverseSSHSession> {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
@@ -60,6 +63,17 @@ export async function waitForTunnel(
     await new Promise((r) => window.setTimeout(r, intervalMs));
   }
   throw new Error("等待设备建连超时");
+}
+
+/** Reuse an active tunnel when possible; otherwise wait for the agent to connect. */
+export async function ensureRemoteSession(deviceId: number): Promise<ReverseSSHSession> {
+  const current = await getReverseSession(deviceId);
+  if (current.tunnelReady && current.state === "ready") {
+    void startReverseSession(deviceId, [...REMOTE_SESSION_TARGETS]).catch(() => undefined);
+    return current;
+  }
+  await startReverseSession(deviceId, [...REMOTE_SESSION_TARGETS]);
+  return waitForTunnel(deviceId);
 }
 
 export function websshUrl(deviceId: number): string {

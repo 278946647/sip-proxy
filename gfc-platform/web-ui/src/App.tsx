@@ -40,6 +40,7 @@ export function App() {
           <Route path="/login" element={getToken() ? <Navigate to="/" replace /> : <LoginPage />} />
           <Route element={<RequireAuth />}>
             <Route path="/change-password" element={<InitialPasswordPage />} />
+            <Route path="client-devices/:id/ssh" element={<ClientWebSSHPage />} />
             <Route element={<RequirePasswordChange />}>
             <Route path="/" element={<MainLayout />}>
               <Route index element={<DashboardPage />} />
@@ -48,7 +49,6 @@ export function App() {
               <Route path="lines/:id" element={<LineDetailPage />} />
               <Route path="client-devices" element={<ClientDevicesPage />} />
               <Route path="client-devices/:id" element={<ClientDeviceDetailPage />} />
-              <Route path="client-devices/:id/ssh" element={<ClientWebSSHPage />} />
               <Route path="traffic" element={<TrafficPage />} />
               <Route path="health" element={<HealthPage />} />
               <Route path="proxies" element={<ProxiesPage />} />

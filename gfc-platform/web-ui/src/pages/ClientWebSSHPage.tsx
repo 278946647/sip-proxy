@@ -1,11 +1,12 @@
-import { Button, Space, Typography, message } from "antd";
+import { Button, Typography, message } from "antd";
 import { useEffect, useRef, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { getToken } from "../api/auth";
 import { websshUrl } from "../lib/reverseSsh";
 
 export function ClientWebSSHPage() {
   const { id } = useParams();
+  const [search] = useSearchParams();
   const nav = useNavigate();
   const termRef = useRef<HTMLPreElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -13,7 +14,7 @@ export function ClientWebSSHPage() {
 
   useEffect(() => {
     if (!id) return;
-    const token = getToken();
+    const token = search.get("token") || getToken();
     if (!token) {
       message.error("未登录");
       nav("/login");
@@ -52,7 +53,7 @@ export function ClientWebSSHPage() {
       message.error("WebSSH 连接失败");
     };
     return () => ws.close();
-  }, [id, nav]);
+  }, [id, nav, search]);
 
   const append = (text: string) => {
     const el = termRef.current;
@@ -80,36 +81,57 @@ export function ClientWebSSHPage() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  const statusText =
+    phase === "shell" ? "Shell 已连接" : phase === "failed" ? "连接失败" : "连接中…";
+  const statusColor =
+    phase === "shell" ? "#22c55e" : phase === "failed" ? "#ef4444" : "#94a3b8";
+
   return (
-    <div>
-      <Space style={{ marginBottom: 12 }}>
-        <Button onClick={() => nav(`/client-devices/${id}`)}>返回设备详情</Button>
-        <Typography.Text
-          type={phase === "shell" ? "success" : phase === "failed" ? "danger" : "secondary"}
-        >
-          {phase === "shell" ? "Shell 已连接" : phase === "failed" ? "连接失败" : "连接中…"}
+    <div
+      style={{
+        height: "100vh",
+        display: "flex",
+        flexDirection: "column",
+        background: "#0b1220",
+        color: "#e2e8f0",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "8px 12px",
+          borderBottom: "1px solid #1e293b",
+          background: "#111827",
+          flexShrink: 0,
+        }}
+      >
+        <Typography.Text style={{ color: "#e2e8f0", fontSize: 13 }}>
+          远程 SSH — 设备 #{id}
         </Typography.Text>
-      </Space>
-      <Typography.Title level={5}>远程 SSH — 设备 #{id}</Typography.Title>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <span style={{ color: statusColor, fontSize: 12 }}>{statusText}</span>
+          <Button size="small" onClick={() => window.close()}>
+            关闭
+          </Button>
+        </div>
+      </div>
       <pre
         ref={termRef}
         tabIndex={0}
         style={{
+          flex: 1,
+          margin: 0,
           background: "#0f172a",
           color: "#e2e8f0",
-          padding: 16,
-          minHeight: 480,
+          padding: 12,
           overflow: "auto",
-          borderRadius: 8,
           fontFamily: "Consolas, monospace",
           fontSize: 13,
+          outline: "none",
         }}
       />
-      <Typography.Paragraph type="secondary" style={{ marginTop: 8 }}>
-        点击终端区域后可直接输入。控制平台会自动生成 WebSSH 密钥并经心跳写入设备
-        dropbear；首次使用请确保客户端 agent 已升级且至少完成一次心跳。
-      </Typography.Paragraph>
-      <Link to="/client-devices">返回客户端列表</Link>
     </div>
   );
 }

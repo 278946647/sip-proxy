@@ -1,6 +1,8 @@
 """HTTP reverse proxy to client LuCI / flash via local reverse HTTP port."""
 from __future__ import annotations
 
+import re
+
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -61,7 +63,7 @@ async def proxy_luci(
 ) -> Response:
     device = await _device_with_session(device_id, session, request, token)
     upstream = f"http://127.0.0.1:{device.reverse_http_port}/cgi-bin/luci/{path}"
-    return await _proxy(request, upstream, token)
+    return await _proxy(request, upstream, device_id, token)
 
 
 @router.api_route("/{device_id}/flash/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD"])
@@ -76,7 +78,7 @@ async def proxy_flash(
     if not path:
         path = "gfc/activate.html"
     upstream = f"http://127.0.0.1:{device.reverse_http_port}/{path}"
-    return await _proxy(request, upstream, token)
+    return await _proxy(request, upstream, device_id, token)
 
 
 @router.get("/{device_id}/flash")
@@ -99,10 +101,10 @@ async def proxy_luci_static(
 ) -> Response:
     device = await _device_with_session(device_id, session, request, token)
     upstream = f"http://127.0.0.1:{device.reverse_http_port}/luci-static/{path}"
-    return await _proxy(request, upstream, token)
+    return await _proxy(request, upstream, device_id, token)
 
 
-@router.api_route("/{device_id}/cgi-bin/{path:path}", methods=["GET", "POST", "HEAD"])
+@router.api_route("/{device_id}/cgi-bin/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD"])
 async def proxy_cgi(
     device_id: int,
     path: str,
@@ -112,7 +114,7 @@ async def proxy_cgi(
 ) -> Response:
     device = await _device_with_session(device_id, session, request, token)
     upstream = f"http://127.0.0.1:{device.reverse_http_port}/cgi-bin/{path}"
-    return await _proxy(request, upstream, token)
+    return await _proxy(request, upstream, device_id, token)
 
 
 @router.api_route("/{device_id}/gfc/{path:path}", methods=["GET", "HEAD"])
@@ -125,10 +127,15 @@ async def proxy_gfc_static(
 ) -> Response:
     device = await _device_with_session(device_id, session, request, token)
     upstream = f"http://127.0.0.1:{device.reverse_http_port}/gfc/{path}"
-    return await _proxy(request, upstream, token)
+    return await _proxy(request, upstream, device_id, token)
 
 
-async def _proxy(request: Request, upstream: str, token: str | None = None) -> Response:
+async def _proxy(
+    request: Request,
+    upstream: str,
+    device_id: int,
+    token: str | None = None,
+) -> Response:
     query = str(request.url.query or "")
     if token and "token=" not in query:
         query = f"{query}&token={token}" if query else f"token={token}"
@@ -152,4 +159,71 @@ async def _proxy(request: Request, upstream: str, token: str | None = None) -> R
         for k, v in resp.headers.items()
         if k.lower() not in {"transfer-encoding", "connection", "content-encoding"}
     }
-    return Response(content=resp.content, status_code=resp.status_code, headers=out_headers)
+    location = out_headers.get("location") or out_headers.get("Location")
+    if location:
+        rewritten = _rewrite_remote_location(location, device_id)
+        if rewritten != location:
+            out_headers["location"] = rewritten
+            out_headers.pop("Location", None)
+    content = resp.content
+    ctype = (out_headers.get("content-type") or "").lower()
+    if content and _should_rewrite_body(ctype):
+        content = _rewrite_body_paths(content, device_id)
+    return Response(content=content, status_code=resp.status_code, headers=out_headers)
+
+
+def _rewrite_remote_location(location: str, device_id: int) -> str:
+    """Rewrite LuCI redirects so they stay under /remote/{device_id}/."""
+    loc = (location or "").strip()
+    if not loc:
+        return loc
+    prefix = f"/remote/{device_id}"
+    if loc.startswith(prefix):
+        return loc
+    if loc.startswith("/cgi-bin/"):
+        return f"{prefix}{loc}"
+    if loc.startswith("/luci-static/"):
+        return f"{prefix}{loc}"
+    if loc.startswith("/gfc/"):
+        return f"{prefix}{loc}"
+    if loc.startswith("/cgi-bin/luci/"):
+        path = loc[len("/cgi-bin/luci/") :]
+        return f"{prefix}/luci/{path}"
+    return loc
+
+
+_PATH_SEGMENTS = ("cgi-bin", "luci-static", "gfc")
+
+
+def _should_rewrite_body(ctype: str) -> bool:
+    return any(
+        t in ctype
+        for t in (
+            "text/html",
+            "text/css",
+            "javascript",
+            "application/json",
+            "text/plain",
+        )
+    )
+
+
+def _rewrite_body_paths(content: bytes, device_id: int) -> bytes:
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError:
+        return content
+    return _rewrite_text_paths(text, device_id).encode("utf-8")
+
+
+def _rewrite_text_paths(text: str, device_id: int) -> str:
+    """Rewrite root-relative LuCI paths in HTML/JS/CSS so XHR and assets stay proxied."""
+    prefix = f"/remote/{device_id}"
+    double = f"{prefix}{prefix}"
+    while double in text:
+        text = text.replace(double, prefix)
+
+    for seg in _PATH_SEGMENTS:
+        pattern = rf'(?<=[("\'`:=]|url\()/(?!remote/{device_id}/)({seg}/)'
+        text = re.sub(pattern, rf"{prefix}/\1", text)
+    return text

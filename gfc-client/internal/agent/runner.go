@@ -22,11 +22,12 @@ import (
 )
 
 type Runner struct {
-	cfg        *config.Config
-	store      *store.Store
-	engine     *dataplane.Engine
-	activation *activation.Service
-	revSSH     *reversessh.Manager
+	cfg               *config.Config
+	store             *store.Store
+	engine            *dataplane.Engine
+	activation        *activation.Service
+	revSSH            *reversessh.Manager
+	pendingReverseSSH bool
 }
 
 func NewRunner(cfg *config.Config, st *store.Store) *Runner {
@@ -53,6 +54,14 @@ func (r *Runner) Run() {
 	defer ticker.Stop()
 	for {
 		r.tick()
+		delay := r.cfg.PollSeconds
+		if r.pendingReverseSSH {
+			fast := r.cfg.PollSecondsFast
+			if fast > 0 && fast < delay {
+				delay = fast
+			}
+		}
+		ticker.Reset(time.Duration(delay) * time.Second)
 		<-ticker.C
 	}
 }
@@ -120,6 +129,7 @@ func (r *Runner) tick() {
 
 	pubKey, _ := r.revSSH.EnsureKeypair()
 	hb, err := client.Heartbeat(m, r.cfg.DeviceName, nil, nil, pubKey, nil, r.cfg.ProxyMode, config.Version)
+	r.pendingReverseSSH = false
 	if err != nil {
 		fmt.Printf("heartbeat: %v\n", err)
 	} else {
@@ -133,6 +143,9 @@ func (r *Runner) tick() {
 		ok, msg, active := r.syncReverseSSH(cmd)
 		if reversessh.ProcessRunning() {
 			active = true
+		}
+		if cmd != nil && cmd.Enabled && !active {
+			r.pendingReverseSSH = true
 		}
 		status := map[string]any{"active": active}
 		if !active && ok && msg == "reverse ssh disabled" {

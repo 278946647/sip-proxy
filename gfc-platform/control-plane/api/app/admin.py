@@ -32,6 +32,7 @@ from .client_config import encode_platform_bootstrap_code, line_code_fingerprint
 from .models import AlertEvent, ClientDevice, FlowStat, Line, Node, OperationLog, PlatformUser, SocksProfile
 from .reverse_ssh import (
     ensure_device_reverse_ports,
+    parse_session_targets,
     session_active,
     session_state,
     tunnel_ready,
@@ -1597,13 +1598,27 @@ async def start_reverse_ssh_session(
     targets = [t.strip().lower() for t in (body.targets or ["ssh"]) if t.strip()]
     allowed = {"ssh", "web", "flash"}
     targets = [t for t in targets if t in allowed] or ["ssh"]
+    # Always forward SSH + HTTP together so Web 管理 does not require a second reconnect.
+    merged: list[str] = []
+    for t in list(dict.fromkeys(targets + ["ssh", "web"])):
+        if t in allowed:
+            merged.append(t)
+
+    prev_targets = parse_session_targets(device) if session_active(device) else []
+    targets_changed = set(merged) != set(prev_targets)
+
+    prev_json = device.reverse_ssh_session_targets
+    device.reverse_ssh_session_targets = json.dumps(merged)
+    already_ready = session_active(device) and tunnel_ready(device)
+    device.reverse_ssh_session_targets = prev_json
 
     ttl = body.ttl_seconds or settings.reverse_ssh_session_ttl_seconds
     device.reverse_ssh_session_expires_at = utc_now() + dt.timedelta(seconds=ttl)
-    device.reverse_ssh_session_targets = json.dumps(targets)
-    device.reverse_ssh_tunnel_reported_at = None
+    device.reverse_ssh_session_targets = json.dumps(merged)
+    if not already_ready or targets_changed:
+        device.reverse_ssh_tunnel_reported_at = None
     session.add(device)
-    await _log_op(session, operator, "reverse_ssh_session_start", device.device_key, ",".join(targets))
+    await _log_op(session, operator, "reverse_ssh_session_start", device.device_key, ",".join(merged))
     await session.commit()
     return _reverse_session_out(device)
 

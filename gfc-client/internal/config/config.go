@@ -73,7 +73,8 @@ type Config struct {
 	Paths       Paths
 	DeviceName  string
 	ProxyMode   string
-	PollSeconds int
+	PollSeconds     int
+	PollSecondsFast int
 	APIPort     int
 	WebPort     int
 	FlashPort   int
@@ -128,7 +129,8 @@ func Load() *Config {
 		Paths:       paths,
 		DeviceName:  env("DEVICE_NAME", hostname()),
 		ProxyMode:   env("GFC_PROXY_MODE", "gateway"),
-		PollSeconds: envInt("POLL_SECONDS", 10),
+		PollSeconds:     envInt("POLL_SECONDS", 3),
+		PollSecondsFast: envInt("POLL_SECONDS_FAST", 2),
 		APIPort:     envInt("GFC_API_PORT", DefaultAPIPort),
 		WebPort:     envInt("GFC_CLIENT_WEB_PORT", DefaultWebPort),
 		FlashPort:   envInt("GFC_CLIENT_FLASH_PORT", DefaultFlashPort),
