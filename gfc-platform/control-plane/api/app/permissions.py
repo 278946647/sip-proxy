@@ -49,7 +49,7 @@ OPERATOR_LINE_PATCH_FIELDS = frozenset(
 
 OPERATOR_NODE_PATCH_FIELDS = frozenset({"name", "region", "country"})
 
-OPERATOR_CLIENT_PATCH_FIELDS = frozenset({"name", "proxy_mode", "routing_scheme", "is_active"})
+OPERATOR_CLIENT_PATCH_FIELDS = frozenset({"name", "routing_scheme", "is_active"})
 
 LINE_CRITICAL_PATCH_FIELDS = frozenset(
     {"node_id", "source_cidrs", "socks_profile_id", "flow_stats_enabled"}

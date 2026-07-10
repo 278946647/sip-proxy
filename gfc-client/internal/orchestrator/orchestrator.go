@@ -461,13 +461,18 @@ func (o *Orchestrator) SetRoutingModeAndApply(mode string, restart bool) (bool, 
 	if err := o.SetRoutingMode(mode); err != nil {
 		return false, err.Error()
 	}
-	if o.LoadBundle() == nil {
-		if restart {
-			return true, joinMsgs(o.postDataplaneRepair())
-		}
-		return true, "routing mode saved"
+	return o.ReloadRoutingPolicy()
+}
+
+// ReloadRoutingPolicy reapplies kernel nft policy from routing-mode.json without
+// rerendering sing-box/unbound. Proxy mode (split/global) is enforced in nft.
+func (o *Orchestrator) ReloadRoutingPolicy() (bool, string) {
+	var msgs []string
+	msgs = append(msgs, o.postDataplaneRepair()...)
+	if line := o.restartUnit(config.ServiceRouting); line != "" {
+		msgs = append(msgs, line)
 	}
-	return o.ReapplyLocal(restart)
+	return true, joinMsgs(msgs)
 }
 
 func (o *Orchestrator) writeMode(mode string, activated bool) {

@@ -44,13 +44,13 @@ async function save() {
       message.value = res.error?.message ?? '保存失败'
       return
     }
-    const dataplane = res.data?.dataplane as { ok?: boolean; message?: string } | undefined
-    if (dataplane && dataplane.ok === false) {
-      message.value = dataplane.message ?? '设置已保存，但数据面应用失败'
+    const routingApply = res.data?.routing_apply as { ok?: boolean; message?: string } | undefined
+    if (routingApply && routingApply.ok === false) {
+      message.value = routingApply.message ?? '代理模式应用失败'
     } else if (res.data?.synced === false) {
       message.value = `本地已保存，但同步控制平面失败：${res.data?.sync_error ?? '未知错误'}`
-    } else if (res.data?.proxy_synced === false) {
-      message.value = `本地已保存，但路由模式同步控制平面失败：${res.data?.proxy_sync_error ?? '未知错误'}`
+    } else if (res.data?.dataplane && (res.data.dataplane as { ok?: boolean }).ok === false) {
+      message.value = (res.data.dataplane as { message?: string }).message ?? '设置已保存，但数据面应用失败'
     } else {
       message.value = '设置已保存'
     }

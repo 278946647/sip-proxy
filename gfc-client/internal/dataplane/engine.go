@@ -42,6 +42,10 @@ func (e *Engine) SetRoutingModeAndApply(mode string, restart bool) (bool, string
 	return e.Orchestrator.SetRoutingModeAndApply(mode, restart)
 }
 
+func (e *Engine) ReloadRoutingPolicy() (bool, string) {
+	return e.Orchestrator.ReloadRoutingPolicy()
+}
+
 func (e *Engine) ReloadDNS() (bool, string) {
 	return e.Orchestrator.ReloadDNS()
 }

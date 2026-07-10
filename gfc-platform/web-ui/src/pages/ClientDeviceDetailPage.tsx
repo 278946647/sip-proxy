@@ -27,7 +27,6 @@ import { confirmDeleteClientDevice } from "../utils/dangerousConfirm";
 import {
   confirmClientLineChange,
   confirmClientLineUnbind,
-  confirmProxyModeChange,
   confirmRoutingSchemeChange,
 } from "../utils/clientLineConfirm";
 import { getUser } from "../api/auth";
@@ -94,12 +93,10 @@ export function ClientDeviceDetailPage() {
   const [device, setDevice] = useState<ClientDeviceDetail | null>(null);
   const [lines, setLines] = useState<LineListItem[]>([]);
   const [nameDraft, setNameDraft] = useState("");
-  const [proxyModeDraft, setProxyModeDraft] = useState<DeviceProxyMode>("gateway");
   const [routingDraft, setRoutingDraft] = useState<DeviceRoutingScheme>("split");
   const [lineModalOpen, setLineModalOpen] = useState(false);
   const [lineDraft, setLineDraft] = useState<number | undefined>();
   const [savingName, setSavingName] = useState(false);
-  const [savingProxyMode, setSavingProxyMode] = useState(false);
   const [savingRouting, setSavingRouting] = useState(false);
   const perms = permissionsFromUser(getUser());
   const writable = canWrite(getUser());
@@ -109,7 +106,6 @@ export function ClientDeviceDetailPage() {
     const mapped = mapClientDeviceDetail(raw);
     setDevice(mapped);
     setNameDraft(mapped.name);
-    setProxyModeDraft(mapped.proxyMode);
     setRoutingDraft(mapped.routingScheme);
   };
 
@@ -212,31 +208,6 @@ export function ClientDeviceDetailPage() {
   const confirmUnbind = () => {
     if (!device || !device.lineId) return;
     confirmClientLineUnbind(device.name, currentLineLabel, () => applyLineChange(null));
-  };
-
-  const saveProxyMode = () => {
-    if (!device || !id) return;
-    if (proxyModeDraft === device.proxyMode) return;
-    confirmProxyModeChange(
-      device.name,
-      PROXY_MODE_LABEL[device.proxyMode],
-      PROXY_MODE_LABEL[proxyModeDraft],
-      async () => {
-        setSavingProxyMode(true);
-        try {
-          await apiPatch(
-            `/admin/client-devices/${id}?operator=${localStorage.getItem("gfc_user") || "admin"}`,
-            { proxy_mode: proxyModeDraft }
-          );
-          message.success("路由模式已保存");
-          await load();
-        } catch (e) {
-          message.error(String(e));
-        } finally {
-          setSavingProxyMode(false);
-        }
-      }
-    );
   };
 
   const saveRoutingScheme = () => {
@@ -380,95 +351,41 @@ export function ClientDeviceDetailPage() {
         </Col>
 
         <Col xs={24} lg={12}>
-          <Space direction="vertical" size={16} style={{ width: "100%" }}>
-            <Card title="路由模式">
-              <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
-                设置设备在网络中的工作方式，决定流量如何接入与转发。
-              </Typography.Paragraph>
-              <Radio.Group
-                value={proxyModeDraft}
-                onChange={(e) => setProxyModeDraft(e.target.value)}
-                disabled={!writable}
-                style={{ display: "flex", flexDirection: "column", gap: 8 }}
+          <Card title="代理模式">
+            <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
+              设置国际流量的代理策略。路由工作模式在设备开通时确定，见下方设备信息。
+            </Typography.Paragraph>
+            <Radio.Group
+              value={routingDraft}
+              onChange={(e) => setRoutingDraft(e.target.value)}
+              disabled={!writable}
+              style={{ display: "flex", flexDirection: "column", gap: 8 }}
+            >
+              <Radio value="split">
+                <Typography.Text strong>分流模式</Typography.Text>
+                <div style={{ color: "#64748b", fontSize: 13, marginLeft: 24 }}>
+                  国内直连，国际流量走代理（默认）
+                </div>
+              </Radio>
+              <Radio value="global">
+                <Typography.Text strong>全局模式</Typography.Text>
+                <div style={{ color: "#64748b", fontSize: 13, marginLeft: 24 }}>
+                  全部流量走国际出口
+                </div>
+              </Radio>
+            </Radio.Group>
+            {writable && routingDraft !== device.routingScheme ? (
+              <Button
+                type="primary"
+                size="small"
+                style={{ marginTop: 12 }}
+                loading={savingRouting}
+                onClick={saveRoutingScheme}
               >
-                <Radio value="gateway">
-                  <Typography.Text strong>网关模式</Typography.Text>
-                  <div style={{ color: "#64748b", fontSize: 13, marginLeft: 24 }}>
-                    作为 LAN 默认网关，接管内网流量（当前可用）
-                  </div>
-                </Radio>
-                <Radio value="bypass" disabled>
-                  <Typography.Text strong type="secondary">
-                    旁路模式
-                  </Typography.Text>
-                  <Tag color="default" style={{ marginLeft: 8 }}>
-                    待开发
-                  </Tag>
-                  <div style={{ color: "#94a3b8", fontSize: 13, marginLeft: 24 }}>
-                    不改变现有网关，按策略旁路接入代理
-                  </div>
-                </Radio>
-                <Radio value="transparent" disabled>
-                  <Typography.Text strong type="secondary">
-                    透明模式
-                  </Typography.Text>
-                  <Tag color="default" style={{ marginLeft: 8 }}>
-                    待开发
-                  </Tag>
-                  <div style={{ color: "#94a3b8", fontSize: 13, marginLeft: 24 }}>
-                    对终端无感知的透明代理接入
-                  </div>
-                </Radio>
-              </Radio.Group>
-              {writable && proxyModeDraft !== device.proxyMode ? (
-                <Button
-                  type="primary"
-                  size="small"
-                  style={{ marginTop: 12 }}
-                  loading={savingProxyMode}
-                  onClick={saveProxyMode}
-                >
-                  保存路由模式
-                </Button>
-              ) : null}
-            </Card>
-
-            <Card title="代理模式">
-              <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
-                设置国际流量的代理策略，与路由模式独立配置。
-              </Typography.Paragraph>
-              <Radio.Group
-                value={routingDraft}
-                onChange={(e) => setRoutingDraft(e.target.value)}
-                disabled={!writable}
-                style={{ display: "flex", flexDirection: "column", gap: 8 }}
-              >
-                <Radio value="split">
-                  <Typography.Text strong>分流模式</Typography.Text>
-                  <div style={{ color: "#64748b", fontSize: 13, marginLeft: 24 }}>
-                    国内直连，国际流量走代理（默认）
-                  </div>
-                </Radio>
-                <Radio value="global">
-                  <Typography.Text strong>全局模式</Typography.Text>
-                  <div style={{ color: "#64748b", fontSize: 13, marginLeft: 24 }}>
-                    全部流量走国际出口
-                  </div>
-                </Radio>
-              </Radio.Group>
-              {writable && routingDraft !== device.routingScheme ? (
-                <Button
-                  type="primary"
-                  size="small"
-                  style={{ marginTop: 12 }}
-                  loading={savingRouting}
-                  onClick={saveRoutingScheme}
-                >
-                  保存代理模式
-                </Button>
-              ) : null}
-            </Card>
-          </Space>
+                保存代理模式
+              </Button>
+            ) : null}
+          </Card>
         </Col>
 
         <Col xs={24}>
@@ -554,7 +471,7 @@ export function ClientDeviceDetailPage() {
                   {device.lanMac || "-"}
                 </Typography.Text>
               </Descriptions.Item>
-              <Descriptions.Item label="路由模式">
+              <Descriptions.Item label="路由工作模式">
                 {PROXY_MODE_LABEL[device.proxyMode] ?? device.proxyMode}
               </Descriptions.Item>
               <Descriptions.Item label="代理模式">

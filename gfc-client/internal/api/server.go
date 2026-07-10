@@ -512,7 +512,7 @@ func (s *Server) applyRoutingModeChange(rawMode string) map[string]any {
 		return map[string]any{"mode": mode, "apply": false, "message": err.Error(), "synced": false}
 	}
 	syncErr := cpsync.SyncRuntime(s.cfg, s.store, cpsync.Runtime{RoutingScheme: mode})
-	ok, msg := s.engine.ReapplyLocal(true)
+	ok, msg := s.engine.ReloadRoutingPolicy()
 	result := map[string]any{
 		"mode":    mode,
 		"apply":   ok,
@@ -756,7 +756,8 @@ func (s *Server) putSettings(c *gin.Context) {
 	_ = s.store.UpdateSettings(body)
 
 	result := map[string]any{"saved": true}
-	needReapply := false
+	routingChanged := false
+	proxyChanged := false
 
 	if mode, ok := body["routing_mode"].(string); ok && strings.TrimSpace(mode) != "" {
 		mode = payload.NormalizeRoutingMode(mode)
@@ -771,7 +772,9 @@ func (s *Server) putSettings(c *gin.Context) {
 		} else {
 			result["synced"] = true
 		}
-		needReapply = true
+		ok, msg := s.engine.ReloadRoutingPolicy()
+		result["routing_apply"] = map[string]any{"ok": ok, "message": msg}
+		routingChanged = true
 	}
 
 	if mode, ok := body["proxy_mode"].(string); ok && strings.TrimSpace(mode) != "" {
@@ -788,18 +791,14 @@ func (s *Server) putSettings(c *gin.Context) {
 		if err != nil {
 			result["network_error"] = err.Error()
 		}
-		if syncErr := cpsync.SyncRuntime(s.cfg, s.store, cpsync.Runtime{ProxyMode: mode}); syncErr != nil {
-			result["proxy_synced"] = false
-			result["proxy_sync_error"] = syncErr.Error()
-		} else {
-			result["proxy_synced"] = true
-		}
-		needReapply = true
+		proxyChanged = true
 	}
 
-	if needReapply {
+	if proxyChanged {
 		ok, msg := s.engine.ReapplyLocal(true)
 		result["dataplane"] = map[string]any{"ok": ok, "message": msg}
+	} else if !routingChanged {
+		// DNS / log settings only — no dataplane reload required.
 	}
 	s.ok(c, result)
 }

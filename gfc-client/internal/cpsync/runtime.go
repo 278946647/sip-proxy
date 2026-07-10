@@ -1,6 +1,7 @@
 package cpsync
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -12,24 +13,23 @@ import (
 	"github.com/278946647/sip-proxy/gfc-client/internal/store"
 )
 
-// Runtime carries device mode fields that should be owned by control plane.
+// Runtime carries device mode fields reported back to control plane.
 type Runtime struct {
 	RoutingScheme string
 	ProxyMode     string
 }
 
-// SyncRuntime pushes local runtime mode to control plane so the next config pull
-// does not revert box-side changes.
+// SyncRuntime pushes local runtime mode to control plane so agent pulls stay aligned.
 func SyncRuntime(cfg *config.Config, st *store.Store, rt Runtime) error {
-	device, err := st.GetDevice()
-	if err != nil || device == nil || strings.TrimSpace(device.ClientToken) == "" {
-		return nil
+	token := clientToken(cfg, st)
+	if token == "" {
+		return fmt.Errorf("device not activated")
 	}
 	servers := resolveServers(cfg, st)
 	if len(servers) == 0 {
 		return fmt.Errorf("control plane URL not configured")
 	}
-	client, err := controlplane.New(servers, device.ClientToken)
+	client, err := controlplane.New(servers, token)
 	if err != nil {
 		return err
 	}
@@ -39,6 +39,25 @@ func SyncRuntime(cfg *config.Config, st *store.Store, rt Runtime) error {
 	}
 	proxy := strings.ToLower(strings.TrimSpace(rt.ProxyMode))
 	return client.UpdateRuntime(routing, proxy)
+}
+
+func clientToken(cfg *config.Config, st *store.Store) string {
+	if device, _ := st.GetDevice(); device != nil {
+		if token := strings.TrimSpace(device.ClientToken); token != "" {
+			return token
+		}
+	}
+	data, err := os.ReadFile(cfg.Paths.StateFile)
+	if err != nil {
+		return ""
+	}
+	var state struct {
+		ClientToken string `json:"client_token"`
+	}
+	if json.Unmarshal(data, &state) != nil {
+		return ""
+	}
+	return strings.TrimSpace(state.ClientToken)
 }
 
 func resolveServers(cfg *config.Config, st *store.Store) []string {
