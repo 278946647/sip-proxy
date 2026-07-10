@@ -1,274 +1,259 @@
-# GFC 反向远程管理 — 会话交接（HANDOFF）
+# GFC 会话交接（HANDOFF）
 
-> 写给**完全没有上下文**的新对话。最后更新：2026-07-10。  
-> 仓库：`sip-proxy`（GFC 企业边缘网关 + 控制平台 `gfc-platform` + 客户端 `gfc-client`）。
+> 写给**完全没有上下文**的新对话。  
+> 最后更新：**2026-07-10**（ImmortalWrt 客户端稳定性 + 远程运维 + 数据面 LAN 验收）。  
+> 仓库：`sip-proxy`（`gfc-platform/` 控制平台 + `gfc-client/` ImmortalWrt 客户端）。
 
----
-
-## 1. 本阶段在做什么任务
-
-从控制平台对 **NAT 后面的 ImmortalWrt 客户端** 做 **按需反向 SSH 远程管理**，提供三类入口：
-
-| 入口 | 客户端目标 | 控制平台侧 |
-|------|------------|------------|
-| **远程 SSH** | 盒子 dropbear `:212` | WebSSH → `127.0.0.1:P` |
-| **Web 管理** | uhttpd `:80` LuCI | HTTP 反代 `/remote/{id}/luci/...` |
-| **刷码协助** | `:80` `/gfc/activate.html` | HTTP 反代 `/remote/{id}/flash/` |
-
-**架构定稿（勿改除非架构评审）：**
-
-- 控制平台 = 公网堡垒 + 反代入口（`sshd :212` 收 autossh）
-- 客户端 **outbound** `autossh -R` 到 CP，映射到 CP `127.0.0.1` 端口池
-- **按需建连**：管理员点击后才下发会话（TTL ~30min），非常开隧道
-- 端口池：**6001–7999**，每设备 **2 端口**：`P`=SSH，`P+1`=HTTP(80)
-- 客户端生成 `reverse_ssh_id`（ed25519），**仅上传公钥**；私钥不出设备
-
-**明确不做：** frp、线路码里写私钥、反代到盒子 `:8080` gfc-api。
+**说明：** `main` 在本交接写入之后可能还有**其他并行工作**（如全局路由/代理模式拆分 `731fee3` 起）。若任务涉及「设备设置页路由模式」，请先 `git log` 看 `ceecc16` 一带提交，并与本文 **§2 范围** 区分。
 
 ---
 
-## 2. 已经完成了什么（代码 + 文档）
+## 1. 本会话在做什么（任务总览）
 
-### 2.1 控制平台（`gfc-platform/`）
-
-| 能力 | 状态 | 关键文件 / 提交 |
-|------|------|-----------------|
-| DB 迁移（`reverse_http_port`、`ssh_public_key`、会话字段） | ✅ | `migrate.py` |
-| 顺序端口分配 | ✅ | `reverse_ssh.py` |
-| 心跳下发 `reverse_ssh` 指令 + 收公钥/隧道状态 | ✅ | `clients.py` |
-| 会话 API `POST/GET/DELETE .../reverse-ssh/session` | ✅ | `admin.py` |
-| `authorized_keys` 渲染（gfc-reverse 用户） | ✅ | `reverse_ssh.py` |
-| HTTP 反代 LuCI/flash | ✅ | `remote_proxy.py` |
-| WebSSH WebSocket | ✅ | `webssh.py` |
-| nginx `/remote/` + `/api` WebSocket | ✅ | `web-ui/nginx.conf` |
-| sshd 入站端口默认 **212** | ✅ | `settings.py` |
-| 老设备心跳时 **补分配端口** | ✅ | `cc787fa` |
-| API **host 网络** + 宿主机 `authorized_keys` 目录挂载 | ✅ | `40088ed`, `56addc8` |
-| `setup-reverse-ssh.sh`（gfc-reverse 用户 + sshd Match） | ✅ | `deploy/control/setup-reverse-ssh.sh` |
-| WebSSH 路由修复（不用 `#/`） | ✅ | `0fb5aa2` `openRemote.ts` |
-| **WebSSH 自动密钥**：CP 生成 `/data/pki/webssh_id`，心跳下发 `webssh_authorized_key` | ✅ | `4fd9ae1` `webssh_keys.py` |
-
-### 2.2 客户端（`gfc-client/`）
-
-| 能力 | 状态 | 关键文件 / 提交 |
-|------|------|-----------------|
-| `reversessh` 模块：密钥、解析心跳、autossh | ✅ | `internal/reversessh/reversessh.go` |
-| OpenWrt wrapper `/usr/lib/gfc-client/reverse-ssh-run.sh` + procd init | ✅ | `553be72` 等 |
-| `autossh` 路径动态解析（`/usr/sbin/autossh`） | ✅ | |
-| 去掉 `ServerAliveCountMax`（dropbear ssh 不支持） | ✅ | |
-| 启动后验证进程 / ssh 探测 | ✅ | |
-| 心跳上报 `reverse_ssh_status.active`（pidof 兜底） | ✅ | `runner.go` |
-| **安装 CP WebSSH 公钥到 dropbear** | ✅ | `websshauth.go` `4fd9ae1` |
-
-### 2.3 Web UI
-
-- 客户端列表/详情：远程 SSH、Web 管理、刷码协助按钮
-- `ClientWebSSHPage`：WebSocket 终端
-- 列表已去掉重复「线路码」、详情去掉网络速率卡片（`e235acc`）
-
-### 2.4 已在真实环境验证通过的
-
-- ImmortalWrt 手动跑 `/usr/lib/gfc-client/reverse-ssh-run.sh` 后，Ubuntu 上 `ssh -p 6080 root@127.0.0.1` **能进盒子 shell**（需 root 密码或已装 WebSSH 公钥）
-- `gfc-reverse@CP:212` 公钥认证 + `-R 127.0.0.1:6080:127.0.0.1:212` 隧道建立（Ubuntu `ss` 见过 `127.0.0.1:6080` LISTEN）
-- WebSSH **页面路由**修复后应打开 `/client-devices/:id/ssh`，不再是仪表盘
-
----
-
-## 3. 当前卡在哪（截至交接时）
-
-### 3.1 生产/测试环境未完全对齐最新代码
-
-| 组件 | 问题 |
+| 主题 | 目标 |
 |------|------|
-| **ImmortalWrt agent** | 现场多为 **旧 `gfc-agent`**（如 v1.1.0 / PID 18589）：每 10s 心跳可能 **覆盖** `/etc/init.d/gfc-reverse-ssh`、误报 `reverse ssh :6080 -> ...` 成功、**不会**写 WebSSH 公钥到 dropbear |
-| **控制平台 API** | 需部署 `4fd9ae1`+ 才有 `/data/pki/webssh_id` 与心跳 `webssh_authorized_key`；需 **host 网络** 才能 `probe 127.0.0.1:6080` |
-| **控制平台 Web** | 需重建 web 镜像才有 `openRemote` 路径修复 + WebSSH UI 文案 |
-| **WebSSH UI** | 曾出现 `Permission denied`：WebSSH 用 BatchMode 连 `root@127.0.0.1:6080`，盒子 dropbear 要密码；**自动密钥流程已编码但未在盒子落地**（需新 agent 心跳） |
-| **按需隧道** | UI `waitForTunnel` 依赖 CP 上 `6080` LISTEN + 会话 `tunnel_ready`；隧道需 **点击远程 SSH 后** 由 agent 拉起，或临时手跑 runner |
+| **远程 SSH / Web 运维** | 控制平台对 NAT 后 ImmortalWrt 按需反向隧道 + WebSSH + LuCI 反代；P2 加固 |
+| **apply-network 事故修复** | `gfc-bootstrap --apply-network` 误改 WAN 导致丢 IP；快照/回滚/seed |
+| **PPPoE WAN** | 与 static/dhcp 对齐的 UCI 字段清理 + 单测 |
+| **安装/升级后下联 PC 不能上网** | unbound bootstrap、NAT/DNS hijack、fw4 冲突 |
+| **流程固化** | 底层改动必须先差异表 + 用户确认；验收脚本 |
 
-### 3.2 未自动化的运维项
+**产品 tag（远程运维里程碑）：** `gfc-remote-ssh-web-v1.0.0`
 
-- 客户端盒子 **不会**因只更新 CP 源码而升级；必须 **单独编译/安装 `gfc-agent`**
-- `docker-compose` **1.29** 在 Ubuntu 上 recreate web/api 易报 `KeyError: 'ContainerConfig'`
-- 用户环境命令是 **`docker-compose`**（连字符），不是 `docker compose`
+---
 
-### 3.3 参考环境（会话中出现过）
+## 2. 已经完成了什么
 
-- 控制平台：Ubuntu，`/opt/sip-proxy/gfc-platform`，公网 `103.78.41.16`，Web `5173`，API `8080`
-- 测试设备：ImmortalWrt，设备名 ImmortalWrt，**device id=6**，反代端口 **6080/6081**
-- 客户端公网 IP 约 `103.153.113.234`（日志中 autossh 来源）
+### 2.1 控制平台 — 远程运维（`gfc-platform/`）
+
+| 项 | 状态 | 说明 / 提交 |
+|----|------|-------------|
+| P2-3 危险操作确认 | ✅ | `dangerousConfirm.ts`；删设备需 `confirm=true` |
+| P2-4 网络变更后隧道恢复 | ✅ | `restore.go`；`/var/run/gfc-restore-reverse-ssh` |
+| P2-5 文档 | ✅ | `REMOTE_ACCESS.md`、`OPS.md`、`ARCHITECTURE.md` |
+| P2-6 端口删除冷却 | ✅ | `released_reverse_ports`；默认 3600s |
+| WebSSH 终端乱码 | ✅ | xterm.js；`TERM=xterm-256color`（`454a873`） |
+| LuCI 反代 405/401 等 | ✅ | `0e13115` 前后一系列 `remote_proxy.py` 修复 |
+
+**部署边界：** 远程 SSH/Web/危险确认/端口冷却 → **仅控制面 API + web-ui**；设备可不升 `gfc-client`（除隧道恢复、apply-network 相关）。
+
+### 2.2 客户端 — WAN apply（`gfc-client/internal/network/`）
+
+| 项 | 状态 | 提交 |
+|----|------|------|
+| WAN 安全 apply（seed UCI、写前快照） | ✅ | `454a873` |
+| `gfc-bootstrap --rollback-network` | ✅ | `openwrt_snapshot.go` |
+| 默认不碰 LAN（`GFC_MANAGE_LAN`） | ✅ | `network.go` |
+| PPPoE `username/password` + 清 static 残留 | ✅ | `openwrt_wan.go` + 单测（`adf9125`） |
+| 规范文档 | ✅ | `gfc-client/docs/NETWORK_APPLY.md` + `.cursor/rules/network-apply-no-change-without-approval.mdc`（`f1d7453`） |
+
+### 2.3 客户端 — 安装/升级/数据面 LAN
+
+| 项 | 状态 | 提交 |
+|----|------|------|
+| unbound `root.key` / chroot checkconf 失败 | ✅ | 不再 patch 到 `/etc/unbound/root.key`；`chroot: ""`；`EnsureTrustAnchorLayout`（`4325b3d`） |
+| unbound snippet include 缺失导致 bootstrap 失败 | ✅ | `share/unbound/local.d/*`、`conf.d/gfc-domestic-forward.conf`；`EnsureTree` 复制（`9416ce9`） |
+| 无 `sing-box.json` 时不启 `gfc-routing` → 无 NAT | ✅ | install/upgrade **始终先启 gfc-routing**（`9416ce9`） |
+| 下联验收脚本 | ✅ | `deploy/immortalwrt/verify-dataplane-dns.sh` |
+| 底层变更协议 | ✅ | `gfc-client/docs/DATAPLANE_CHANGE.md` + `.cursor/rules/dataplane-bottom-layer.mdc` |
+| **ImmortalWrt fw4 与 GFC nft 冲突** | ✅ | `disable-immortalwrt-fw4.sh`；apply-network **不再 restart firewall**（`3f5a379`、`302bd64`） |
+
+### 2.4 反向 SSH — 设计澄清（本会话确认，非新代码）
+
+| 项 | 结论 |
+|----|------|
+| `/etc/init.d/gfc-reverse-ssh` **disabled + stopped** | **正常**；仅管理员在 UI 建远程会话后由 agent `enable` + 拉起 autossh |
+| 端口池 | 设备长期绑定 `reverse_ssh_port` / `reverse_http_port`；测「冷启动耗时」**不必删端口**，应 `DELETE .../reverse-ssh/session` + 设备停 autossh |
+
+---
+
+## 3. 当前卡在哪 / 未闭环项
+
+| 项 | 状态 | 说明 |
+|----|------|------|
+| **设备 runtime 版本** | ⚠️ 待确认 | 现场需安装含 **`302bd64` 或更新** 的 `gfc-immortalwrt-runtime-*`；仅改控制面不能修 LAN/fw4/unbound |
+| **下联 PC 上网** | ⚠️ 待验收 | 代码已修；用户曾手动关 fw4 后恢复；应用新包后应跑 `verify-dataplane-dns.sh` |
+| **远程 SSH 冷启动耗时** | ⚠️ 未记录 | 预期约 **6–15s**（心跳 2–3s + autossh + UI 800ms 轮询）；未留下实测数字 |
+| **Windows 开发机** | ℹ️ | 无 `go` 命令，单元测试需在 Linux/设备上跑 |
+| **main 后续提交** | ℹ️ | `302bd64` 之后有路由/代理模式拆分、RBAC、流量配额等（见 `git log 302bd64..HEAD`），与本文 LAN/fw4 线可并行但别混谈 |
+
+### 参考环境（会话中出现过）
+
+- 控制面：`103.78.41.16:5173`（Web），API `8080`
+- 设备 WAN：曾 static `103.78.41.17/27`，`GFC_WAN_IFACE=eth0`
+- LAN：dnsmasq `port=0`，DHCP option 6 指向网关（如 `192.168.1.1`）
 
 ---
 
 ## 4. 下一步计划（建议顺序）
 
-### P0 — 让端到端 WebSSH 在测试机跑通
+### P0 — 设备对齐最新 runtime + LAN 验收
 
-1. **控制平台**（Ubuntu）  
-   ```bash
-   cd /opt/sip-proxy && git pull   # 至少 4fd9ae1
-   cd gfc-platform
-   sudo bash deploy/control/setup-reverse-ssh.sh
-   docker-compose build api web
-   docker rm -f gfc-platform_api_1 gfc-platform_web_1 2>/dev/null
-   docker-compose up -d --no-deps api web
-   # 或: sudo bash deploy/control/repair-control.sh
-   ```
-   验证：  
-   - `ls -l /data/pki/webssh_id*`（api 容器内或 host 卷）  
-   - `curl -fsS http://127.0.0.1:8080/healthz`  
-   - `ss -lntp | grep 6080`（隧道建立后）
+```sh
+# 设备上（新 runtime 包或 git pull 后 install）
+./install.sh
 
-2. **ImmortalWrt** — 编译安装 **最新 `gfc-agent`**（含 `websshauth.go` + `reversessh` 修复）  
-   ```sh
-   /etc/init.d/gfc-agent restart
-   # 等一次心跳后：
-   grep gfc-webssh /etc/dropbear/authorized_keys
-   logread | grep -E 'webssh|reverse ssh'
-   ```
+# 或手动：
+sh /usr/lib/gfc-client/deploy/immortalwrt/ensure-unbound-dirs.sh
+GFC_PLATFORM=immortalwrt gfc-bootstrap
+sh /usr/lib/gfc-client/deploy/immortalwrt/disable-immortalwrt-fw4.sh
+/etc/init.d/gfc-unbound restart
+/etc/init.d/gfc-routing start
+sh /usr/lib/gfc-client/deploy/immortalwrt/configure-dnsmasq-dhcp.sh
+/etc/init.d/dnsmasq restart
+sh /usr/lib/gfc-client/deploy/immortalwrt/verify-dataplane-dns.sh
+```
 
-3. **端到端**  
-   - UI 点「远程 SSH」→ 等 15–20s → 应打开 `/client-devices/6/ssh`  
-   - 或浏览器直接访问 `http://<CP>:5173/client-devices/6/ssh`  
-   - 终端应出现 BusyBox/ImmortalWrt banner，**无** Permission denied
+下联 PC：`ipconfig /renew` 或重连 Wi‑Fi。
 
-4. **若隧道仍不自动起**  
-   - 确认 UI 已建会话（`GET /admin/client-devices/6/reverse-ssh/session` → `tunnel_ready`）  
-   - 临时：`/usr/lib/gfc-client/reverse-ssh-run.sh &`（仅调试）  
-   - 根因仍是旧 agent → 必须升级 agent
+### P1 — 远程 SSH 冷启动复测
 
-### P1 — 稳定化
+1. `DELETE /admin/client-devices/{id}/reverse-ssh/session`
+2. 设备：`/etc/init.d/gfc-reverse-ssh stop`；确认 `pidof autossh` 为空
+3. UI 点「远程 SSH」，记「确认 → tunnel_ready」秒数
+4. **不要删设备**测端口（除非测端口池/冷却）
 
-- 确认 `gfc-reverse-ssh` procd 开机策略（仅会话 active 时由 agent 管理，符合设计）
-- 评估是否在 LuCI/文档中写「远程管理前置条件」：autossh、openssh-keygen、agent 版本
-- Web 管理 / 刷码反代：隧道 + `6081` 就绪后测 `/remote/6/luci/...`
+### P2 — 控制面（若尚未部署）
 
-### P2 — 产品化（未做）
+- API + web-ui 含 `0e13115`（P2）、`454a873`（xterm）
+- 见 `gfc-platform/docs/REMOTE_ACCESS.md`
 
-- 会话 TTL / 审计日志运营化
-- 多设备端口池耗尽告警
-- 可选：禁止 `chattr +i` 手改 init 的需求（靠新 agent 消除）
+### P3 — 以后改底层代码
+
+1. 读 `DATAPLANE_CHANGE.md` + 对应 `*_ARCHITECTURE.md`
+2. 输出 **规范 vs 实现差异表**
+3. 用户回复 **「确认修改」** 后再写代码
+4. 改后设备跑 **`verify-dataplane-dns.sh`**
 
 ---
 
 ## 5. 踩过的坑 — 新对话不要再踩
 
-### 5.1 架构 / 协议
+### 5.1 WAN / apply-network
 
-| 坑 | 正确理解 |
+| 坑 | 正确做法 |
 |----|----------|
-| `ssh gfc-reverse@CP true` 报 *This account is currently not available* | `gfc-reverse` 是 **nologin**，不能跑 shell 命令；**autossh -N 端口转发仍可用** |
-| 混淆 212 与 211 | **保持 CP sshd = 212**；`GFC_REVERSE_SSH_SSHD_PORT=212` |
-| 以为 `reverse ssh :6080 -> ...` 日志 = 隧道已建立 | 旧 agent **restart 成功就打印**，不验证 `pidof autossh` |
-| 一条密钥走天下 | **两套密钥**：① 盒子→CP `reverse_ssh_id` → gfc-reverse；② CP→盒子 WebSSH `/data/pki/webssh_id` → root@dropbear |
-| WebSSH 连 `8080` | 错；LuCI 在 **:80**，反代 HTTP 用 `P+1` |
+| 无 `network-wan.json` 时默认写 `proto=dhcp` | **先从 UCI seed**；无 JSON 则跳过 WAN 或报错（`GFC_MANAGE_WAN`） |
+| LuCI「回滚配置」能恢复 WAN | **不能**；仅数据面。系统网络用 `gfc-bootstrap --rollback-network` |
+| PPPoE/static 切换不删 UCI 残留 | 必须走 `buildWANApplyPlan()` 清理矩阵 |
+| `apply-network` **restart firewall** | 会拉起 **fw4**，与 GFC nft 冲突 → 已改为 **stop+disable** |
 
-### 5.2 ImmortalWrt 客户端
+### 5.2 DNS / unbound / 下联 PC
 
-| 坑 | 处理 |
-|----|------|
-| init 写死 `/usr/bin/autossh` | 实际是 **`/usr/sbin/autossh`**；新代码 `LookPath` + wrapper |
-| `-o ServerAliveCountMax=3` | dropbear ssh **不支持**，会 warning；已从生成脚本移除 |
-| procd 内联超长 `autossh` 命令难调试 | 用 **`/usr/lib/gfc-client/reverse-ssh-run.sh`** |
-| 两个 autossh 抢同一 `-R 6080` | `killall autossh` 后只留 init 拉起的一个 |
-| 手改 init 后被 agent 覆盖 | 升级 agent；或临时 `chattr +i`（仅救急） |
-| 未点 UI「远程 SSH」就 expect 隧道 | 按需设计：无会话 → agent **`stopUnit`** 停隧道 |
+| 坑 | 正确做法 |
+|----|----------|
+| patch `auto-trust-anchor` 到 `/etc/unbound/root.key` | ImmortalWrt checkconf 按 chroot 校验 → **fatal**；保持 `/var/lib/unbound/root.key` + `chroot: ""` |
+| template include 的 3 个 snippet 未部署 | bootstrap 失败 → **:53 无服务** → 全网打不开 |
+| dnsmasq `port=0` 且无 DHCP option 6 | 下联 PC **无 DNS** |
+| 仅当存在 `sing-box.json` 才启 `gfc-routing` | bootstrap 失败时 **无 masquerade** → 能解析也不能上网 |
 
-### 5.3 控制平台 Docker / 部署
+### 5.3 nft / fw4
 
-| 坑 | 处理 |
-|----|------|
-| `docker-compose up` recreate 报 **`ContainerConfig`** | 先 `docker rm -f gfc-platform_*`，或用 **`gfc-compose` / `repair-control.sh`** |
-| 单文件挂载 `.../authorized_keys` 且宿主机无文件 | Docker 会建成 **目录**，API 启动/sync 失败 → 改挂载 **目录** `/var/lib/gfc/reverse-ssh:/data/reverse-ssh` |
-| API 在 bridge 网段 probe `127.0.0.1:6080` | 隧道在 **宿主机 loopback**；API 需 **`network_mode: host`** |
-| `authorized_keys` 写在容器卷里 | sshd 在 **宿主机**；必须 bind-mount 到 `/var/lib/gfc/reverse-ssh/authorized_keys` |
-| `docker compose` vs `docker-compose` | 该环境用 **`docker-compose`** |
-| `docker compose down -v` | **会清 SQLite**，设备列表会空 |
+| 坑 | 正确做法 |
+|----|----------|
+| ImmortalWrt **fw4 默认开启** | 与 `inet gfc` / `inet nat` / `gfc_dns_hijack` **冲突**；必须 `disable-immortalwrt-fw4.sh` |
+| 以为 GFC 用 UCI firewall masq | NAT 由 **`gfc-routing.sh` `apply_wan_nat`** 负责 |
 
-### 5.4 Web UI
+### 5.4 远程 SSH
 
-| 坑 | 处理 |
-|----|------|
-| `window.open('/#/client-devices/6/ssh')` | 项目用 **BrowserRouter**，`#/` 被忽略 → 落到 **仪表盘**；应用 **`/client-devices/6/ssh`**（`0fb5aa2`） |
-| WebSocket 连上显示「已连接」但 SSH 失败 | WS 只表示连上 API；Shell 要另判（`Permission denied` 等） |
-| `waitForTunnel` 一直 loading | CP 上无 `6080` LISTEN，或 API 探测失败，或会话过期 |
+| 坑 | 正确做法 |
+|----|----------|
+| `gfc-reverse-ssh` disabled | **正常**；无会话不建隧道 |
+| 删设备才能「清端口」测冷启动 | 只需 **结束 session** + 停 autossh；删设备会进 **3600s 冷却** |
+| 数据面回滚 vs 网络回滚 | 见 `NETWORK_APPLY.md` §2 |
 
-### 5.5 数据 / 迁移
+### 5.5 开发与流程
 
-| 坑 | 处理 |
-|----|------|
-| 老设备无 `reverse_ssh_port` | 心跳 / 建会话时 **`ensure_device_reverse_ports`**（`cc787fa`） |
-| SQLite naive datetime vs aware | `session_active` 须 **`ensure_utc`**，否则列表 API **500**（`caa18ea`） |
-| 客户端心跳回写 `reverse_ssh_port` 覆盖 CP | 已 **禁止客户端覆盖** 服务端端口池（`cc787fa`） |
+| 坑 | 正确做法 |
+|----|----------|
+| 未读架构文档就改 unbound/nft/sing-box/network | 违反 `.cursor/rules/*-no-change-without-approval.mdc` |
+| bootstrap 失败仍 `|| true` 不验收 | install 末尾应看 **`verify-dataplane-dns.sh`** 输出 |
+| 在 Windows 上跑 `go test` | 环境可能无 Go；用设备或 CI |
 
 ---
 
-## 6. 关键文件索引（新对话从这里读）
+## 6. 权威文档与 Cursor 规则（改代码前必读）
+
+| 领域 | 权威 `.md` | AI 变更协议 `.mdc` |
+|------|------------|---------------------|
+| nft | `docs/NFT_ARCHITECTURE.md` | `nft-no-change-without-approval.mdc` |
+| DNS/unbound | `docs/UNBOUND_ARCHITECTURE.md` | `unbound-no-change-without-approval.mdc` |
+| sing-box | `docs/SINGBOX_ARCHITECTURE.md` | `singbox-no-change-without-approval.mdc` |
+| WAN apply | `gfc-client/docs/NETWORK_APPLY.md` | `network-apply-no-change-without-approval.mdc` |
+| 数据面总览/验收 | `gfc-client/docs/DATAPLANE_CHANGE.md` | `dataplane-bottom-layer.mdc` |
+| 远程运维 | `gfc-platform/docs/REMOTE_ACCESS.md` | — |
+
+**固定口令（建议用户附带）：**
+
+> 严格按 `DATAPLANE_CHANGE.md` / `NETWORK_APPLY.md` / `*_ARCHITECTURE.md`，只改我点名的文件，改前先给差异表，确认后再写代码；改后跑 `verify-dataplane-dns.sh`。
+
+---
+
+## 7. 关键 Git 提交（本会话数据面 + 远程运维，由旧到新）
 
 ```
-gfc-platform/
-  control-plane/api/app/
-    reverse_ssh.py      # 端口池、会话、authorized_keys、gfc-reverse 命令
-    webssh_keys.py      # WebSSH 密钥对自动生成 (4fd9ae1)
-    webssh.py           # WebSocket → ssh -p P root@127.0.0.1
-    clients.py          # 心跳、activate、webssh_authorized_key 下发
-    admin.py            # reverse-ssh/session API
-    remote_proxy.py     # /remote/{id}/...
-  web-ui/src/
-    lib/openRemote.ts   # 点按钮 → 建会话 → waitForTunnel → 开 WebSSH
-    lib/reverseSsh.ts
-    pages/ClientWebSSHPage.tsx
-  deploy/control/
-    setup-reverse-ssh.sh
-    repair-control.sh
-    gfc-compose.sh
-  docker-compose.yml    # api: network_mode: host; web: host.docker.internal:8080
+0e13115  feat(p2): remote ops hardening (#3–#6)
+454a873  fix: safe apply-network WAN + xterm WebSSH
+adf9125  fix(client): OpenWrt PPPoE WAN apply
+f1d7453  docs: NETWORK_APPLY + Cursor protocol
+4325b3d  fix(client): unbound root.key ImmortalWrt bootstrap
+9416ce9  fix(client): LAN DNS/NAT after upgrade gaps + verify script
+3f5a379  fix(client): disable ImmortalWrt fw4
+302bd64  docs: network rollback disables fw4
+```
 
+远程运维更早基底：`gfc-remote-ssh-web-v1.0.0` tag；细节见 `gfc-platform/docs/REMOTE_ACCESS.md`。
+
+---
+
+## 8. 关键文件索引
+
+```
 gfc-client/
-  internal/reversessh/
-    reversessh.go       # autossh、OpenWrt init/wrapper
-    websshauth.go       # dropbear authorized_keys (4fd9ae1)
-  internal/agent/runner.go
-  internal/controlplane/client.go
+  cmd/gfc-bootstrap/main.go          # --apply-network, --rollback-network
+  internal/network/
+    openwrt_wan.go                     # buildWANApplyPlan (static/dhcp/pppoe)
+    openwrt_snapshot.go                # network 快照/回滚
+    openwrt_fw4.go                     # disableOpenWrtFW4
+  internal/render/unbound/unbound.go   # EnsureTree, trust anchor, OpenWrt patch
+  internal/reversessh/                 # autossh, 网络后 restore
+  deploy/immortalwrt/
+    install-runtime.sh / upgrade-runtime.sh
+    ensure-unbound-dirs.sh
+    disable-immortalwrt-fw4.sh         # ★ fw4 必须关
+    verify-dataplane-dns.sh            # ★ 下联验收
+    gfc-routing.sh                     # NAT + DNS hijack + gfc nft
+    configure-dnsmasq-dhcp.sh
+  docs/NETWORK_APPLY.md
+  docs/DATAPLANE_CHANGE.md
+
+gfc-platform/
+  control-plane/api/app/reverse_ssh.py, webssh.py, remote_proxy.py, admin.py
+  web-ui/src/lib/reverseSsh.ts, openRemote.ts, utils/dangerousConfirm.ts
+  docs/REMOTE_ACCESS.md
 ```
 
 ---
 
-## 7. 架构约束（修改前必读）
-
-仓库 `.cursor/rules/` 强制协议 — **未获用户「确认修改」不得改**：
-
-- `docs/SINGBOX_ARCHITECTURE.md` / sing-box 生成器
-- `docs/UNBOUND_ARCHITECTURE.md` / DNS
-- `docs/NFT_ARCHITECTURE.md` / nftables
-
-本任务 **数据面 nft/sing-box/unbound 未改**；动的是控制平台 + 客户端 agent 运维通道。
-
----
-
-## 8. Git 参考（main 上相关提交，由旧到新）
+## 9. LAN 数据路径（验收心智模型）
 
 ```
-cf8b338  feat: reverse SSH sessions + remote access (P0/P1)
-e1d5ade  fix: sshd port 212 + nginx /remote
-e235acc  ui: line-code button + network rate card
-caa18ea  fix: client list 500 (datetime) + curl in API image
-cc787fa  fix: port allocation on heartbeat, no client overwrite
-40088ed  fix: API host network + reverse-ssh host wiring
-56addc8  fix: authorized_keys volume mount (directory)
-0fb5aa2  fix: WebSSH URL BrowserRouter not hash
-553be72  fix: ImmortalWrt autossh path + wrapper + verify
-a754704  fix: ssh probe with -N for nologin gfc-reverse
-ec5568e  fix: webssh sshpass fallback (optional)
-4fd9ae1  feat: automate WebSSH key via heartbeat  ← 交接时最新
+下联 PC
+  → DHCP option 6 = 网关 LAN IP
+  → DNS → 网关:53 → gfc-unbound
+  → nft gfc_dns_hijack（外连 DNS 重定向 :53）
+  → nft nat masquerade（gfc-routing，且 fw4 必须 disabled）
+  → 国内 TO_CN 直连 WAN / 国际 mark → gfctun → sing-box（已激活时）
 ```
 
----
-
-## 9. 给新对话的一句开场白
-
-> 我们在做 GFC 控制平台对 ImmortalWrt 的 **按需反向 SSH**（端口 6080/6081，sshd 212）。隧道手动已通，代码上 WebSSH 自动密钥在 `4fd9ae1`。请帮用户在 **Ubuntu CP 部署 api+web**、**盒子升级 gfc-agent**，并验证 `grep gfc-webssh /etc/dropbear/authorized_keys` 与 WebSSH 页面无 Permission denied。勿动 nft/sing-box/unbound。部署用 `docker-compose` + `repair-control.sh`，不要 `down -v`。
+**任一环断 → 下联打不开网页或仅部分站点失败。**
 
 ---
 
-*本文档仅描述会话交接状态；若与 `docs/SINGBOX_ARCHITECTURE.md` 等权威文档冲突，以权威文档为准。*
+## 10. 给新对话的一句开场白
+
+> 我们在 ImmortalWrt 上修 **install/apply-network 后下联 PC 不能上网**：unbound bootstrap、gfc-routing 与 sing-box 解耦、**禁用 fw4**、验收脚本已进 `main`（至 `302bd64`）。请帮用户在设备上 **install 最新 runtime** 并跑 `verify-dataplane-dns.sh`；若仍失败贴脚本输出。改底层前先读 `DATAPLANE_CHANGE.md` 出差异表。远程 SSH 按需建连，`gfc-reverse-ssh` 平时 disabled 正常。勿在未批准时改 `NFT/UNBOUND/SINGBOX_ARCHITECTURE.md` 契约。
+
+---
+
+*若本文与 `docs/NFT_ARCHITECTURE.md`、`docs/UNBOUND_ARCHITECTURE.md`、`docs/SINGBOX_ARCHITECTURE.md` 冲突，以权威架构文档为准。*
