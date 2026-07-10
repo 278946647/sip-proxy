@@ -28,10 +28,17 @@ func RoutingMode(payload map[string]any) string {
 		if !ok {
 			continue
 		}
-		switch strings.ToLower(strings.TrimSpace(raw)) {
-		case "global":
-			return "global"
-		}
+		return NormalizeRoutingMode(raw)
 	}
 	return "split"
+}
+
+// NormalizeRoutingMode maps UI / API values to supported proxy policy modes.
+func NormalizeRoutingMode(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "global":
+		return "global"
+	default:
+		return "split"
+	}
 }

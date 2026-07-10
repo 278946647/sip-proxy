@@ -40,7 +40,16 @@ async function save() {
   message.value = ''
   try {
     const res = await maintenanceApi.updateSettings({ ...form.value })
-    message.value = res.ok ? '设置已保存' : (res.error?.message ?? '保存失败')
+    if (!res.ok) {
+      message.value = res.error?.message ?? '保存失败'
+      return
+    }
+    const dataplane = res.data?.dataplane as { ok?: boolean; message?: string } | undefined
+    if (dataplane && dataplane.ok === false) {
+      message.value = dataplane.message ?? '设置已保存，但数据面应用失败'
+    } else {
+      message.value = '设置已保存'
+    }
     await load()
   } catch (err) {
     message.value = String(err)

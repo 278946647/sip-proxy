@@ -21,6 +21,7 @@ import (
 	"github.com/278946647/sip-proxy/gfc-client/internal/envfile"
 	"github.com/278946647/sip-proxy/gfc-client/internal/logtail"
 	"github.com/278946647/sip-proxy/gfc-client/internal/network"
+	"github.com/278946647/sip-proxy/gfc-client/internal/payload"
 	"github.com/278946647/sip-proxy/gfc-client/internal/render/unbound"
 	"github.com/278946647/sip-proxy/gfc-client/internal/render/singbox"
 	"github.com/278946647/sip-proxy/gfc-client/internal/reversessh"
@@ -500,11 +501,10 @@ func (s *Server) setRouting(c *gin.Context) {
 		s.fail(c, 400, err.Error())
 		return
 	}
-	raw, _ := json.MarshalIndent(map[string]string{"mode": body.Mode}, "", "  ")
-	_ = os.WriteFile(s.cfg.Paths.RoutingModeFile, raw, 0o644)
-	_ = s.store.UpdateSettings(map[string]any{"routing_mode": body.Mode})
-	ok, msg := s.engine.ReapplyLocal(true)
-	s.ok(c, map[string]any{"mode": body.Mode, "apply": ok, "message": msg})
+	mode := payload.NormalizeRoutingMode(body.Mode)
+	_ = s.store.UpdateSettings(map[string]any{"routing_mode": mode})
+	ok, msg := s.engine.SetRoutingModeAndApply(mode, true)
+	s.ok(c, map[string]any{"mode": mode, "apply": ok, "message": msg})
 }
 
 func (s *Server) getServices(c *gin.Context) {
@@ -693,6 +693,7 @@ func (s *Server) getSettings(c *gin.Context) {
 	settings, _ := s.store.GetSettings()
 	settings["device_name"] = s.cfg.DeviceName
 	settings["proxy_mode"] = s.cfg.ProxyMode
+	settings["routing_mode"] = singbox.NewRenderer(s.cfg).RoutingMode()
 	s.ok(c, settings)
 }
 
@@ -737,6 +738,8 @@ func (s *Server) putSettings(c *gin.Context) {
 	_ = s.store.UpdateSettings(body)
 
 	result := map[string]any{"saved": true}
+	needReapply := false
+
 	if mode, ok := body["proxy_mode"].(string); ok && strings.TrimSpace(mode) != "" {
 		mode = strings.ToLower(strings.TrimSpace(mode))
 		if err := envfile.Set(s.cfg.Paths.EnvFile, "GFC_PROXY_MODE", mode); err != nil {
@@ -751,6 +754,20 @@ func (s *Server) putSettings(c *gin.Context) {
 		if err != nil {
 			result["network_error"] = err.Error()
 		}
+		needReapply = true
+	}
+
+	if mode, ok := body["routing_mode"].(string); ok && strings.TrimSpace(mode) != "" {
+		mode = payload.NormalizeRoutingMode(mode)
+		if err := s.engine.SetRoutingMode(mode); err != nil {
+			s.fail(c, 500, err.Error())
+			return
+		}
+		result["routing_mode"] = mode
+		needReapply = true
+	}
+
+	if needReapply {
 		ok, msg := s.engine.ReapplyLocal(true)
 		result["dataplane"] = map[string]any{"ok": ok, "message": msg}
 	}

@@ -432,12 +432,42 @@ func (o *Orchestrator) saveBundle(payload map[string]any) error {
 }
 
 func (o *Orchestrator) applyRoutingModeFromPayload(p map[string]any) error {
-	mode := payload.RoutingMode(p)
+	return o.writeRoutingModeFile(payload.RoutingMode(p))
+}
+
+func (o *Orchestrator) writeRoutingModeFile(mode string) error {
+	mode = payload.NormalizeRoutingMode(mode)
 	raw, err := json.MarshalIndent(map[string]string{"mode": mode}, "", "  ")
 	if err != nil {
 		return err
 	}
 	return atomicWrite(o.cfg.Paths.RoutingModeFile, raw, 0o644)
+}
+
+// SetRoutingMode persists local proxy policy (split/global) to routing-mode.json
+// and keeps config bundle routingScheme aligned so ReapplyLocal does not revert it.
+func (o *Orchestrator) SetRoutingMode(mode string) error {
+	mode = payload.NormalizeRoutingMode(mode)
+	if p := o.LoadBundle(); p != nil {
+		p["routingScheme"] = mode
+		if err := o.saveBundle(p); err != nil {
+			return err
+		}
+	}
+	return o.writeRoutingModeFile(mode)
+}
+
+func (o *Orchestrator) SetRoutingModeAndApply(mode string, restart bool) (bool, string) {
+	if err := o.SetRoutingMode(mode); err != nil {
+		return false, err.Error()
+	}
+	if o.LoadBundle() == nil {
+		if restart {
+			return true, joinMsgs(o.postDataplaneRepair())
+		}
+		return true, "routing mode saved"
+	}
+	return o.ReapplyLocal(restart)
 }
 
 func (o *Orchestrator) writeMode(mode string, activated bool) {

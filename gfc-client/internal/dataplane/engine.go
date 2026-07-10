@@ -34,6 +34,14 @@ func (e *Engine) ReapplyLocal(restart bool) (bool, string) {
 	return e.Orchestrator.ReapplyLocal(restart)
 }
 
+func (e *Engine) SetRoutingMode(mode string) error {
+	return e.Orchestrator.SetRoutingMode(mode)
+}
+
+func (e *Engine) SetRoutingModeAndApply(mode string, restart bool) (bool, string) {
+	return e.Orchestrator.SetRoutingModeAndApply(mode, restart)
+}
+
 func (e *Engine) ReloadDNS() (bool, string) {
 	return e.Orchestrator.ReloadDNS()
 }

@@ -23,3 +23,21 @@ func TestRoutingMode(t *testing.T) {
 		})
 	}
 }
+
+func TestNormalizeRoutingMode(t *testing.T) {
+	tests := []struct {
+		raw  string
+		want string
+	}{
+		{"global", "global"},
+		{"GLOBAL", "global"},
+		{"split", "split"},
+		{"direct", "split"},
+		{"", "split"},
+	}
+	for _, tc := range tests {
+		if got := NormalizeRoutingMode(tc.raw); got != tc.want {
+			t.Fatalf("NormalizeRoutingMode(%q) = %q, want %q", tc.raw, got, tc.want)
+		}
+	}
+}

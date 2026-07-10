@@ -32,7 +32,15 @@ async function save() {
   message.value = ''
   try {
     const res = await policyApi.updateRouting(mode.value)
-    message.value = res.ok ? `代理模式已切换为 ${mode.value}` : (res.error?.message ?? '切换失败')
+    if (!res.ok) {
+      message.value = res.error?.message ?? '切换失败'
+      return
+    }
+    if (res.data?.apply === false) {
+      message.value = String(res.data?.message ?? '切换失败')
+      return
+    }
+    message.value = `代理模式已切换为 ${mode.value}`
     await load()
   } catch (err) {
     message.value = String(err)
