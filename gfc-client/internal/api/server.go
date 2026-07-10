@@ -84,6 +84,7 @@ func (s *Server) Router() *gin.Engine {
 		v1.GET("/nodes", s.listNodes)
 		v1.GET("/policy/groups", s.listPolicy)
 		v1.PUT("/policy/groups/:id/select", s.selectPolicy)
+		v1.POST("/policy/groups/:id/select", s.selectPolicy)
 
 		v1.GET("/dns/stats", s.getDNSStats)
 		v1.GET("/singbox/stats", s.getSingboxStats)
@@ -106,6 +107,7 @@ func (s *Server) Router() *gin.Engine {
 		v1.POST("/dns/unbound/cn/sync", s.unboundCNSync)
 		v1.GET("/dns/unbound/snippets/:kind", s.unboundGetSnippet)
 		v1.PUT("/dns/unbound/snippets/:kind", s.unboundPutSnippet)
+		v1.POST("/dns/unbound/snippets/:kind", s.unboundPutSnippet)
 
 		v1.GET("/policy/egress-routes", s.policyEgressRoutes)
 
@@ -113,6 +115,7 @@ func (s *Server) Router() *gin.Engine {
 		v1.POST("/rules/update", s.updateRules)
 		v1.GET("/routing", s.getRouting)
 		v1.PUT("/routing", s.setRouting)
+		v1.POST("/routing", s.setRouting)
 
 		v1.GET("/services", s.getServices)
 		v1.POST("/services/:name/restart", s.restartService)
@@ -126,22 +129,29 @@ func (s *Server) Router() *gin.Engine {
 		v1.GET("/network/traffic/interfaces", s.getTrafficInterfaces)
 		v1.GET("/network/bridge", s.getBridge)
 		v1.PUT("/network/bridge", s.putBridge)
+		v1.POST("/network/bridge", s.putBridge)
 		v1.GET("/network/wan", s.getWAN)
 		v1.PUT("/network/wan", s.putWAN)
+		v1.POST("/network/wan", s.putWAN)
 		v1.GET("/network/dhcp", s.getDHCP)
 		v1.PUT("/network/dhcp", s.putDHCP)
+		v1.POST("/network/dhcp", s.putDHCP)
 		v1.GET("/network/routes", s.getRoutes)
 		v1.PUT("/network/routes", s.putRoutes)
+		v1.POST("/network/routes", s.putRoutes)
 		v1.GET("/network/route-devices", s.getRouteDevices)
 		v1.GET("/network/vlan", s.getVLAN)
 		v1.PUT("/network/vlan", s.putVLAN)
+		v1.POST("/network/vlan", s.putVLAN)
 		v1.GET("/policy/firewall", s.getFirewall)
 		v1.POST("/diagnostics/:type", s.runDiagnostic)
 
 		v1.GET("/logs", s.getLogs)
 		v1.GET("/settings", s.getSettings)
 		v1.PUT("/settings", s.putSettings)
+		v1.POST("/settings", s.putSettings)
 		v1.PUT("/settings/singbox/logging", s.putLogging)
+		v1.POST("/settings/singbox/logging", s.putLogging)
 	}
 
 	// legacy /api paths for compatibility

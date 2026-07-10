@@ -15,16 +15,27 @@ function parseJSON(res) {
 	}
 }
 
+function execWget(args) {
+	return fs.exec('/usr/bin/wget', args).then(function(res) {
+		if (res.code !== 0) {
+			throw new Error((res.stderr || res.stdout || ('wget exit ' + res.code)).trim());
+		}
+		return parseJSON(res);
+	});
+}
+
+// BusyBox wget only supports GET and POST (--post-data). Write operations use POST.
 function request(path, method, body) {
-	var args = [ '-qO-', '-T', '5' ];
-	if (method === 'POST' || method === 'PUT' || method === 'DELETE') {
-		args.push('--header=Content-Type: application/json');
-		if (method !== 'POST')
-			args.push('--method=' + method);
-		args.push('--post-data=' + JSON.stringify(body || {}));
+	var args = [ '-qO-', '-T', '10' ];
+	var httpMethod = method || 'GET';
+	if (httpMethod === 'GET') {
+		args.push(base + path);
+		return execWget(args);
 	}
+	args.push('--header=Content-Type: application/json');
+	args.push('--post-data=' + JSON.stringify(body || {}));
 	args.push(base + path);
-	return fs.exec('/usr/bin/wget', args).then(parseJSON);
+	return execWget(args);
 }
 
 function get(path) {
@@ -32,6 +43,10 @@ function get(path) {
 }
 
 function post(path, body) {
+	return request(path, 'POST', body);
+}
+
+function put(path, body) {
 	return request(path, 'POST', body);
 }
 
@@ -64,6 +79,8 @@ function table(rows) {
 return {
 	get: get,
 	post: post,
+	put: put,
+	request: request,
 	restartService: restartService,
 	showError: showError,
 	value: value,

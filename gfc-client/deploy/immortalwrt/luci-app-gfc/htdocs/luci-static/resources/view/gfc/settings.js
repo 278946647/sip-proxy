@@ -5,18 +5,34 @@
 
 var API = 'http://127.0.0.1:8080/api/v1';
 
-function request(path, body, method) {
-	var args = [ '-qO-', '-T', '10' ];
+function execWget(args) {
+	return fs.exec('/usr/bin/wget', args).then(function(res) {
+		if (res.code !== 0) {
+			throw new Error((res.stderr || res.stdout || ('wget exit ' + res.code)).trim());
+		}
+		var out = res.stdout || '';
+		if (!out)
+			return {};
+		try {
+			return JSON.parse(out);
+		} catch (e) {
+			throw new Error('Invalid GFC API response: ' + out);
+		}
+	});
+}
+
+// BusyBox wget only supports GET and POST (--post-data), not --method=PUT.
+function request(path, body) {
+	var args = [ '-qO-', '-T', '15', '--header=Content-Type: application/json' ];
 	if (body !== undefined) {
-		args.push('--header=Content-Type: application/json');
-		if (method)
-			args.push('--method=' + method);
 		args.push('--post-data=' + JSON.stringify(body || {}));
 	}
 	args.push(API + path);
-	return fs.exec('/usr/bin/wget', args).then(function(res) {
-		return JSON.parse(res.stdout || '{}');
-	});
+	return execWget(args);
+}
+
+function get(path) {
+	return execWget([ '-qO-', '-T', '10', API + path ]);
 }
 
 function option(value, label, selected, disabled) {
@@ -27,9 +43,21 @@ function option(value, label, selected, disabled) {
 	}, [ label ]);
 }
 
+function showResult(result, res, label) {
+	var payload = res || {};
+	var body = payload.data !== undefined ? payload.data : payload;
+	result.textContent = JSON.stringify(body, null, 2);
+	if (payload.ok === false) {
+		var msg = (payload.error && payload.error.message) ? payload.error.message : '请求失败';
+		ui.addNotification(null, E('p', {}, label + '：' + msg), 'danger');
+		return;
+	}
+	ui.addNotification(null, E('p', {}, label + '已提交'));
+}
+
 return view.extend({
 	load: function() {
-		return Promise.all([ request('/settings'), request('/routing') ]);
+		return Promise.all([ get('/settings'), get('/routing') ]);
 	},
 
 	render: function(data) {
@@ -60,9 +88,8 @@ return view.extend({
 		proxyModeBtn.addEventListener('click', function() {
 			proxyModeBtn.disabled = true;
 			result.textContent = 'applying proxy mode...';
-			request('/settings', { proxy_mode: proxyModeSelect.value }, 'PUT').then(function(res) {
-				result.textContent = JSON.stringify((res || {}).data || res, null, 2);
-				ui.addNotification(null, E('p', {}, '路由模式已提交'));
+			request('/settings', { proxy_mode: proxyModeSelect.value }).then(function(res) {
+				showResult(result, res, '路由模式');
 			}).catch(function(err) {
 				result.textContent = err.message || String(err);
 				ui.addNotification(null, E('p', {}, result.textContent), 'danger');
@@ -75,9 +102,8 @@ return view.extend({
 		routeBtn.addEventListener('click', function() {
 			routeBtn.disabled = true;
 			result.textContent = 'applying routing...';
-			request('/routing', { mode: routeSelect.value }, 'PUT').then(function(res) {
-				result.textContent = JSON.stringify((res || {}).data || res, null, 2);
-				ui.addNotification(null, E('p', {}, '代理模式已提交'));
+			request('/routing', { mode: routeSelect.value }).then(function(res) {
+				showResult(result, res, '代理模式');
 			}).catch(function(err) {
 				result.textContent = err.message || String(err);
 				ui.addNotification(null, E('p', {}, result.textContent), 'danger');
@@ -90,9 +116,8 @@ return view.extend({
 		logBtn.addEventListener('click', function() {
 			logBtn.disabled = true;
 			result.textContent = 'applying logging...';
-			request('/settings/singbox/logging', { level: logSelect.value }, 'PUT').then(function(res) {
-				result.textContent = JSON.stringify((res || {}).data || res, null, 2);
-				ui.addNotification(null, E('p', {}, '日志级别已提交'));
+			request('/settings/singbox/logging', { level: logSelect.value }).then(function(res) {
+				showResult(result, res, '日志级别');
 			}).catch(function(err) {
 				result.textContent = err.message || String(err);
 				ui.addNotification(null, E('p', {}, result.textContent), 'danger');
