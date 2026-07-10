@@ -19,10 +19,11 @@ function request(path, body, method) {
 	});
 }
 
-function option(value, label, selected) {
+function option(value, label, selected, disabled) {
 	return E('option', {
 		'value': value,
-		'selected': value === selected ? 'selected' : null
+		'selected': value === selected ? 'selected' : null,
+		'disabled': disabled ? 'disabled' : null
 	}, [ label ]);
 }
 
@@ -34,14 +35,19 @@ return view.extend({
 	render: function(data) {
 		var settings = ((data[0] || {}).data || {});
 		var routing = ((data[1] || {}).data || {});
+		var proxyMode = settings.proxy_mode || 'gateway';
 		var routeMode = routing.mode || settings.routing_mode || 'split';
 		var logLevel = settings.singbox_log_level || 'error';
 		var result = E('pre', { 'style': 'white-space: pre-wrap; max-height: 260px; overflow: auto' }, []);
 
+		var proxyModeSelect = E('select', { 'class': 'cbi-input-select' }, [
+			option('gateway', '网关模式', proxyMode),
+			option('bypass', '旁路模式（待开发）', proxyMode, true),
+			option('transparent', '透明模式（待开发）', proxyMode, true)
+		]);
 		var routeSelect = E('select', { 'class': 'cbi-input-select' }, [
 			option('split', '分流模式', routeMode),
-			option('global', '全局代理', routeMode),
-			option('direct', '直连/旁路', routeMode)
+			option('global', '全局模式', routeMode)
 		]);
 		var logSelect = E('select', { 'class': 'cbi-input-select' }, [
 			option('error', 'error', logLevel),
@@ -50,13 +56,28 @@ return view.extend({
 			option('debug', 'debug', logLevel)
 		]);
 
-		var routeBtn = E('button', { 'class': 'btn cbi-button cbi-button-apply' }, [ '应用路由模式' ]);
+		var proxyModeBtn = E('button', { 'class': 'btn cbi-button cbi-button-apply' }, [ '应用路由模式' ]);
+		proxyModeBtn.addEventListener('click', function() {
+			proxyModeBtn.disabled = true;
+			result.textContent = 'applying proxy mode...';
+			request('/settings', { proxy_mode: proxyModeSelect.value }, 'PUT').then(function(res) {
+				result.textContent = JSON.stringify((res || {}).data || res, null, 2);
+				ui.addNotification(null, E('p', {}, '路由模式已提交'));
+			}).catch(function(err) {
+				result.textContent = err.message || String(err);
+				ui.addNotification(null, E('p', {}, result.textContent), 'danger');
+			}).finally(function() {
+				proxyModeBtn.disabled = false;
+			});
+		});
+
+		var routeBtn = E('button', { 'class': 'btn cbi-button cbi-button-apply' }, [ '应用代理模式' ]);
 		routeBtn.addEventListener('click', function() {
 			routeBtn.disabled = true;
 			result.textContent = 'applying routing...';
 			request('/routing', { mode: routeSelect.value }, 'PUT').then(function(res) {
 				result.textContent = JSON.stringify((res || {}).data || res, null, 2);
-				ui.addNotification(null, E('p', {}, '路由模式已提交'));
+				ui.addNotification(null, E('p', {}, '代理模式已提交'));
 			}).catch(function(err) {
 				result.textContent = err.message || String(err);
 				ui.addNotification(null, E('p', {}, result.textContent), 'danger');
@@ -89,7 +110,21 @@ return view.extend({
 				]),
 				E('div', { 'class': 'cbi-value' }, [
 					E('label', { 'class': 'cbi-value-title' }, [ '路由模式' ]),
-					E('div', { 'class': 'cbi-value-field' }, [ routeSelect, ' ', routeBtn ])
+					E('div', { 'class': 'cbi-value-field' }, [
+						proxyModeSelect,
+						' ',
+						proxyModeBtn,
+						E('div', { 'class': 'hint' }, [ '设置设备在网络中的工作方式：网关 / 旁路 / 透明' ])
+					])
+				]),
+				E('div', { 'class': 'cbi-value' }, [
+					E('label', { 'class': 'cbi-value-title' }, [ '代理模式' ]),
+					E('div', { 'class': 'cbi-value-field' }, [
+						routeSelect,
+						' ',
+						routeBtn,
+						E('div', { 'class': 'hint' }, [ '设置流量代理策略：国内直连+国际代理，或全局走代理' ])
+					])
 				]),
 				E('div', { 'class': 'cbi-value' }, [
 					E('label', { 'class': 'cbi-value-title' }, [ 'Sing-box 日志级别' ]),
