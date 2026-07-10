@@ -7,6 +7,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from .routes import resolve_snat_iface
+
 SINGBOX_CONFIG = Path(os.environ.get("GFC_ETC", "/etc/gfc-node")) / "sing-box.json"
 DNS_DIRECT_TAG = "dns-direct"
 DNS_INTL_DEFAULT = "1.1.1.1"
@@ -116,6 +118,42 @@ def _prepend_bypass_rules(
         0,
         {"ip_cidr": bypass_cidrs, "outbound": "direct"},
     )
+
+
+def _vless_auth_user_route(
+    name: str,
+    *,
+    outbound: str | None = None,
+    server: str | None = None,
+) -> dict[str, Any]:
+    """Route/DNS rule keyed on VLESS inbound auth user (not Linux process user)."""
+    rule: dict[str, Any] = {
+        "inbound": "vless-reality-in",
+        "auth_user": [name],
+        "action": "route",
+    }
+    if outbound is not None:
+        rule["outbound"] = outbound
+    if server is not None:
+        rule["server"] = server
+    return rule
+
+
+def _client_ingress_route_block(
+    route_rules: list[dict[str, Any]],
+    *,
+    final: str = "direct",
+) -> dict[str, Any]:
+    """Client-ingress forward node: explicit WAN iface, local direct fallback."""
+    block: dict[str, Any] = {
+        "rules": route_rules,
+        "final": final,
+        "auto_detect_interface": False,
+    }
+    wan = resolve_snat_iface()
+    if wan:
+        block["default_interface"] = wan
+    return block
 
 
 def render_singbox_config(
@@ -268,7 +306,6 @@ def _render_client_ingress_only(
 
     outbounds: list[dict[str, Any]] = [{"type": "direct", "tag": "direct"}]
     route_rules: list[dict[str, Any]] = []
-    default_final = "direct"
     vless_users: list[dict[str, Any]] = []
 
     for user in client_ingress.get("users") or []:
@@ -289,16 +326,7 @@ def _render_client_ingress_only(
             if not any(o.get("tag") == tag for o in outbounds):
                 outbounds.append(_build_client_socks_outbound(tag, outbound))
             route_out = tag
-            if default_final == "direct":
-                default_final = tag
-        route_rules.append(
-            {
-                "inbound": "vless-reality-in",
-                "user": [name],
-                "action": "route",
-                "outbound": route_out,
-            }
-        )
+        route_rules.append(_vless_auth_user_route(name, outbound=route_out))
 
     _prepend_bypass_rules(route_rules, _collect_bypass_cidrs(dataplane, client_ingress))
 
@@ -327,11 +355,7 @@ def _render_client_ingress_only(
             }
         ],
         "outbounds": outbounds,
-        "route": {
-            "rules": route_rules,
-            "final": default_final,
-            "auto_detect_interface": True,
-        },
+        "route": _client_ingress_route_block(route_rules),
         "dns": {"strategy": "prefer_ipv4"},
     }
     return cfg
@@ -461,23 +485,9 @@ def _append_client_ingress(
                 s.get("tag") == DNS_DIRECT_TAG for s in dns_servers
             ):
                 dns_servers.append(_intl_doh_server(DNS_DIRECT_TAG, intl_dns))
-            dns_rules.append(
-                {
-                    "inbound": "vless-reality-in",
-                    "user": [name],
-                    "action": "route",
-                    "server": primary_dns,
-                }
-            )
+            dns_rules.append(_vless_auth_user_route(name, server=primary_dns))
 
-        route_rules.append(
-            {
-                "inbound": "vless-reality-in",
-                "user": [name],
-                "action": "route",
-                "outbound": route_out,
-            }
-        )
+        route_rules.append(_vless_auth_user_route(name, outbound=route_out))
 
     if not any(r.get("action") == "hijack-dns" for r in route_rules):
         hijack_at = min(2, len(route_rules))

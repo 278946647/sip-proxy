@@ -74,9 +74,11 @@ class ClientIngressSingboxTest(unittest.TestCase):
             if r.get("inbound") == "vless-reality-in" and r.get("action") == "route"
         ]
         self.assertEqual(len(user_routes), 2)
-        by_user = {r["user"][0]: r["outbound"] for r in user_routes}
+        by_user = {r["auth_user"][0]: r["outbound"] for r in user_routes}
         self.assertEqual(by_user["client-1"], "client-1")
         self.assertEqual(by_user["client-2"], "direct")
+        self.assertEqual(cfg["route"]["final"], "direct")
+        self.assertFalse(cfg["route"]["auto_detect_interface"])
         self.assertNotIn("tproxy-in", inbounds)
 
         # sanity: json serializable
