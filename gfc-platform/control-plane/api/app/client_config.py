@@ -67,6 +67,10 @@ def build_client_disabled_payload(
     reason: str = "line_disabled",
 ) -> dict[str, Any]:
     """Direct-egress mode: keep DNS hijack + SNAT, disable proxy dataplane."""
+    scheme = (device.routing_scheme or "split").strip().lower()
+    if scheme not in ("split", "global"):
+        scheme = "split"
+
     return {
         "deviceId": device.id,
         "deviceName": device.name,
@@ -74,6 +78,7 @@ def build_client_disabled_payload(
         "dataplaneMode": "direct",
         "reason": reason,
         "proxyMode": device.proxy_mode or "gateway",
+        "routingScheme": scheme,
         "node": {"address": ""},
     }
 
@@ -97,6 +102,10 @@ def build_client_payload(
     else:
         outbound = {"mode": "direct"}
 
+    scheme = (device.routing_scheme or "split").strip().lower()
+    if scheme not in ("split", "global"):
+        scheme = "split"
+
     return {
         "deviceId": device.id,
         "deviceName": device.name,
@@ -104,6 +113,8 @@ def build_client_payload(
         "tid": line.tid,
         "dataplaneMode": "proxy",
         "proxyMode": device.proxy_mode or "gateway",
+        "routingScheme": scheme,
+        "controlPlaneServers": public_server_urls(),
         "node": {
             "id": node.id,
             "name": node.name,

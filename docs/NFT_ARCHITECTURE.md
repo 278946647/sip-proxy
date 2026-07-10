@@ -233,6 +233,19 @@ Controller, forward node, China DNS, SSH (port **212**), LAN local, RFC1918, Chi
 
 **Forbidden:** skuid-based bypass for sing-box or DNS daemons as a substitute for `bypass_ip` or `TO_CN`.
 
+### Routing mode (`split` vs `global`)
+
+Traffic mode is configured per device as `routingScheme` in the control-plane config bundle (`split` | `global`). The client writes `/etc/gfc-client/routing-mode.json` (`{"mode":"split"|"global"}`) and regenerates nft rules.
+
+| Mode | `@TO_CN return` in `prerouting_mangle_route` / `output_mangle_route` | IP traffic |
+|------|------------------------------------------------------------------------|------------|
+| `split` (default) | **Present** — China IP stays on WAN | CN direct; international → mark → gfctun |
+| `global` | **Omitted** — China IP gets mark `0x2023` | All public IP (except bypass) → gfctun → VLESS |
+
+**Unchanged in both modes:** `bypass_ip`, RFC1918, LAN CIDR, DNS/DHCP/NTP port returns, `ext_const`, fwmark → table `2022` → `gfctun`, DNS hijack → unbound `:53`. LAN DNS resolution (domestic/international upstream split in unbound) is **not** tied to routing mode.
+
+**Global mode requirements:** `bypass_ip` must include forward-node and control-plane IPs (bundle `node.address` + `controlPlaneServers`) so VLESS can establish on WAN.
+
 ---
 
 ## 10. GFC Forward Node — mandatory tables

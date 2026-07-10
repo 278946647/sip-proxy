@@ -117,6 +117,9 @@ func (o *Orchestrator) ApplyDirect(directPayload map[string]any, version string,
 	if err := o.saveBundle(directPayload); err != nil {
 		return false, err.Error()
 	}
+	if err := o.applyRoutingModeFromPayload(directPayload); err != nil {
+		return false, "routing mode: " + err.Error()
+	}
 	o.writeMode("direct", false)
 	msgs = append(msgs, o.postDirectRepair()...)
 	if restart {
@@ -194,6 +197,10 @@ func (o *Orchestrator) applyPayload(p map[string]any, version string, restart, s
 	if err := o.saveBundle(p); err != nil {
 		o.rollbackQuiet()
 		return false, err.Error()
+	}
+	if err := o.applyRoutingModeFromPayload(p); err != nil {
+		o.rollbackQuiet()
+		return false, "routing mode: " + err.Error()
 	}
 	o.writeMode("active", true)
 	msgs = append(msgs, o.postDataplaneRepair()...)
@@ -422,6 +429,15 @@ func (o *Orchestrator) saveBundle(payload map[string]any) error {
 		return err
 	}
 	return atomicWrite(path, raw, 0o600)
+}
+
+func (o *Orchestrator) applyRoutingModeFromPayload(p map[string]any) error {
+	mode := payload.RoutingMode(p)
+	raw, err := json.MarshalIndent(map[string]string{"mode": mode}, "", "  ")
+	if err != nil {
+		return err
+	}
+	return atomicWrite(o.cfg.Paths.RoutingModeFile, raw, 0o644)
 }
 
 func (o *Orchestrator) writeMode(mode string, activated bool) {

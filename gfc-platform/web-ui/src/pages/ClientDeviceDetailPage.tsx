@@ -216,7 +216,7 @@ export function ClientDeviceDetailPage() {
             `/admin/client-devices/${id}?operator=${localStorage.getItem("gfc_user") || "admin"}`,
             { routing_scheme: routingDraft }
           );
-          message.success("业务路由模式已保存（待客户端版本支持后生效）");
+          message.success("业务路由模式已保存");
           await load();
         } catch (e) {
           message.error(String(e));

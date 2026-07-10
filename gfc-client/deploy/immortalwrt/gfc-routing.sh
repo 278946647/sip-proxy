@@ -151,9 +151,33 @@ fmt_ext_const_elements() {
 	echo "$out"
 }
 
+load_routing_mode() {
+	local mode="split"
+	local f="${GFC_ETC}/routing-mode.json"
+	if [ -f "$f" ]; then
+		if command -v jsonfilter >/dev/null 2>&1; then
+			mode="$(jsonfilter -i "$f" -e '@.mode' 2>/dev/null || echo split)"
+		else
+			mode="$(awk -F'"' '/"mode"[[:space:]]*:/ { print tolower($4); exit }' "$f" 2>/dev/null || echo split)"
+		fi
+	fi
+	mode="$(echo "$mode" | tr 'A-Z' 'a-z')"
+	case "$mode" in
+		global) echo "global" ;;
+		*) echo "split" ;;
+	esac
+}
+
 apply_policy_table_architecture() {
-	local ext_const
+	local ext_const routing_mode cn_preroute_rule cn_output_rule
 	ext_const="$(fmt_ext_const_elements)"
+	routing_mode="$(load_routing_mode)"
+	cn_preroute_rule=""
+	cn_output_rule=""
+	if [ "$routing_mode" != "global" ]; then
+		cn_preroute_rule="    iifname \"$LAN_IFACE\" ip daddr @TO_CN return"
+		cn_output_rule="    ip daddr @TO_CN return"
+	fi
 	nft -f - <<EOF
 table inet gfc {
   set TO_CN {
@@ -195,7 +219,7 @@ table inet gfc {
     iifname "$LAN_IFACE" udp dport { 53, 67, 68, 123 } return
     iifname "$LAN_IFACE" ip daddr @bypass_ip return
     iifname "$LAN_IFACE" ip daddr @ext_const ct mark $MARK meta mark set ct mark return
-    iifname "$LAN_IFACE" ip daddr @TO_CN return
+${cn_preroute_rule}
     iifname "$LAN_IFACE" ct mark $MARK meta mark set ct mark
   }
 
@@ -212,7 +236,7 @@ table inet gfc {
     tcp dport $SSH_PORT return
     ip daddr @TO_RFC1918 return
     ip daddr 127.0.0.0/8 return
-    ip daddr @TO_CN return
+${cn_output_rule}
     ip daddr @bypass_ip counter return
     meta mark set $MARK
     ct mark set meta mark
@@ -451,7 +475,7 @@ start_rules() {
 	if [ -x "$GFC_ROOT/deploy/apply-tc-htb.sh" ]; then
 		sh "$GFC_ROOT/deploy/apply-tc-htb.sh" apply 2>/dev/null || true
 	fi
-	echo "gfc routing: scheme=$ROUTING_SCHEME lan=$LAN_IFACE wan=$WAN_IFACE cidr=$LAN_CIDR mark=$MARK table=$TABLE redirect=$REDIRECT_PORT ssh=$SSH_PORT priority=$NFT_PRIORITY output=$OUTPUT_POLICY mosdns_uid=$MOSDNS_UID singbox_uid=$SINGBOX_UID cn=$CN_LIST bypass=$BYPASS_AUDIT"
+	echo "gfc routing: scheme=$ROUTING_SCHEME mode=$(load_routing_mode) lan=$LAN_IFACE wan=$WAN_IFACE cidr=$LAN_CIDR mark=$MARK table=$TABLE redirect=$REDIRECT_PORT ssh=$SSH_PORT priority=$NFT_PRIORITY output=$OUTPUT_POLICY mosdns_uid=$MOSDNS_UID singbox_uid=$SINGBOX_UID cn=$CN_LIST bypass=$BYPASS_AUDIT"
 }
 
 case "$ACTION" in

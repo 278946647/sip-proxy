@@ -16,3 +16,22 @@ func IsDirect(payload map[string]any) bool {
 	addr, _ := node["address"].(string)
 	return strings.TrimSpace(addr) == ""
 }
+
+// RoutingMode reads control-plane routingScheme from bundle payload.
+// Local file /etc/gfc-client/routing-mode.json uses the same values: split | global.
+func RoutingMode(payload map[string]any) string {
+	if payload == nil {
+		return "split"
+	}
+	for _, key := range []string{"routingScheme", "routing_scheme"} {
+		raw, ok := payload[key].(string)
+		if !ok {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(raw)) {
+		case "global":
+			return "global"
+		}
+	}
+	return "split"
+}

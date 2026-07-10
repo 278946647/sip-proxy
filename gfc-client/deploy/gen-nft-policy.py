@@ -202,6 +202,7 @@ def render_architecture(cfg: dict) -> str:
     mark = normalize_mark(cfg["mark"])
     ssh_port = cfg["ssh_port"]
     ext_const = fmt_ip_elements(cfg["ext_const_ips"])
+    routing_mode = str(cfg.get("routing_mode", "split")).lower()
 
     bypass_set = ""
     bypass_preroute = ""
@@ -218,12 +219,20 @@ def render_architecture(cfg: dict) -> str:
         bypass_output = """
     ip daddr @bypass_ip counter return"""
 
+    cn_preroute = ""
+    cn_output = ""
+    if routing_mode != "global":
+        cn_preroute = f"""
+    iifname "{lan}" ip daddr @TO_CN return"""
+        cn_output = """
+    ip daddr @TO_CN return"""
+
     cn_load = cfg["cn_load_path"]
     cn_count = cfg["cn_count"]
 
     return f"""#!/usr/sbin/nft -f
 # GFC client inet gfc — docs/NFT_ARCHITECTURE.md
-# TO_CN: {cn_count} prefixes via {cn_load}
+# routing_mode={routing_mode}; TO_CN: {cn_count} prefixes via {cn_load}
 table inet gfc {{
   set TO_CN {{
     type ipv4_addr
@@ -257,8 +266,7 @@ table inet gfc {{
     iifname "{lan}" ip daddr {{ 10.0.0.0/8, 127.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 }} return
     iifname "{lan}" ip daddr {lan_cidr} return
     iifname "{lan}" udp dport {{ 53, 67, 68, 123 }} return{bypass_preroute}
-    iifname "{lan}" ip daddr @ext_const ct mark {mark} meta mark set ct mark return
-    iifname "{lan}" ip daddr @TO_CN return
+    iifname "{lan}" ip daddr @ext_const ct mark {mark} meta mark set ct mark return{cn_preroute}
     iifname "{lan}" ct mark {mark} meta mark set ct mark
   }}
 
@@ -274,8 +282,7 @@ table inet gfc {{
     meta mark != 0x00000000 return
     tcp dport {ssh_port} return
     ip daddr @TO_RFC1918 return
-    ip daddr 127.0.0.0/8 return
-    ip daddr @TO_CN return{bypass_output}
+    ip daddr 127.0.0.0/8 return{cn_output}{bypass_output}
     meta mark set {mark}
     ct mark set meta mark
   }}
@@ -555,7 +562,8 @@ def main() -> int:
         body = scheme_a(cfg)
     outfile.write_text(body)
     print(
-        f"    nft policy scheme={scheme} cn={len(cn_cidrs)} bypass={bypass_ips or 'none'} -> {outfile}"
+        f"    nft policy scheme={scheme} mode={cfg['routing_mode']} cn={len(cn_cidrs)} "
+        f"bypass={bypass_ips or 'none'} -> {outfile}"
     )
     print(f"    nft cn load -> {cn_load} ({(len(cn_cidrs) + BATCH_SIZE - 1) // BATCH_SIZE if cn_cidrs else 0} batches)")
     return 0

@@ -56,6 +56,48 @@ class ClientNftArchitectureTests(unittest.TestCase):
         self.assertNotIn("gfc_client_mangle", text)
         self.assertNotIn("cn_ip", text)
 
+    def test_global_mode_omits_to_cn_return(self) -> None:
+        cfg = {
+            "lan": "br-lan",
+            "lan_cidr": "192.168.1.0/24",
+            "mark": "0x2023",
+            "tun": "gfctun",
+            "wan": "eth0",
+            "mosdns_uid": "65353",
+            "singbox_uid": "65354",
+            "ssh_port": "212",
+            "redirect_port": "11800",
+            "ext_const_ips": ["1.1.1.1", "8.8.8.8"],
+            "bypass_ips": ["103.78.41.16"],
+            "cn_count": 1,
+            "cn_load_path": "/tmp/cn.nft",
+            "routing_mode": "global",
+        }
+        text = gnp.render_architecture(cfg)
+        self.assertIn("routing_mode=global", text)
+        self.assertNotIn("ip daddr @TO_CN return", text)
+        self.assertIn("set TO_CN", text)
+
+    def test_split_mode_keeps_to_cn_return(self) -> None:
+        cfg = {
+            "lan": "br-lan",
+            "lan_cidr": "192.168.1.0/24",
+            "mark": "0x2023",
+            "tun": "gfctun",
+            "wan": "eth0",
+            "mosdns_uid": "65353",
+            "singbox_uid": "65354",
+            "ssh_port": "212",
+            "redirect_port": "11800",
+            "ext_const_ips": ["1.1.1.1", "8.8.8.8"],
+            "bypass_ips": [],
+            "cn_count": 1,
+            "cn_load_path": "/tmp/cn.nft",
+            "routing_mode": "split",
+        }
+        text = gnp.render_architecture(cfg)
+        self.assertIn("ip daddr @TO_CN return", text)
+
     def test_cn_load_targets_to_cn(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             etc = Path(tmp)
