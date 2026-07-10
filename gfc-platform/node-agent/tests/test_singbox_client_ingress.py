@@ -79,6 +79,9 @@ class ClientIngressSingboxTest(unittest.TestCase):
         self.assertEqual(by_user["client-2"], "direct")
         self.assertEqual(cfg["route"]["final"], "direct")
         self.assertFalse(cfg["route"]["auto_detect_interface"])
+        for r in user_routes:
+            self.assertIn("auth_user", r)
+            self.assertNotIn("user", r)
         self.assertNotIn("tproxy-in", inbounds)
 
         # sanity: json serializable

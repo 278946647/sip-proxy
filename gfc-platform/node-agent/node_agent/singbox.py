@@ -126,7 +126,10 @@ def _vless_auth_user_route(
     outbound: str | None = None,
     server: str | None = None,
 ) -> dict[str, Any]:
-    """Route/DNS rule keyed on VLESS inbound auth user (not Linux process user)."""
+    """Route/DNS rule keyed on VLESS inbound auth user (not Linux process user).
+
+    See docs/SINGBOX_ARCHITECTURE.md §9 client-ingress-only — must use auth_user.
+    """
     rule: dict[str, Any] = {
         "inbound": "vless-reality-in",
         "auth_user": [name],

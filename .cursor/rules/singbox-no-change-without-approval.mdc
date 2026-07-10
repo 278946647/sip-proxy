@@ -49,6 +49,10 @@ alwaysApply: true
 - 修改规范 inbound tag：`tproxy-in`、`vless-reality-in`（无批准）
 - 更改 TPROXY / VLESS 默认端口 12345 / 8443（无批准）
 - 删除 prerouting 侧 bypass 与 sing-box route bypass 一致性
+- client-ingress 使用 `route.user` 做 VLESS 按线路分流（必须用 `auth_user`）
+- client-ingress 将 `route.final` 设为 SOCKS outbound（`client-{lineId}`）；必须为 `direct`
+- client-ingress 设置 `auto_detect_interface: true`；必须为 `false`
+- 生成器硬编码 `default_interface`（如 `eth0` / `ens160`）；必须运行时 `GFC_SNAT_IFACE` / 默认路由发现
 
 ### 通用
 
@@ -66,11 +70,25 @@ alwaysApply: true
 | Route 顺序 | bypass → private → domestic:53 → intl DNS → catch-all proxy-prefer |
 | VLESS 故障 | 不自动切 direct（当前版本） |
 
+## Forward Node client-ingress 强制契约（摘要）
+
+| 项 | 值 |
+|----|-----|
+| 生成器 | `gfc-platform/node-agent/node_agent/singbox.py` |
+| VLESS 用户 name | `client-{line.id}`（DB 主键，非 TID） |
+| 按线路分流字段 | `route.rules[].auth_user`（**禁止** `user`） |
+| Route 顺序 | bypass `ip_cidr` → direct → per-user `auth_user` |
+| `route.final` | `direct`（未知用户走节点 WAN，禁止落 SOCKS） |
+| `auto_detect_interface` | `false` |
+| `default_interface` | `resolve_snat_iface()` / `GFC_SNAT_IFACE` |
+| SOCKS 线路 outbound tag | `client-{lineId}`（与 VLESS `users[].name` 一致） |
+| 直出线路 outbound | `direct` |
+
 ## 允许的无须批准操作
 
 - 只读：`sing-box check`、`curl 127.0.0.1:9090/proxies/...`、`check-vless.sh`
 - 文档：按用户要求更新 `SINGBOX_ARCHITECTURE.md` 本身
-- Gap 分析：对照规范与 `/etc/gfc-client/sing-box.json`
+- Gap 分析：对照规范与 `/etc/gfc-client/sing-box.json` 或 `/etc/gfc-node/sing-box.json`
 
 ## 用户固定口令（建议每次 sing-box 任务附带）
 

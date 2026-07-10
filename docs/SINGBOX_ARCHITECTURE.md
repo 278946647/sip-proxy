@@ -15,11 +15,13 @@ If generated `sing-box.json` differs from this document, **the generator is wron
 | Action | Required |
 |--------|----------|
 | Add/remove/reorder route rules (kernel-split) | User approval + update this file |
+| Add/remove/reorder forward node client-ingress route rules | User approval + update this file |
 | Rename outbound / inbound tags | Architecture review + user approval |
 | Enable TUN `auto_route` / `auto_redirect` on Client | **Forbidden** |
 | Add `direct` to `proxy-prefer` urltest outbounds | **Forbidden** on open-WAN gateways |
 | Move CN/IP split from nft to sing-box geo (kernel-split) | **Forbidden** |
 | Change default VLESS/Reality constants | User approval + cross-node contract update |
+| Use `route.user` for VLESS per-line routing on Forward Node | **Forbidden** — use `auth_user` |
 
 ---
 
@@ -50,8 +52,11 @@ Inbound (TPROXY iface)
 
 Client ingress (VLESS Reality)
   → inbound vless-reality-in
-  → per-user route → socks client-N / direct
+  → route.auth_user client-{lineId} → outbound client-{lineId} (SOCKS) or direct
+  → route.final direct (unmatched / unknown user — never SOCKS)
 ```
+
+**Validated (2026-07):** per-line egress MUST use `auth_user`, not `user`. Using `route.user` matches Linux process UID and silently misses all VLESS users; traffic then falls through to `final` (previously mis-set to first SOCKS outbound).
 
 ---
 
@@ -250,11 +255,13 @@ Route rule order: **bypass `ip_cidr` → direct** first; then sniff on `tproxy-i
 
 ### Client ingress only (`client-ingress` mode)
 
+Production layout when the forward node serves **GFC Client gateways** via VLESS Reality only (no VyOS TPROXY `dataplane.rules`). Generator entry: `_render_client_ingress_only` in `gfc-platform/node-agent/node_agent/singbox.py`.
+
 | Tag | Type | Purpose |
 |-----|------|---------|
 | `vless-reality-in` | `vless` | Client gateway connects here |
-| `client-N` | `socks` | Per-line reverse path |
-| `direct` | `direct` | Default / bypass |
+| `client-{lineId}` | `socks` | Per client line with `socks_profile_id` (tag equals VLESS `users[].name`) |
+| `direct` | `direct` | Node WAN egress / bypass |
 
 | Constant | Default |
 |----------|---------|
@@ -263,7 +270,95 @@ Route rule order: **bypass `ip_cidr` → direct** first; then sniff on `tproxy-i
 | `flow` | `xtls-rprx-vision` |
 | Reality `dest` | `www.cloudflare.com:443` |
 
-Generator: `gfc-platform/node-agent/node_agent/singbox.py`
+#### VLESS user identity (control plane → sing-box)
+
+| Field | Source |
+|-------|--------|
+| `users[].name` | `client-{line.id}` — database `Line.id`, **not** TID string |
+| `users[].uuid` | `line.client_uuid` |
+| SOCKS vs direct egress | `line.socks_profile_id` set → SOCKS outbound tag `client-{lineId}`; null → `direct` |
+
+Client device binding (`device.line_id`) selects which `uuid` the gateway uses; forward node keeps **all** enabled client lines on that node in one inbound.
+
+#### Mandatory route rule order (client-ingress-only)
+
+**Order is API.** First match wins.
+
+| # | Match | Outbound | Notes |
+|---|-------|----------|-------|
+| 1 | `ip_cidr` bypass set | `direct` | Node public IP + SOCKS host IPs from bundle |
+| 2 | `inbound: vless-reality-in` + `auth_user: [client-{lineId}]` | `client-{lineId}` or `direct` | Per-line egress; `action: route` required (sing-box ≥ 1.11) |
+
+#### Mandatory `route` block (client-ingress-only)
+
+```json
+{
+  "auto_detect_interface": false,
+  "default_interface": "<wan-iface>",
+  "final": "direct",
+  "rules": [ "... ordered as above ..." ]
+}
+```
+
+| Field | Rule |
+|-------|------|
+| `final` | **Always** `direct`. Unmatched VLESS users must egress via node WAN, **never** silently proxy through another line's SOCKS. |
+| `auto_detect_interface` | **Always** `false` for client-ingress-only. |
+| `default_interface` | Runtime WAN from `resolve_snat_iface()` — env `GFC_SNAT_IFACE` or `ip -4 route show default` dev. **Never** hardcode `eth0` / `ens160` in generator output. |
+
+#### `auth_user` vs `user` (critical)
+
+| Route field | Matches | Use for VLESS per-line routing? |
+|-------------|---------|--------------------------------|
+| `auth_user` | Inbound authenticated username (`users[].name`, e.g. `client-2`) | **Yes — mandatory** |
+| `user` | Linux process owner on local system | **No — forbidden** for client ingress |
+
+Example per-line rule (validated):
+
+```json
+{
+  "inbound": "vless-reality-in",
+  "auth_user": ["client-2"],
+  "action": "route",
+  "outbound": "direct"
+}
+```
+
+#### Reference shape (two client lines)
+
+```json
+{
+  "route": {
+    "auto_detect_interface": false,
+    "default_interface": "<wan-iface>",
+    "final": "direct",
+    "rules": [
+      {
+        "ip_cidr": ["<node-public>/32", "<socks-host>/32"],
+        "outbound": "direct"
+      },
+      {
+        "inbound": "vless-reality-in",
+        "auth_user": ["client-1"],
+        "action": "route",
+        "outbound": "client-1"
+      },
+      {
+        "inbound": "vless-reality-in",
+        "auth_user": ["client-2"],
+        "action": "route",
+        "outbound": "direct"
+      }
+    ]
+  }
+}
+```
+
+#### Mixed mode (TPROXY + client ingress)
+
+When `dataplane.rules` and `clientIngress.users` coexist, append VLESS inbound and insert sniff on `vless-reality-in`; per-user rules still use **`auth_user`**. TPROXY `route` block keeps `auto_detect_interface: true` and its own `final` semantics; client-ingress-only block above applies to the VLESS-only deployment.
+
+Generator: `gfc-platform/node-agent/node_agent/singbox.py` (`_vless_auth_user_route`, `_client_ingress_route_block`).
 
 ---
 
@@ -273,8 +368,9 @@ Generator: `gfc-platform/node-agent/node_agent/singbox.py`
 |----------|--------|--------------|
 | VLESS port | outbound `server_port: 8443` | inbound `listen_port: 8443` |
 | Reality SNI | `www.cloudflare.com` | `server_name` / `serverNames[0]` |
-| UUID / keys | From control plane bundle | `client-ingress.users` |
-| Forward node IP | In nft `bypass_ip` + route bypass | In nft `bypass_ip` |
+| UUID / keys | From control plane bundle | `clientIngress.users` (`name` = `client-{lineId}`) |
+| Per-line egress | N/A (always VLESS to node) | `auth_user` → `client-{lineId}` SOCKS or `direct` |
+| Forward node IP | In nft `bypass_ip` + route bypass | In sing-box bypass `ip_cidr` + nft `bypass_ip` |
 | Intl DNS IPs | nft `ext_const` + route rule #4 | N/A (node uses DoH in sing-box dns) |
 
 ---
@@ -289,6 +385,10 @@ AI / generators must **never** (without approval):
 - Use `meta skuid` / process-based bypass in route rules instead of `ip_cidr` bypass
 - Point VLESS `bind_interface` at `gfctun`
 - Change `route.final` to `proxy` or `proxy-prefer` in kernel-split
+- On Forward Node client-ingress: use `route.user` for VLESS per-line routing (must use `auth_user`)
+- On Forward Node client-ingress: set `final` to a SOCKS outbound tag (`client-{lineId}`) when any SOCKS line exists
+- On Forward Node client-ingress: set `auto_detect_interface: true` (must be `false`)
+- Hardcode `default_interface` to a fixed NIC name (`eth0`, `ens160`, …) in generators
 - Run sing-box-owned nftables that conflict with `inet gfc` tables
 - Use deprecated Shadowsocks / legacy outbound schemas
 
@@ -300,10 +400,12 @@ Generated `sing-box.json` must:
 
 - Pass `sing-box check -c`
 - Use renderer: `gfc-client/internal/render/singbox/singbox.go` (Client)
-- Preserve outbound tag names and route rule order for kernel-split
-- Set `bind_interface` on VLESS and WAN-bound `direct`
-- Write config `0640` owned root:`GFC_SINGBOX_USER` group
-- Support idle vs active profiles via orchestrator
+- Use renderer: `gfc-platform/node-agent/node_agent/singbox.py` (Forward Node)
+- Preserve outbound tag names and route rule order for kernel-split and client-ingress-only
+- Forward client-ingress: emit `auth_user` rules; `final: direct`; WAN via `resolve_snat_iface()`
+- Set `bind_interface` on VLESS and WAN-bound `direct` (Client)
+- Write config `0640` owned root:`GFC_SINGBOX_USER` group (Client)
+- Support idle vs active profiles via orchestrator (Client) / node-agent apply (Forward Node)
 
 ---
 
@@ -314,7 +416,7 @@ Generated `sing-box.json` must:
 | Client active | `singbox.go` | Aligned | `v0.3.0` proxy-only urltest |
 | Client tests | `singbox_route_test.go` | Aligned | |
 | Forward TPROXY | `node_agent/singbox.py` | Aligned | |
-| Forward ingress | `node_agent/singbox.py` | Aligned | |
+| Forward client-ingress | `node_agent/singbox.py` | Aligned | `auth_user` + `final: direct` validated 2026-07 |
 | `GATEWAY_CORE.md` | — | Aligned |
 | `tun-all` / geo split | `singbox.go` non-kernel path | Legacy | Requires scheme label |
 | Auto failover direct | — | **Not implemented** | By design in v0.3.0 |
@@ -322,6 +424,8 @@ Generated `sing-box.json` must:
 ---
 
 ## 14. Verification commands
+
+### GFC Client (kernel-split)
 
 ```sh
 # Config check
@@ -347,4 +451,33 @@ curl -s 'http://127.0.0.1:9090/proxies/proxy/delay?timeout=10000&url=https://www
 
 # Egress path — eth0 should show NODE:8443 for intl traffic, not target IP
 sh /usr/share/gfc-client/deploy/check-vless.sh
+```
+
+### GFC Forward Node (client-ingress-only)
+
+```sh
+sing-box check -c /etc/gfc-node/sing-box.json
+
+python3 - <<'PY'
+import json
+c = json.load(open("/etc/gfc-node/sing-box.json"))
+route = c["route"]
+assert route.get("final") == "direct", route.get("final")
+assert route.get("auto_detect_interface") is False
+vless = next(i for i in c["inbounds"] if i.get("tag") == "vless-reality-in")
+user_rules = [
+    r for r in route.get("rules", [])
+    if r.get("inbound") == "vless-reality-in" and r.get("action") == "route"
+]
+assert user_rules, "missing vless per-user route rules"
+for r in user_rules:
+    assert "auth_user" in r and "user" not in r, r
+    assert r["auth_user"][0].startswith("client-"), r
+names = {u["name"] for u in vless["users"]}
+assert names == {r["auth_user"][0] for r in user_rules}
+print("forward client-ingress OK", sorted(names))
+PY
+
+# Runtime: client-2 should log [client-2] → outbound/direct, not client-1 SOCKS
+tail -f /var/log/gfc-node/sing-box.log
 ```
