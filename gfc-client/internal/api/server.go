@@ -16,6 +16,7 @@ import (
 
 	"github.com/278946647/sip-proxy/gfc-client/internal/activation"
 	"github.com/278946647/sip-proxy/gfc-client/internal/config"
+	"github.com/278946647/sip-proxy/gfc-client/internal/cpsync"
 	"github.com/278946647/sip-proxy/gfc-client/internal/dataplane"
 	"github.com/278946647/sip-proxy/gfc-client/internal/dnslists"
 	"github.com/278946647/sip-proxy/gfc-client/internal/envfile"
@@ -501,10 +502,27 @@ func (s *Server) setRouting(c *gin.Context) {
 		s.fail(c, 400, err.Error())
 		return
 	}
-	mode := payload.NormalizeRoutingMode(body.Mode)
+	s.ok(c, s.applyRoutingModeChange(body.Mode))
+}
+
+func (s *Server) applyRoutingModeChange(rawMode string) map[string]any {
+	mode := payload.NormalizeRoutingMode(rawMode)
 	_ = s.store.UpdateSettings(map[string]any{"routing_mode": mode})
-	ok, msg := s.engine.SetRoutingModeAndApply(mode, true)
-	s.ok(c, map[string]any{"mode": mode, "apply": ok, "message": msg})
+	if err := s.engine.SetRoutingMode(mode); err != nil {
+		return map[string]any{"mode": mode, "apply": false, "message": err.Error(), "synced": false}
+	}
+	syncErr := cpsync.SyncRuntime(s.cfg, s.store, cpsync.Runtime{RoutingScheme: mode})
+	ok, msg := s.engine.ReapplyLocal(true)
+	result := map[string]any{
+		"mode":    mode,
+		"apply":   ok,
+		"message": msg,
+		"synced":  syncErr == nil,
+	}
+	if syncErr != nil {
+		result["sync_error"] = syncErr.Error()
+	}
+	return result
 }
 
 func (s *Server) getServices(c *gin.Context) {
@@ -740,6 +758,22 @@ func (s *Server) putSettings(c *gin.Context) {
 	result := map[string]any{"saved": true}
 	needReapply := false
 
+	if mode, ok := body["routing_mode"].(string); ok && strings.TrimSpace(mode) != "" {
+		mode = payload.NormalizeRoutingMode(mode)
+		if err := s.engine.SetRoutingMode(mode); err != nil {
+			s.fail(c, 500, err.Error())
+			return
+		}
+		result["routing_mode"] = mode
+		if syncErr := cpsync.SyncRuntime(s.cfg, s.store, cpsync.Runtime{RoutingScheme: mode}); syncErr != nil {
+			result["synced"] = false
+			result["sync_error"] = syncErr.Error()
+		} else {
+			result["synced"] = true
+		}
+		needReapply = true
+	}
+
 	if mode, ok := body["proxy_mode"].(string); ok && strings.TrimSpace(mode) != "" {
 		mode = strings.ToLower(strings.TrimSpace(mode))
 		if err := envfile.Set(s.cfg.Paths.EnvFile, "GFC_PROXY_MODE", mode); err != nil {
@@ -754,16 +788,12 @@ func (s *Server) putSettings(c *gin.Context) {
 		if err != nil {
 			result["network_error"] = err.Error()
 		}
-		needReapply = true
-	}
-
-	if mode, ok := body["routing_mode"].(string); ok && strings.TrimSpace(mode) != "" {
-		mode = payload.NormalizeRoutingMode(mode)
-		if err := s.engine.SetRoutingMode(mode); err != nil {
-			s.fail(c, 500, err.Error())
-			return
+		if syncErr := cpsync.SyncRuntime(s.cfg, s.store, cpsync.Runtime{ProxyMode: mode}); syncErr != nil {
+			result["proxy_synced"] = false
+			result["proxy_sync_error"] = syncErr.Error()
+		} else {
+			result["proxy_synced"] = true
 		}
-		result["routing_mode"] = mode
 		needReapply = true
 	}
 

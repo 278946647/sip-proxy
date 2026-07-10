@@ -139,6 +139,20 @@ func (c *Client) AckConfig(version, status, message string) error {
 	return c.requestJSON("POST", "/clients/me/config/ack", body, true, nil)
 }
 
+func (c *Client) UpdateRuntime(routingScheme, proxyMode string) error {
+	body := map[string]any{}
+	if strings.TrimSpace(routingScheme) != "" {
+		body["routing_scheme"] = strings.ToLower(strings.TrimSpace(routingScheme))
+	}
+	if strings.TrimSpace(proxyMode) != "" {
+		body["proxy_mode"] = strings.ToLower(strings.TrimSpace(proxyMode))
+	}
+	if len(body) == 0 {
+		return nil
+	}
+	return c.requestJSON("PATCH", "/clients/me/runtime", body, true, nil)
+}
+
 func (c *Client) requestJSON(method, path string, body any, auth bool, out any) error {
 	var r io.Reader
 	if body != nil {

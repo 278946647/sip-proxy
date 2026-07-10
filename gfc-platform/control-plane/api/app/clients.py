@@ -27,6 +27,7 @@ from .schemas import (
     ClientConfigAckIn,
     ClientHeartbeatRequest,
     ClientHeartbeatResponse,
+    ClientRuntimeUpdateIn,
     ConfigBundleOut,
     ReverseSSHCommandOut,
     ReverseSSHPortsOut,
@@ -293,6 +294,27 @@ async def client_heartbeat(
         reverse_ssh=reverse_ssh,
         webssh_authorized_key=webssh_public_key_line(),
     )
+
+
+@router.patch("/me/runtime")
+async def client_update_runtime(
+    body: ClientRuntimeUpdateIn,
+    session: AsyncSession = Depends(get_session),
+    authorization: str | None = Header(default=None),
+) -> dict[str, str | bool]:
+    device = await _auth_client(session, authorization)
+    data = body.model_dump(exclude_unset=True)
+    if "proxy_mode" in data:
+        device.proxy_mode = data["proxy_mode"]
+    if "routing_scheme" in data:
+        device.routing_scheme = data["routing_scheme"]
+    session.add(device)
+    await session.commit()
+    return {
+        "ok": True,
+        "proxy_mode": device.proxy_mode or "gateway",
+        "routing_scheme": device.routing_scheme or "split",
+    }
 
 
 @router.get("/me/config", response_model=ConfigBundleOut)

@@ -443,6 +443,11 @@ class ClientHeartbeatRequest(BaseModel):
     proxy_mode: str | None = Field(default=None, pattern="^(gateway|bypass|transparent)$")
 
 
+class ClientRuntimeUpdateIn(BaseModel):
+    proxy_mode: str | None = Field(default=None, pattern="^(gateway|bypass|transparent)$")
+    routing_scheme: str | None = Field(default=None, pattern="^(split|global)$")
+
+
 class ReverseSSHPortsOut(BaseModel):
     ssh: int | None = None
     http: int | None = None

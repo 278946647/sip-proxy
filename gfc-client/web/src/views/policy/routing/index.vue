@@ -40,6 +40,11 @@ async function save() {
       message.value = String(res.data?.message ?? '切换失败')
       return
     }
+    if (res.data?.synced === false) {
+      message.value = `本地已应用，但同步控制平面失败：${res.data?.sync_error ?? '未知错误'}`
+      await load()
+      return
+    }
     message.value = `代理模式已切换为 ${mode.value}`
     await load()
   } catch (err) {

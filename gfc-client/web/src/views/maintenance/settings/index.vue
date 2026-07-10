@@ -47,6 +47,10 @@ async function save() {
     const dataplane = res.data?.dataplane as { ok?: boolean; message?: string } | undefined
     if (dataplane && dataplane.ok === false) {
       message.value = dataplane.message ?? '设置已保存，但数据面应用失败'
+    } else if (res.data?.synced === false) {
+      message.value = `本地已保存，但同步控制平面失败：${res.data?.sync_error ?? '未知错误'}`
+    } else if (res.data?.proxy_synced === false) {
+      message.value = `本地已保存，但路由模式同步控制平面失败：${res.data?.proxy_sync_error ?? '未知错误'}`
     } else {
       message.value = '设置已保存'
     }

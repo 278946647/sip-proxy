@@ -11,6 +11,7 @@ import (
 	"github.com/278946647/sip-proxy/gfc-client/internal/activation"
 	"github.com/278946647/sip-proxy/gfc-client/internal/config"
 	"github.com/278946647/sip-proxy/gfc-client/internal/controlplane"
+	"github.com/278946647/sip-proxy/gfc-client/internal/cpsync"
 	"github.com/278946647/sip-proxy/gfc-client/internal/dataplane"
 	"github.com/278946647/sip-proxy/gfc-client/internal/envfile"
 	"github.com/278946647/sip-proxy/gfc-client/internal/linecode"
@@ -177,6 +178,7 @@ func (r *Runner) tick() {
 	}
 	payload2 := bundle.Payload
 	r.mergePayloadProxyMode(payload2)
+	r.reconcileRoutingScheme(payload2, bundle.Version, state.AppliedVersion)
 	if cp := client.ActiveServer(); cp != "" {
 		payload2["controlPlaneServers"] = []any{cp}
 	}
@@ -257,6 +259,26 @@ func (r *Runner) mergePayloadProxyMode(payload map[string]any) {
 		r.cfg.ProxyMode = pm
 	}
 	payload["proxyMode"] = pm
+}
+
+func (r *Runner) reconcileRoutingScheme(cpPayload map[string]any, cpVersion, appliedVersion string) {
+	local := r.engine.LoadBundle()
+	if local == nil {
+		return
+	}
+	localMode := payload.RoutingMode(local)
+	cpMode := payload.RoutingMode(cpPayload)
+	if localMode == cpMode {
+		return
+	}
+	// New bundle version from control plane — platform change wins.
+	if cpVersion != appliedVersion {
+		return
+	}
+	if err := cpsync.SyncRuntime(r.cfg, r.store, cpsync.Runtime{RoutingScheme: localMode}); err != nil {
+		fmt.Printf("sync routing to control plane: %v\n", err)
+	}
+	cpPayload["routingScheme"] = localMode
 }
 
 func (r *Runner) currentSingboxMatches(payload map[string]any) bool {
