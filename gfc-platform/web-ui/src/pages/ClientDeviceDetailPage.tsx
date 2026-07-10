@@ -352,9 +352,6 @@ export function ClientDeviceDetailPage() {
 
         <Col xs={24} lg={12}>
           <Card title="代理模式">
-            <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
-              设置国际流量的代理策略。路由工作模式在设备开通时确定，见下方设备信息。
-            </Typography.Paragraph>
             <Radio.Group
               value={routingDraft}
               onChange={(e) => setRoutingDraft(e.target.value)}

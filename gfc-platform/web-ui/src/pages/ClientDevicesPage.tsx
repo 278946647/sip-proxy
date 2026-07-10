@@ -232,6 +232,14 @@ export function ClientDevicesPage() {
         loading={loading}
         dataSource={visibleItems}
         pagination={{ pageSize: 50 }}
+        locale={{
+          emptyText: (
+            <>
+              暂无设备，请在线路详情页复制{" "}
+              <Link to="/lines">线路码</Link> 刷入客户端盒子。
+            </>
+          ),
+        }}
         columns={[
           {
             title: "设备名称",
@@ -310,10 +318,6 @@ export function ClientDevicesPage() {
           },
         ]}
       />
-
-      <div style={{ marginTop: 8 }}>
-        尚无设备？请在线路详情页复制 <Link to="/lines">线路码</Link> 刷入客户端盒子。
-      </div>
     </div>
   );
 }

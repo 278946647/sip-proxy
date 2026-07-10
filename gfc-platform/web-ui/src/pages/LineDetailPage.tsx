@@ -5,7 +5,6 @@ import {
   Form,
   Input,
   InputNumber,
-  Popconfirm,
   Row,
   Space,
   Switch,
@@ -19,12 +18,12 @@ import { TrafficStatsPanel } from "../components/TrafficStatsPanel";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import dayjs from "dayjs";
-import { apiDelete, apiGet, apiPatch, apiPost } from "../api/client";
+import { apiDelete, apiGet, apiPatch } from "../api/client";
 import { confirmLineEnableChange } from "../utils/lineEnableConfirm";
 import { confirmDeleteLine } from "../utils/dangerousConfirm";
 import { mapLineDetail, type FlowStat, type LineDetail } from "../types";
 import { getUser } from "../api/auth";
-import { canWrite, permissionsFromUser } from "../utils/permissions";
+import { permissionsFromUser } from "../utils/permissions";
 
 function mapFlowRows(flow: Record<string, unknown>[]) {
   return flow.map((x) => ({
@@ -50,31 +49,7 @@ export function LineDetailPage() {
   const [enableSaving, setEnableSaving] = useState(false);
   const [flowStats, setFlowStats] = useState<FlowStat[]>([]);
   const [flowUpdatedAt, setFlowUpdatedAt] = useState(dayjs().format("YYYY-MM-DD HH:mm:ss"));
-  const [lineCode, setLineCode] = useState("");
-  const [codeMeta, setCodeMeta] = useState<{ fingerprint?: string; lineId?: string }>({});
-  const [codeLoading, setCodeLoading] = useState(false);
   const perms = permissionsFromUser(getUser());
-  const writable = canWrite(getUser());
-
-  const loadLineCode = async () => {
-    if (!id) return;
-    setCodeLoading(true);
-    try {
-      const res = await apiGet<{
-        line_code_b32: string;
-        client_uuid?: string;
-        tid?: string;
-        line_id?: string;
-        fingerprint?: string;
-      }>(`/admin/lines/${id}/line-code`);
-      setLineCode(res.line_code_b32 || "");
-      setCodeMeta({ fingerprint: res.fingerprint, lineId: res.line_id });
-    } catch (e) {
-      message.error(String(e));
-    } finally {
-      setCodeLoading(false);
-    }
-  };
 
   const load = async () => {
     const raw = await apiGet<Record<string, unknown>>(`/admin/lines/${id}`);
@@ -86,7 +61,6 @@ export function LineDetailPage() {
       socksRemark: d.socksRemark,
     });
     if (d.lineType === "client") {
-      await loadLineCode();
       try {
         const flow = await apiGet<Record<string, unknown>[]>(`/admin/lines/${id}/flow-stats?hours=24`);
         setFlowStats(mapFlowRows(flow));
@@ -96,8 +70,6 @@ export function LineDetailPage() {
         setFlowStats([]);
       }
     } else {
-      setLineCode("");
-      setCodeMeta({});
       setFlowStats([]);
     }
   };
@@ -111,8 +83,6 @@ export function LineDetailPage() {
 
   useEffect(() => {
     setLine(null);
-    setLineCode("");
-    setCodeMeta({});
     void load().catch((e) => message.error(String(e)));
     const timer = window.setInterval(() => {
       if (!id) return;
@@ -174,39 +144,6 @@ export function LineDetailPage() {
       message.error(String(e));
     } finally {
       setSaving(false);
-    }
-  };
-
-  const refreshLineCode = async (rotateUuid = false) => {
-    if (!id) return "";
-    setCodeLoading(true);
-    try {
-      const op = localStorage.getItem("gfc_user") || "admin";
-      const qs = `operator=${encodeURIComponent(op)}${rotateUuid ? "&rotate_uuid=true" : ""}`;
-      let res: {
-        line_code_b32: string;
-        fingerprint?: string;
-        line_id?: string;
-      };
-      try {
-        res = await apiPost(`/admin/lines/${id}/line-code/refresh?${qs}`, {});
-      } catch (err) {
-        if (!rotateUuid && String(err).includes("404")) {
-          res = await apiGet(`/admin/lines/${id}/line-code`);
-        } else {
-          throw err;
-        }
-      }
-      setLineCode(res.line_code_b32 || "");
-      setCodeMeta({ fingerprint: res.fingerprint, lineId: res.line_id });
-      await load();
-      message.success(rotateUuid ? "已生成新 UUID 与线路码" : "线路码已根据当前线路数据重新生成");
-      return res.line_code_b32 || "";
-    } catch (e) {
-      message.error(String(e));
-      return "";
-    } finally {
-      setCodeLoading(false);
     }
   };
 
@@ -312,43 +249,13 @@ export function LineDetailPage() {
               {line.sourceCidrs.join(", ")}
             </Descriptions.Item>
           )}
-          <Descriptions.Item label="备注" span={3}>
-            {line.remark || "-"}
-          </Descriptions.Item>
         </Descriptions>
       </div>
 
       {line.lineType === "client" && (
         <div className="line-detail-section">
-          <Typography.Title level={5}>线路码（Base32）</Typography.Title>
-          <Typography.Paragraph type="secondary">
-            线路码由 TID、UUID、节点与控制面地址实时编码生成，不会长期缓存旧值。
-            「刷新线路码」使线码与数据库一致；「换新 UUID」会使旧线码与已刷盒子全部失效。
-          </Typography.Paragraph>
-          {codeMeta.fingerprint ? (
-            <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
-              校验指纹：<Typography.Text code>{codeMeta.fingerprint}</Typography.Text>
-              {codeMeta.lineId ? (
-                <>
-                  {" "}
-                  | lineId=<Typography.Text code>{codeMeta.lineId}</Typography.Text>
-                </>
-              ) : null}
-            </Typography.Paragraph>
-          ) : null}
-          <LineCodeField
-            value={lineCode}
-            loading={codeLoading}
-            onRefresh={() => void refreshLineCode(false)}
-          />
-          <div style={{ marginTop: 8 }}>
-            <Popconfirm
-              title="生成新 UUID？旧线路码与已激活盒子将失效，需重新刷码。"
-              onConfirm={() => void refreshLineCode(true)}
-            >
-              <Button loading={codeLoading}>换新 UUID 并重生线路码</Button>
-            </Popconfirm>
-          </div>
+          <Typography.Title level={5}>线路码</Typography.Title>
+          <LineCodeField value={line.lineCodeB32 || ""} />
         </div>
       )}
 
@@ -375,18 +282,10 @@ export function LineDetailPage() {
 
       <div className="line-detail-section">
         <Typography.Title level={5}>出站配置</Typography.Title>
-        <Row gutter={24}>
-          <Col span={12}>
-            <div className="line-detail-label">SOCKS / 出局方式</div>
-            <div className="line-detail-value" style={{ wordBreak: "break-all" }}>
-              {socksUri}
-            </div>
-          </Col>
-          <Col span={12}>
-            <div className="line-detail-label">Socks5 配置备注</div>
-            <div className="line-detail-value">{line.socksRemark || "-"}</div>
-          </Col>
-        </Row>
+        <div className="line-detail-label">SOCKS / 出局方式</div>
+        <div className="line-detail-value" style={{ wordBreak: "break-all" }}>
+          {socksUri}
+        </div>
         <div style={{ marginTop: 12 }}>
           <Link to="/proxies">在代理配置中编辑 SOCKS →</Link>
         </div>

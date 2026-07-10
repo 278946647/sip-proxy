@@ -296,9 +296,6 @@ export function SettingsPage() {
               </Button>
             </Form>
           )}
-          <Typography.Text type="secondary" style={{ fontSize: 11, display: "block", marginTop: 16 }}>
-            安全设置界面 v2 — 锁定态为灰色虚线只读框（非输入框）
-          </Typography.Text>
         </Card>
       )}
 
