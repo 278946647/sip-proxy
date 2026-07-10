@@ -65,22 +65,21 @@ onMounted(load)
 <template>
   <section class="page">
     <header class="page-head">
-      <div><h2>系统设置</h2><p>管理代理模式、DNS 与 sing-box 日志级别。</p></div>
+      <div><h2>系统设置</h2><p>管理路由模式、DNS 与 sing-box 日志级别。</p></div>
       <button :disabled="loading" @click="load">刷新</button>
     </header>
     <div class="card">
-      <label>代理模式
+      <label>路由模式
         <select v-model="form.proxy_mode">
-          <option value="gateway">gateway 网关</option>
-          <option value="bypass">bypass 旁路</option>
-          <option value="transparent">transparent 透明</option>
+          <option value="gateway">gateway 网关模式</option>
+          <option value="bypass">bypass 旁路模式</option>
+          <option value="transparent">transparent 透明模式</option>
         </select>
       </label>
-      <label>路由模式
+      <label>代理模式
         <select v-model="form.routing_mode">
-          <option value="split">split</option>
-          <option value="global">global</option>
-          <option value="direct">direct</option>
+          <option value="split">split 分流模式</option>
+          <option value="global">global 全局模式</option>
         </select>
       </label>
       <label>国内 DNS<input v-model="form.dns_domestic" placeholder="例如 223.5.5.5" /></label>

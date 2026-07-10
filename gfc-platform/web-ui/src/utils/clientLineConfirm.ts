@@ -30,6 +30,21 @@ export function confirmClientLineUnbind(
   });
 }
 
+export function confirmProxyModeChange(
+  deviceName: string,
+  fromLabel: string,
+  toLabel: string,
+  onConfirm: () => Promise<void>
+) {
+  Modal.confirm({
+    title: "确认切换路由模式？",
+    content: `设备「${deviceName}」\n当前：${fromLabel}\n目标：${toLabel}\n\n客户端将在下次拉取配置后应用新的路由工作模式。`,
+    okText: "确认切换",
+    cancelText: "取消",
+    onOk: onConfirm,
+  });
+}
+
 export function confirmRoutingSchemeChange(
   deviceName: string,
   fromLabel: string,
@@ -37,8 +52,8 @@ export function confirmRoutingSchemeChange(
   onConfirm: () => Promise<void>
 ) {
   Modal.confirm({
-    title: "确认切换业务路由模式？",
-    content: `设备「${deviceName}」\n当前：${fromLabel}\n目标：${toLabel}\n\n注意：客户端尚未支持此配置下发，保存后仅记录在控制面，待客户端版本就绪后生效。`,
+    title: "确认切换代理模式？",
+    content: `设备「${deviceName}」\n当前：${fromLabel}\n目标：${toLabel}\n\n客户端将在下次拉取配置后切换流量分流策略。`,
     okText: "确认切换",
     cancelText: "取消",
     onOk: onConfirm,

@@ -63,7 +63,7 @@ onMounted(load)
     <header class="page-head">
       <div>
         <h2>策略总览</h2>
-        <p>聚合 DNS 分流、策略组、Geo 规则与路由模式。</p>
+        <p>聚合 DNS 分流、策略组、Geo 规则与代理模式。</p>
       </div>
       <div class="actions">
         <button :disabled="loading" @click="load">{{ loading ? '刷新中...' : '刷新' }}</button>
@@ -76,7 +76,7 @@ onMounted(load)
       <StatCard label="DNS 列表" :value="String(dnsRows.length)" />
       <StatCard label="策略组" :value="String(groupRows.length)" />
       <StatCard label="规则集" :value="String(ruleRows.length)" />
-      <StatCard label="路由模式" :value="textValue(routing.mode)" />
+      <StatCard label="代理模式" :value="textValue(routing.mode)" />
     </div>
 
     <div class="main-grid">
@@ -102,7 +102,7 @@ onMounted(load)
       <JsonBlock title="代理策略组 /policy/groups" :data="groups" />
       <JsonBlock title="DNS 列表 /dns/lists" :data="dnsLists" />
       <JsonBlock title="规则集 /rules" :data="rules" />
-      <JsonBlock title="路由模式 /routing" :data="routing" />
+      <JsonBlock title="代理模式 /routing" :data="routing" />
     </div>
   </section>
 </template>

@@ -32,7 +32,7 @@ async function save() {
   message.value = ''
   try {
     const res = await policyApi.updateRouting(mode.value)
-    message.value = res.ok ? `路由模式已切换为 ${mode.value}` : (res.error?.message ?? '切换失败')
+    message.value = res.ok ? `代理模式已切换为 ${mode.value}` : (res.error?.message ?? '切换失败')
     await load()
   } catch (err) {
     message.value = String(err)
@@ -47,15 +47,14 @@ onMounted(load)
 <template>
   <section class="page">
     <header class="page-head">
-      <div><h2>策略路由</h2><p>切换全局 / 分流等路由模式并触发本地重载。</p></div>
+      <div><h2>代理模式</h2><p>切换分流 / 全局等流量代理策略并触发本地重载。</p></div>
       <button :disabled="loading" @click="load">{{ loading ? '刷新中...' : '刷新' }}</button>
     </header>
     <div class="card">
-      <label>路由模式
+      <label>代理模式
         <select v-model="mode">
-          <option value="split">split 分流</option>
-          <option value="global">global 全局代理</option>
-          <option value="direct">direct 直连</option>
+          <option value="split">split 分流模式</option>
+          <option value="global">global 全局模式</option>
         </select>
       </label>
       <button :disabled="saving" @click="save">{{ saving ? '保存中...' : '保存并应用' }}</button>

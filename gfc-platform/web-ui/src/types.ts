@@ -65,6 +65,9 @@ export type LineDetail = LineListItem & {
   flowStatsEnabled: boolean;
 };
 
+export type DeviceProxyMode = "gateway" | "bypass" | "transparent";
+export type DeviceRoutingScheme = "split" | "global";
+
 export type ClientDeviceListItem = {
   id: number;
   name: string;
@@ -77,8 +80,8 @@ export type ClientDeviceListItem = {
   reverseHttpPort: number | null;
   sshPublicKeyRegistered: boolean;
   reverseSshSessionState: string;
-  proxyMode: string;
-  routingScheme: "split" | "global";
+  proxyMode: DeviceProxyMode;
+  routingScheme: DeviceRoutingScheme;
   online: boolean;
   managementState: "online" | "offline";
   serviceState: "active" | "suspended" | "unbound" | "degraded" | "unknown";
@@ -342,8 +345,8 @@ export function mapClientDevice(raw: Record<string, unknown>): ClientDeviceListI
     reverseHttpPort: (raw.reverse_http_port as number | null) ?? null,
     sshPublicKeyRegistered: Boolean(raw.ssh_public_key_registered),
     reverseSshSessionState: String(raw.reverse_ssh_session_state || "idle"),
-    proxyMode: (raw.proxy_mode as string) || "gateway",
-    routingScheme: ((raw.routing_scheme as string) || "split") as "split" | "global",
+    proxyMode: ((raw.proxy_mode as string) || "gateway") as DeviceProxyMode,
+    routingScheme: ((raw.routing_scheme as string) || "split") as DeviceRoutingScheme,
     online: raw.online as boolean,
     managementState: (raw.management_state as ClientDeviceListItem["managementState"]) || (raw.online ? "online" : "offline"),
     serviceState: (raw.service_state as ClientDeviceListItem["serviceState"]) || "unknown",

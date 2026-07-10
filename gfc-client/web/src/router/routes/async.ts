@@ -82,7 +82,7 @@ export const asyncRoutes: AppRouteRecord[] = [
       { path: 'geosite', name: 'PolicyGeosite', component: PolicyRuleSetsPage, meta: { title: 'GeoSite 规则', auths: ['policy:rules:read'] } },
       { path: 'geoip', name: 'PolicyGeoip', component: PolicyRuleSetsPage, meta: { title: 'GeoIP 规则', auths: ['policy:rules:read'] } },
       { path: 'proxy-groups', name: 'PolicyProxyGroups', component: PolicyProxyGroupsPage, meta: { title: '代理策略组', auths: ['policy:group:read'] } },
-      { path: 'routing', name: 'PolicyRouting', component: PolicyRoutingPage, meta: { title: '策略路由', auths: ['policy:routing:read'] } },
+      { path: 'routing', name: 'PolicyRouting', component: PolicyRoutingPage, meta: { title: '代理模式', auths: ['policy:routing:read'] } },
       { path: 'firewall', name: 'PolicyFirewall', component: PolicyFirewallPage, meta: { title: 'nftables', auths: ['policy:firewall:read'] } },
       { path: 'rule-sets', name: 'PolicyRuleSets', component: PolicyRuleSetsPage, meta: { title: '规则集管理', auths: ['policy:rules:read'] } },
     ],

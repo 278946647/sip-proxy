@@ -12,6 +12,7 @@ import (
 	"github.com/278946647/sip-proxy/gfc-client/internal/config"
 	"github.com/278946647/sip-proxy/gfc-client/internal/controlplane"
 	"github.com/278946647/sip-proxy/gfc-client/internal/dataplane"
+	"github.com/278946647/sip-proxy/gfc-client/internal/envfile"
 	"github.com/278946647/sip-proxy/gfc-client/internal/linecode"
 	"github.com/278946647/sip-proxy/gfc-client/internal/metrics"
 	"github.com/278946647/sip-proxy/gfc-client/internal/payload"
@@ -175,7 +176,7 @@ func (r *Runner) tick() {
 		return
 	}
 	payload2 := bundle.Payload
-	payload2["proxyMode"] = r.cfg.ProxyMode
+	r.mergePayloadProxyMode(payload2)
 	if cp := client.ActiveServer(); cp != "" {
 		payload2["controlPlaneServers"] = []any{cp}
 	}
@@ -237,7 +238,25 @@ func (r *Runner) configMatches(p map[string]any) bool {
 	if fmt.Sprint(old["proxyMode"]) != fmt.Sprint(p["proxyMode"]) {
 		return false
 	}
+	if payload.RoutingMode(old) != payload.RoutingMode(p) {
+		return false
+	}
 	return r.currentSingboxMatches(p)
+}
+
+func (r *Runner) mergePayloadProxyMode(payload map[string]any) {
+	pm, ok := payload["proxyMode"].(string)
+	if !ok || strings.TrimSpace(pm) == "" {
+		payload["proxyMode"] = r.cfg.ProxyMode
+		return
+	}
+	pm = strings.ToLower(strings.TrimSpace(pm))
+	if pm != r.cfg.ProxyMode {
+		_ = envfile.Set(r.cfg.Paths.EnvFile, "GFC_PROXY_MODE", pm)
+		_ = os.Setenv("GFC_PROXY_MODE", pm)
+		r.cfg.ProxyMode = pm
+	}
+	payload["proxyMode"] = pm
 }
 
 func (r *Runner) currentSingboxMatches(payload map[string]any) bool {
