@@ -17,7 +17,7 @@ import { LineCodeField } from "../components/LineCodeField";
 import { TrafficStatsPanel } from "../components/TrafficStatsPanel";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import dayjs from "dayjs";
+import { formatApiTime, nowDisplay } from "../utils/datetime";
 import { apiDelete, apiGet, apiPatch } from "../api/client";
 import { confirmLineEnableChange } from "../utils/lineEnableConfirm";
 import { confirmDeleteLine } from "../utils/dangerousConfirm";
@@ -48,7 +48,7 @@ export function LineDetailPage() {
   const [bandwidthSaving, setBandwidthSaving] = useState(false);
   const [enableSaving, setEnableSaving] = useState(false);
   const [flowStats, setFlowStats] = useState<FlowStat[]>([]);
-  const [flowUpdatedAt, setFlowUpdatedAt] = useState(dayjs().format("YYYY-MM-DD HH:mm:ss"));
+  const [flowUpdatedAt, setFlowUpdatedAt] = useState(nowDisplay().format("YYYY-MM-DD HH:mm:ss"));
   const perms = permissionsFromUser(getUser());
 
   const load = async () => {
@@ -64,7 +64,7 @@ export function LineDetailPage() {
       try {
         const flow = await apiGet<Record<string, unknown>[]>(`/admin/lines/${id}/flow-stats?hours=24`);
         setFlowStats(mapFlowRows(flow));
-        setFlowUpdatedAt(dayjs().format("YYYY-MM-DD HH:mm:ss"));
+        setFlowUpdatedAt(nowDisplay().format("YYYY-MM-DD HH:mm:ss"));
       } catch (e) {
         console.warn("flow-stats load failed", e);
         setFlowStats([]);
@@ -78,7 +78,7 @@ export function LineDetailPage() {
     if (!id) return;
     const flow = await apiGet<Record<string, unknown>[]>(`/admin/lines/${id}/flow-stats?hours=24`);
     setFlowStats(mapFlowRows(flow));
-    setFlowUpdatedAt(dayjs().format("YYYY-MM-DD HH:mm:ss"));
+    setFlowUpdatedAt(nowDisplay().format("YYYY-MM-DD HH:mm:ss"));
   };
 
   useEffect(() => {
@@ -238,7 +238,7 @@ export function LineDetailPage() {
           </Descriptions.Item>
           <Descriptions.Item label="创建者">{line.createdBy}</Descriptions.Item>
           <Descriptions.Item label="创建时间">
-            {dayjs(line.createdAt).format("YYYY-MM-DD HH:mm:ss")}
+            {formatApiTime(line.createdAt)}
           </Descriptions.Item>
           <Descriptions.Item label="VLESS UUID">{line.clientUuid || "-"}</Descriptions.Item>
           <Descriptions.Item label="当前配置版本" span={2}>

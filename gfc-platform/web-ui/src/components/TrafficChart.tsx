@@ -1,5 +1,5 @@
 import { useMemo, useState, type MouseEvent } from "react";
-import dayjs from "dayjs";
+import { formatApiTime } from "../utils/datetime";
 import type { FlowStat } from "../types";
 
 type Props = {
@@ -56,7 +56,7 @@ export function TrafficChart({ stats, height = 140 }: Props) {
     const raw: ChartPoint[] = stats.map((s) => ({
       ...s,
       rateMBps: flowRateMBps(s.bytesIn, s.bytesOut, s.windowSeconds),
-      label: dayjs(s.windowStart).format("MM-DD HH:mm"),
+      label: formatApiTime(s.windowStart, "MM-DD HH:mm"),
     }));
     const smoothed = smoothRates(raw.map((p) => p.rateMBps));
     return raw.map((p, i) => ({ ...p, rateMBps: smoothed[i] }));

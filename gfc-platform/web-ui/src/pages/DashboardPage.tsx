@@ -1,6 +1,6 @@
 import { Card, Col, Row, Statistic, Table, Tag, Typography } from "antd";
 import { useEffect, useMemo, useState } from "react";
-import dayjs from "dayjs";
+import { formatApiTime } from "../utils/datetime";
 import { apiGet } from "../api/client";
 import { alertCategory, mapDashboard, mapSocks, type AlertEvent, type NodeRow, type SocksProfile } from "../types";
 
@@ -172,7 +172,7 @@ export function DashboardPage() {
                   render: (_, r) =>
                     r.online ? <Tag color="green">在线</Tag> : <Tag color="default">离线</Tag>,
                 },
-                { title: "最近心跳", dataIndex: "lastSeenAt", ellipsis: true },
+                { title: "最近心跳", dataIndex: "lastSeenAt", ellipsis: true, render: (v) => formatApiTime(v, "MM-DD HH:mm") },
               ]}
             />
           </Card>
@@ -218,7 +218,7 @@ export function DashboardPage() {
                   title: "时间",
                   dataIndex: "createdAt",
                   width: 96,
-                  render: (v: string) => dayjs(v).format("MM-DD HH:mm"),
+                  render: (v: string) => formatApiTime(v, "MM-DD HH:mm"),
                 },
               ]}
             />

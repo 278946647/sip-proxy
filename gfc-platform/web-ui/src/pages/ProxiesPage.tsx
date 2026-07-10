@@ -12,7 +12,7 @@ import {
 } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import { useEffect, useMemo, useState } from "react";
-import dayjs from "dayjs";
+import { formatApiTime } from "../utils/datetime";
 import { apiDelete, apiGet, apiPatch, apiPost } from "../api/client";
 import { confirmDeleteSocks } from "../utils/dangerousConfirm";
 import { mapSocks, type SocksProfile } from "../types";
@@ -126,7 +126,7 @@ export function ProxiesPage() {
           {
             title: "创建时间",
             dataIndex: "createdAt",
-            render: (v) => (v ? dayjs(v).format("YYYY-MM-DD HH:mm:ss") : "-"),
+            render: (v) => (v ? formatApiTime(v) : "-"),
           },
           {
             title: "操作",

@@ -13,9 +13,8 @@ import type { MenuProps } from "antd";
 import { DeleteOutlined, DownOutlined, EyeOutlined, ReloadOutlined } from "@ant-design/icons";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import dayjs from "dayjs";
-import relativeTime from "dayjs/plugin/relativeTime";
 import { apiDelete, apiGet } from "../api/client";
+import { formatApiTime, formatApiTimeFromNow, nowDisplay } from "../utils/datetime";
 import { openRemoteTarget } from "../lib/openRemote";
 import { confirmDeleteClientDevice } from "../utils/dangerousConfirm";
 import {
@@ -27,8 +26,6 @@ import {
 } from "../types";
 import { getUser } from "../api/auth";
 import { isOperatorDeletableClient, permissionsFromUser } from "../utils/permissions";
-
-dayjs.extend(relativeTime);
 
 type DeviceTab = "attention" | "active" | "suspended" | "all";
 
@@ -114,7 +111,7 @@ export function ClientDevicesPage() {
   const [items, setItems] = useState<ClientDeviceListItem[]>([]);
   const [lines, setLines] = useState<LineListItem[]>([]);
   const [loading, setLoading] = useState(false);
-  const [lastRefresh, setLastRefresh] = useState(dayjs());
+  const [lastRefresh, setLastRefresh] = useState(nowDisplay());
   const [activeTab, setActiveTab] = useState<DeviceTab>("all");
   const perms = permissionsFromUser(getUser());
 
@@ -129,7 +126,7 @@ export function ClientDevicesPage() {
         "/admin/lines?page_size=200"
       );
       setLines(lineRes.items.map(mapLineItem));
-      setLastRefresh(dayjs());
+      setLastRefresh(nowDisplay());
     } catch (e) {
       message.error(String(e));
     } finally {
@@ -276,9 +273,9 @@ export function ClientDevicesPage() {
             render: (v: string | null) =>
               v ? (
                 <Space direction="vertical" size={0}>
-                  <span>{dayjs(v).format("MM-DD HH:mm:ss")}</span>
+                  <span>{formatApiTime(v, "MM-DD HH:mm:ss")}</span>
                   <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                    {dayjs(v).fromNow()}
+                    {formatApiTimeFromNow(v)}
                   </Typography.Text>
                 </Space>
               ) : (

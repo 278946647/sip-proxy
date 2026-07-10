@@ -1,6 +1,6 @@
 import { Button, Card, Popconfirm, Table, Tag, Typography, message } from "antd";
 import { useEffect, useState } from "react";
-import dayjs from "dayjs";
+import { formatApiTime } from "../utils/datetime";
 import { apiDelete, apiGet } from "../api/client";
 import { getUser } from "../api/auth";
 import { canWrite } from "../utils/permissions";
@@ -52,7 +52,7 @@ export function HealthPage() {
                 r.online ? <Tag color="green">在线</Tag> : <Tag color="red">离线</Tag>,
             },
             { title: "公网 IP", dataIndex: "publicIp", render: (v) => v || "-" },
-            { title: "最近心跳", dataIndex: "lastSeenAt" },
+            { title: "最近心跳", dataIndex: "lastSeenAt", render: (v) => formatApiTime(v) },
             {
               title: "配置版本",
               dataIndex: "currentConfigVersion",
@@ -114,7 +114,7 @@ export function HealthPage() {
             {
               title: "时间",
               dataIndex: "createdAt",
-              render: (v) => dayjs(v).format("YYYY-MM-DD HH:mm:ss"),
+              render: (v) => formatApiTime(v),
             },
           ]}
         />

@@ -1,6 +1,6 @@
 import { Card, Table, Typography, message } from "antd";
 import { useEffect, useState } from "react";
-import dayjs from "dayjs";
+import { formatApiTime } from "../utils/datetime";
 import { apiGet } from "../api/client";
 import type { OperationLog } from "../types";
 
@@ -36,7 +36,7 @@ export function LogsPage() {
               title: "时间",
               dataIndex: "createdAt",
               width: 180,
-              render: (v) => dayjs(v).format("YYYY-MM-DD HH:mm:ss"),
+              render: (v) => formatApiTime(v),
             },
             { title: "用户", dataIndex: "username", width: 100 },
             { title: "操作", dataIndex: "action", width: 120 },

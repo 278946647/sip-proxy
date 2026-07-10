@@ -15,7 +15,7 @@ import {
 import { PlusOutlined, EyeOutlined, DeleteOutlined } from "@ant-design/icons";
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import dayjs from "dayjs";
+import { formatApiTime } from "../utils/datetime";
 import { apiDelete, apiGet, apiPatch, apiPost } from "../api/client";
 import { confirmLineEnableChange } from "../utils/lineEnableConfirm";
 import { confirmDeleteLine } from "../utils/dangerousConfirm";
@@ -256,7 +256,7 @@ export function LinesPage() {
           {
             title: "创建时间",
             dataIndex: "createdAt",
-            render: (v: string) => dayjs(v).format("YYYY-MM-DD HH:mm:ss"),
+            render: (v: string) => formatApiTime(v),
           },
           {
             title: "操作",

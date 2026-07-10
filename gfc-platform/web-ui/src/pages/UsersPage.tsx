@@ -1,7 +1,7 @@
 import { Button, Form, Input, Modal, Select, Table, Tag, Typography, message } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import { useEffect, useState } from "react";
-import dayjs from "dayjs";
+import { formatApiTime } from "../utils/datetime";
 import { getUser } from "../api/auth";
 import { apiGet, apiPatch, apiPost } from "../api/client";
 import { confirmResetUserPassword } from "../utils/dangerousConfirm";
@@ -65,7 +65,7 @@ export function UsersPage() {
           {
             title: "创建时间",
             dataIndex: "createdAt",
-            render: (v) => dayjs(v).format("YYYY-MM-DD HH:mm"),
+            render: (v) => formatApiTime(v, "YYYY-MM-DD HH:mm"),
           },
           ...(isAdmin
             ? [

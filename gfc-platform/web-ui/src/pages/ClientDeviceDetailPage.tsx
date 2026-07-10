@@ -19,8 +19,7 @@ import {
 } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import dayjs from "dayjs";
-import relativeTime from "dayjs/plugin/relativeTime";
+import { formatApiTime, formatApiTimeFromNow } from "../utils/datetime";
 import { apiDelete, apiGet, apiPatch } from "../api/client";
 import { openRemoteTarget } from "../lib/openRemote";
 import { confirmDeleteClientDevice } from "../utils/dangerousConfirm";
@@ -40,8 +39,6 @@ import {
   type DeviceRoutingScheme,
   type LineListItem,
 } from "../types";
-
-dayjs.extend(relativeTime);
 
 const SERVICE_REASON_LABEL: Record<string, string> = {
   line_disabled: "线路已禁用",
@@ -297,7 +294,7 @@ export function ClientDeviceDetailPage() {
         设备 ID：{device.deviceId || device.deviceKey} | Agent：{device.agentVersion || "-"} |
         最后在线：
         {device.lastSeenAt
-          ? `${dayjs(device.lastSeenAt).format("YYYY-MM-DD HH:mm:ss")} (${dayjs(device.lastSeenAt).fromNow()})`
+          ? `${formatApiTime(device.lastSeenAt)} (${formatApiTimeFromNow(device.lastSeenAt)})`
           : "-"}
         {device.serviceReason ? (
           <> | 关停原因：{SERVICE_REASON_LABEL[device.serviceReason] ?? device.serviceReason}</>
@@ -391,7 +388,7 @@ export function ClientDeviceDetailPage() {
             extra={
               hasMetrics && m?.updatedAt ? (
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  更新于 {dayjs(m.updatedAt).format("HH:mm:ss")}
+                  更新于 {formatApiTime(m.updatedAt, "HH:mm:ss")}
                 </Typography.Text>
               ) : (
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>

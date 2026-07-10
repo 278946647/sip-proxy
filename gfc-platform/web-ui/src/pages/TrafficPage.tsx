@@ -15,7 +15,7 @@ import {
 } from "antd";
 import { ReloadOutlined, SettingOutlined } from "@ant-design/icons";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import dayjs from "dayjs";
+import { formatApiTime, nowDisplay, parseApiTime, toApiIso } from "../utils/datetime";
 import { apiGet, apiPatch, apiPost } from "../api/client";
 import { formatBytes } from "../components/TrafficChart";
 import { mapNodeTrafficOverview, quotaPercentInt, type NodeTrafficOverview } from "../types";
@@ -39,7 +39,7 @@ export function TrafficPage() {
   const [rows, setRows] = useState<NodeTrafficOverview[]>([]);
   const perms = permissionsFromUser(getUser());
   const [loading, setLoading] = useState(false);
-  const [lastRefresh, setLastRefresh] = useState(dayjs());
+  const [lastRefresh, setLastRefresh] = useState(nowDisplay());
   const [editOpen, setEditOpen] = useState(false);
   const [editing, setEditing] = useState<NodeTrafficOverview | null>(null);
   const [saving, setSaving] = useState(false);
@@ -50,7 +50,7 @@ export function TrafficPage() {
     try {
       const res = await apiGet<Record<string, unknown>[]>("/admin/node-traffic/overview");
       setRows(res.map(mapNodeTrafficOverview));
-      setLastRefresh(dayjs());
+      setLastRefresh(nowDisplay());
     } catch (e) {
       message.error(String(e));
     } finally {
@@ -73,7 +73,7 @@ export function TrafficPage() {
   const openEdit = (row: NodeTrafficOverview) => {
     setEditing(row);
     form.setFieldsValue({
-      billingCycleStartAt: row.billingCycleStartAt ? dayjs(row.billingCycleStartAt) : dayjs(),
+      billingCycleStartAt: row.billingCycleStartAt ? parseApiTime(row.billingCycleStartAt) : nowDisplay(),
       billingCycleDays: row.billingCycleDays,
       monthlyQuotaGb: row.monthlyQuotaGb ?? undefined,
       correctionBytes: row.correctionBytes,
@@ -90,7 +90,7 @@ export function TrafficPage() {
       await apiPatch(
         `/admin/nodes/${editing.nodeId}/traffic-billing?operator=${localStorage.getItem("gfc_user") || "admin"}`,
         {
-          billing_cycle_start_at: dayjs(v.billingCycleStartAt).toISOString(),
+          billing_cycle_start_at: toApiIso(v.billingCycleStartAt),
           billing_cycle_days: v.billingCycleDays,
           monthly_quota_gb: v.monthlyQuotaGb ?? null,
           correction_bytes: v.correctionBytes ?? 0,
@@ -134,7 +134,7 @@ export function TrafficPage() {
           </Typography.Title>
           <Typography.Text type="secondary">
             数据每 5 分钟自动采集
-            {lastCollectAt ? ` | 最后采集：${dayjs(lastCollectAt).format("YYYY-MM-DD HH:mm:ss")}` : ""}
+            {lastCollectAt ? ` | 最后采集：${formatApiTime(lastCollectAt)}` : ""}
           </Typography.Text>
         </div>
         <Button icon={<ReloadOutlined />} onClick={() => void load()}>
