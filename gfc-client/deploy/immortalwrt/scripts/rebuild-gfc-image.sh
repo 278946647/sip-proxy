@@ -130,12 +130,50 @@ find_rootfs_dir() {
   find "$TARGET_BUILD" -maxdepth 1 -type d -name 'root-*' 2>/dev/null | head -1
 }
 
+detect_opkg_arch() {
+  if [[ -n "${GFC_OPKG_ARCH:-}" ]]; then
+    printf '%s\n' "$GFC_OPKG_ARCH"
+    return 0
+  fi
+  local cfg="$IMT_SRC/.config"
+  if [[ -f "$cfg" ]]; then
+    local arch
+    arch="$(grep -E '^CONFIG_TARGET_ARCH_PACKAGES=' "$cfg" | cut -d= -f2- | tr -d '"')"
+    [[ -n "$arch" ]] && { printf '%s\n' "$arch"; return 0; }
+    grep -q '^CONFIG_x86_64=y' "$cfg" && { printf '%s\n' x86_64; return 0; }
+  fi
+  printf '%s\n' x86_64
+}
+
+validate_ipk() {
+  local ipk="$1"
+  [[ -f "$ipk" ]] || die "ipk not found: $ipk"
+  [[ -s "$ipk" ]] || die "ipk empty (compile may have failed): $ipk"
+  if ! file -b "$ipk" | grep -qiE 'ar archive|debian|gzip|tar|zip'; then
+    die "ipk not a valid archive: $ipk ($(file -b "$ipk"))"
+  fi
+}
+
+find_newest_ipk() {
+  local pattern=$1
+  find "$IMT_SRC/bin" -name "$pattern" -type f -printf '%T@ %p\n' 2>/dev/null \
+    | sort -rn | head -1 | cut -d' ' -f2-
+}
+
 find_gfc_ipk() {
-  find "$IMT_SRC/bin" -name 'gfc-client_*.ipk' | head -1
+  local ipk
+  ipk="$(find_newest_ipk 'gfc-client_*.ipk')"
+  [[ -n "$ipk" ]] || return 1
+  validate_ipk "$ipk"
+  printf '%s\n' "$ipk"
 }
 
 find_luci_ipk() {
-  find "$IMT_SRC/bin" -name 'luci-app-gfc_*.ipk' | head -1
+  local ipk
+  ipk="$(find_newest_ipk 'luci-app-gfc_*.ipk')"
+  [[ -n "$ipk" ]] || return 1
+  validate_ipk "$ipk"
+  printf '%s\n' "$ipk"
 }
 
 # Bust rootfs + image outputs. Do NOT call make target/install alone after this —
@@ -180,8 +218,11 @@ diagnose_missing_gfc() {
 opkg_install_ipk_into_rootfs() {
   local root="$1" ipk="$2"
   local opkg="$IMT_SRC/staging_dir/host/bin/opkg"
-  local arch="${GFC_OPKG_ARCH:-x86}"
+  local arch
+  arch="$(detect_opkg_arch)"
   [[ -x "$opkg" ]] || die "host opkg missing: $opkg"
+  validate_ipk "$ipk"
+  log "opkg install $(basename "$ipk") arch=${arch} offline-root=$root"
   mkdir -p "$root/tmp"
   IPKG_NO_SCRIPT=1 IPKG_INSTROOT="$root" TMPDIR="$root/tmp" \
     "$opkg" --offline-root "$root" \
@@ -192,25 +233,57 @@ opkg_install_ipk_into_rootfs() {
       install "$ipk"
 }
 
+ipkg_unpack_members() {
+  local ipk=$1 tmp=$2
+  if head -c 8 "$ipk" | grep -q '^!<arch>'; then
+    ( cd "$tmp" && ar x "$ipk" )
+    return 0
+  fi
+  if tar tf "$ipk" debian-binary >/dev/null 2>&1; then
+    tar xf "$ipk" -C "$tmp"
+    return 0
+  fi
+  die "cannot unpack ipk (not ar or tar): $ipk ($(file -b "$ipk"))"
+}
+
+ipkg_extract_data_into_rootfs() {
+  local data=$1 root=$2
+  case "$data" in
+    *.tar.gz|*.tgz) tar xzf "$data" -C "$root" ;;
+    *.tar.zst|*.tzst)
+      if command -v zstd >/dev/null 2>&1; then
+        zstd -dc "$data" | tar xf - -C "$root"
+      elif [[ -x "$IMT_SRC/staging_dir/host/bin/zstd" ]]; then
+        "$IMT_SRC/staging_dir/host/bin/zstd" -dc "$data" | tar xf - -C "$root"
+      else
+        die "data.tar.zst needs zstd: $data"
+      fi
+      ;;
+    *.tar.xz|*.txz) tar xJf "$data" -C "$root" ;;
+    *) die "unsupported data member: $data" ;;
+  esac
+}
+
 ipkg_extract_into_rootfs() {
   local ipk="$1" root="$2"
-  local tmp
-  require ar
+  local tmp data
   tmp="$(mktemp -d)"
-  (
-    cd "$tmp"
-    ar x "$ipk"
-    tar xzf data.tar.gz -C "$root"
-  )
+  ipkg_unpack_members "$ipk" "$tmp"
+  for data in "$tmp"/data.tar.*; do
+    [[ -f "$data" ]] || continue
+    ipkg_extract_data_into_rootfs "$data" "$root"
+    rm -rf "$tmp"
+    return 0
+  done
   rm -rf "$tmp"
+  die "ipk has no data.tar.* member: $ipk"
 }
 
 ensure_gfc_in_rootfs() {
   local root="$1"
   local ipk lipk
-  ipk="$(find_gfc_ipk)"
-  lipk="$(find_luci_ipk)"
-  [[ -n "$ipk" ]] || die "gfc-client ipk not found under bin/"
+  ipk="$(find_gfc_ipk)" || die "gfc-client ipk not found under bin/ (run build_packages first)"
+  lipk="$(find_luci_ipk 2>/dev/null || true)"
 
   if [[ -x "$root/usr/bin/gfc-api" ]]; then
     log "rootfs already has gfc-api"
@@ -218,17 +291,25 @@ ensure_gfc_in_rootfs() {
   fi
 
   diagnose_missing_gfc "$root"
+  cd "$IMT_SRC"
 
-  log "inject gfc-client into rootfs via opkg offline-root"
-  if opkg_install_ipk_into_rootfs "$root" "$ipk"; then
-    :
+  log "try make package/feeds/gfc/gfc-client/install"
+  if make "package/feeds/gfc/gfc-client/install" -j1 V=s "GFC_CLIENT_SRC=$GFC_REPO" 2>&1; then
+    log "make install finished"
   else
-    log "opkg failed — extract ipk data.tar.gz into rootfs"
-    ipkg_extract_into_rootfs "$ipk" "$root"
+    log "make install target failed (will use opkg/extract)"
   fi
 
-  if [[ -n "$lipk" ]]; then
-    log "inject luci-app-gfc into rootfs"
+  if [[ ! -x "$root/usr/bin/gfc-api" ]]; then
+    log "opkg offline-root inject (arch=$(detect_opkg_arch))"
+    if ! opkg_install_ipk_into_rootfs "$root" "$ipk"; then
+      log "opkg failed — extract ipk data.tar.* into rootfs (manifest may need opkg path)"
+      ipkg_extract_into_rootfs "$ipk" "$root"
+    fi
+  fi
+
+  if [[ -n "$lipk" && ! -d "$root/usr/lib/lua/luci/controller/gfc" ]]; then
+    log "inject luci-app-gfc"
     opkg_install_ipk_into_rootfs "$root" "$lipk" \
       || ipkg_extract_into_rootfs "$lipk" "$root"
   fi

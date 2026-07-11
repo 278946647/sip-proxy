@@ -76,20 +76,14 @@ gfc-client/deploy/immortalwrt/
 
 | 项 | 状态 | 说明 |
 |----|------|------|
-| **`manifest` 含 gfc-client** | ❌ **未通过** | 多次 `make` 后 `grep -i gfc *.manifest` 仍为空 |
-| **`rebuild-gfc-image.sh` 完整跑通** | ❌ | 最后在 `ERROR: manifest has no gfc-client` 退出 |
-| **feed setup v3（`update -i` + `install -f`）** | ⚠️ 待验证 | 构建机须 `git pull`；旧脚本 `feeds update gfc` 会反复 WARNING |
-| **含 GFC 的可刷机镜像** | ❌ | 现有 img/vmdk 为 **无 GFC** 版本，**应删除勿用** |
-| **`image/99-gfc-firstboot`** | ❌ 未入库 | 刷盘后 fw4/DNS/门户需手工脚本或 overlay |
-| **`go.sum` 入库** | ⚠️ | 构建机需 `go mod tidy`；仓库可能仍无 `go.sum` |
-| **E2E 刷机 + 激活** | ❌ | 等 manifest 通过后再做 |
-
-### 当前最可能根因（已部分修复，待验证）
-
-1. GFC 包曾在 **`package/gfc/` 软链**，未走 **`package/feeds/gfc/`** → rootfs 未装入  
-2. **`make oldconfig` / `syncconfig`** 曾删掉 `.config` 中的 GFC 行  
-3. **rootfs 缓存** 未清空，manifest 反映旧 rootfs  
-4. 最新脚本 `5bed56a` 应用 **feeds-only + opkg fallback**，**构建机需 `git pull` 后重跑**
+| **feed / packageindex / Kconfig** | ✅ 已通过 | `ensure-gfc-package-index.sh`、feeds-only 路径 |
+| **gfc-client / luci ipk 编译** | ✅ 已通过 | `gfc-client_1.1.0-r4_x86_64.ipk` 等 |
+| **rootfs 装入 gfc** | ⚠️ **当前卡点** | `package/install` 未带 gfc → opkg 注入曾用错 arch `x86` |
+| **`manifest` 含 gfc-client** | ❌ 未通过 | 依赖 rootfs opkg 元数据；纯 tar 解包不进 manifest |
+| **`rebuild-gfc-image.sh` 完整跑通** | ⚠️ 差一步 | 修 opkg arch 后应能过 `verify_manifest` |
+| **含 GFC 的可刷机镜像** | ❌ | 现有 img 无 GFC，manifest 通过后才有 |
+| **`image/99-gfc-firstboot`** | ❌ 未入库 | P1：刷盘后 init 启用 |
+| **E2E 刷机 + 激活** | ❌ | manifest 通过后 |
 
 ---
 
@@ -176,7 +170,9 @@ opkg list-installed | grep gfc
 | **`feeds update gfc` 不带 `-f`** | 用 **`feeds update -i gfc`** + **`feeds install -f gfc-client luci-app-gfc`**；禁止 `feeds install -a` |
 | 构建机脚本未 **`git pull`** | `rebuild` 会报 outdated setup；见 setup **v3** / `GFC_FEED_SETUP_VERSION=3` |
 | 删 **`root-*`** 后直接 **`make target/install`** | 须先 **`make package/install`** 再 **`make target/linux/install`**，否则 `tar: root-x86: No such file` |
-| **opkg 注入用 `--dest`** | 须 **`--offline-root $ROOTFS`** + **`--add-dest root:/`**（同 `include/rootfs.mk`），勿读宿主 `/etc/opkg.conf` |
+| **opkg 注入用 `--dest`** | 须 **`--offline-root $ROOTFS`** + **`--add-dest root:/`** + **`--add-arch x86_64:200`**（勿用 `x86`） |
+| **opkg architecture incompatible** | ipk 为 `_x86_64.ipk` 时 **`GFC_OPKG_ARCH=x86_64`**；可从 `.config` 的 `CONFIG_TARGET_ARCH_PACKAGES` 自动检测 |
+| **ar: ipk file format not recognized** | ipk 可能为 **tar 外层** 或 **data.tar.zst**；脚本已支持 tar/ar + zst 解包 |
 | **`package/install` 无 gfc** | 查 **`tmp/opkg_install_list`** / **`pkginfo/gfc-client.default.install`**；用 **opkg offline-root** 或 **ipk 解包** 注入 rootfs |
 | **`make package/feeds/.../install`** | **不存在**（叶子包无 install 目标）；只能 **`compile`** + **`package/install`** 或 **opkg/ipk 注入** |
 
