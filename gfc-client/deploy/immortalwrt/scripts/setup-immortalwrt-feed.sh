@@ -69,11 +69,12 @@ merge_config() {
   if ! grep -q 'CONFIG_PACKAGE_gfc-client=y' .config; then
     echo "CONFIG_PACKAGE_gfc-client=y" >>.config
   fi
-  if ! grep -q 'CONFIG_PACKAGE_luci-app-gfc=y' .config; then
+  if ! grep -q '^CONFIG_PACKAGE_luci-app-gfc=y$' .config; then
     echo "CONFIG_PACKAGE_luci-app-gfc=y" >>.config
   fi
-  yes '' | make oldconfig 2>/dev/null || yes '' | make menuconfig_prepare 2>/dev/null || true
-  echo "==> merged $(basename "$FRAGMENT") into .config"
+  # Do NOT run oldconfig/syncconfig — ImmortalWrt drops symbols not in Kconfig.
+  # Use rebuild-gfc-image.sh for full image build with rootfs cache bust.
+  echo "==> merged $(basename "$FRAGMENT") into .config (no oldconfig)"
 }
 
 verify() {
@@ -106,5 +107,6 @@ case "$cmd" in
 esac
 
 echo ""
-echo "Next: make package/gfc-client/compile V=s GFC_CLIENT_SRC=<path-to-gfc-client>"
-echo "      grep -i gfc bin/targets/x86/64/*.manifest"
+echo "Next:"
+echo "  bash $ROOT/scripts/rebuild-gfc-image.sh"
+echo "  grep -i gfc $IMT_SRC/bin/targets/x86/64/*.manifest"
