@@ -1,26 +1,27 @@
-# GFC OEM image package list (human-readable; mirrors config/gfc-packages.config).
-# Used by scripts/ensure-gfc-package-index.sh for feeds install + Kconfig validation.
+# GFC OEM image package list (mirrors gfc-packages.config).
+# Format: one OpenWrt *Package* name per line (not PROVIDES alias).
 #
-# core-gfc
+# core-gfc (gfc feed — never feeds install here)
 gfc-client
 luci-app-gfc
 luci-base
 #
-# data-plane
+# data-plane (base tree unless noted)
 sing-box
 unbound-daemon
 unbound-checkconf
 kmod-tun
-nftables
+kmod-nft-core
+nftables-json
 dnsmasq-full
 libcap-bin
 ca-bundle
 ip-full
 #
-# remote-ops
+# remote-ops (packages feed)
 autossh
 #
-# scene-ops-tools
+# scene-ops-tools (packages feed)
 curl
 wget-ssl
 tcpdump

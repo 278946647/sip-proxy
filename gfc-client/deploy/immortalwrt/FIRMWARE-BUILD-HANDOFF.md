@@ -171,6 +171,7 @@ opkg list-installed | grep gfc
 | 依赖 **`sqlite3-cli`**（不存在） | 已从 Makefile 移除；GFC 用 Go 内置 sqlite |
 | **`DEPENDS` 含 feed 未索引包** | **整包从 Kconfig 消失**；`gfc-client` **`DEPENDS` 必须为空**；运行时包见 **`config/gfc-packages.config`** + **`ensure-gfc-package-index.sh`** |
 | **sing-box/iftop 等不在 packageinfo** | 跑 **`ensure-gfc-package-index.sh`**（`feeds update -i packages` + `feeds install -f`） |
+| **`nftables` 找不到** | OpenWrt 无 `Package: nftables`；用 **`nftables-json`** + **`kmod-nft-core`**（见 gfc-packages.config） |
 | 只用 **`package/gfc/` 软链** | 必须 **`feeds.conf` src-link** → `package/feeds/gfc/` |
 | **`feeds update gfc` 不带 `-f`** | 用 **`feeds update -i gfc`** + **`feeds install -f gfc-client luci-app-gfc`**；禁止 `feeds install -a` |
 | 构建机脚本未 **`git pull`** | `rebuild` 会报 outdated setup；见 setup **v3** / `GFC_FEED_SETUP_VERSION=3` |
