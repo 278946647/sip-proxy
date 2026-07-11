@@ -1,0 +1,83 @@
+---
+description: GFC x86 ImmortalWrt 固件/OEM 镜像构建上下文与禁令（会话记忆固化）
+globs:
+  - "**/deploy/immortalwrt/**"
+  - "**/gfc-os/**"
+  - "**/build.sh"
+  - "**/BUILD-FIRMWARE.md"
+  - "**/FIRMWARE-BUILD-HANDOFF.md"
+  - "**/gfc-packages.config"
+  - "**/setup-immortalwrt-feed.sh"
+  - "**/rebuild-gfc-image.sh"
+alwaysApply: false
+---
+
+# GFC 固件构建协议（ImmortalWrt OEM）
+
+## 权威文档（优先级从高到低）
+
+1. `gfc-client/deploy/immortalwrt/FIRMWARE-BUILD-HANDOFF.md` — **本会话状态、卡点、踩坑**
+2. `gfc-client/deploy/immortalwrt/BUILD-FIRMWARE.md` — 操作步骤
+3. 根目录 `HANDOFF.md` — 产品/首启 overlay P0
+4. `docs/NFT_ARCHITECTURE.md`、`docs/UNBOUND_ARCHITECTURE.md`、`docs/SINGBOX_ARCHITECTURE.md` — 数据面（改 package 内脚本时不得违反）
+
+## 当前状态摘要（2026-07-12）
+
+- **已完成：** tools/toolchain；ImmortalWrt 无 GFC 全量镜像；`gfc-client`/`luci-app-gfc` ipk 可编；仓库有 `setup-immortalwrt-feed.sh`、`rebuild-gfc-image.sh`
+- **未完成：** `manifest` 含 `gfc-client`；含 GFC 的可刷机 img；`image/99-gfc-firstboot`
+- **构建机：** Ubuntu 22.04，`/opt/gfc/{sip-proxy,immortalwrt}`，用户 **gfcbuild**，Go **1.22+** 在 `/usr/local/go`
+
+## 修改前必须做的事
+
+1. 阅读 `FIRMWARE-BUILD-HANDOFF.md` §3–§5
+2. 若改 `package/Makefile`、feed 脚本、defconfig：先输出 **差异说明**，等用户 **「确认修改」**（除非用户明确点名文件）
+3. 未获批准：**只读分析**，不写 feed/镜像脚本
+
+## 构建入口（推荐顺序）
+
+```bash
+export PATH=/usr/local/go/bin:$PATH
+export IMT_SRC=/opt/gfc/immortalwrt GFC_REPO=/opt/gfc/sip-proxy/gfc-client
+export GOFLAGS=-buildvcs=false
+bash "$GFC_REPO/deploy/immortalwrt/scripts/rebuild-gfc-image.sh"
+grep -i gfc "$IMT_SRC/bin/targets/x86/64/"*.manifest   # 必须通过
+```
+
+## 绝对禁止
+
+- 在合并 `gfc-packages.config` 或手写 `CONFIG_PACKAGE_gfc-*=y` 之后运行 **`make defconfig`** 或 **`make oldconfig`**（会删除 GFC 选包）
+- 仅用 **`package/gfc/` 软链**而不 **`feeds.conf` src-link + feeds install**（rootfs 可能无 GFC）
+- 以 **ipk 存在**代替 **manifest 含 gfc** 作为「进镜像」判断
+- 在 **`bin/packages/`** 找不到 ipk 就认定失败（查 **`bin/targets/x86/64/packages/`**）
+- **`dd of=/dev/sdX`** 字面量（占位符；曾误创建 `/dev/sdX` 普通文件）
+- 恢复 **`sqlite3-cli`** 到 `gfc-client` DEPENDS（ImmortalWrt feed 无此包 → Kconfig 不注册）
+- **root** 与 **gfcbuild** 混编导致 `.config` Permission denied
+- 用 **apt golang-go 1.18** 编 gfc-client
+- 无 **`GOFLAGS=-buildvcs=false`**（OpenWrt build_dir 无 `.git`）
+- 未经批准改 nft/unbound/sing-box 数据面行为以「方便固件首启」
+
+## 必须遵守的包/路径契约
+
+| 项 | 要求 |
+|----|------|
+| Feed | `src-link gfc` → `deploy/immortalwrt/feed/`；**删除 legacy `package/gfc/`** |
+| packageinfo | `Source-Makefile: package/feeds/gfc/gfc-client/Makefile` |
+| .config | `CONFIG_PACKAGE_gfc-client=y`、`CONFIG_PACKAGE_luci-app-gfc=y` |
+| 验收 | `immortalwrt-x86-64-generic.manifest` 含 **gfc-client**、**luci-app-gfc** |
+| 刷盘镜像 | **ext4** `*combined-efi*.img.gz`，非 squashfs |
+| gfc.env | 构建前 `cp gfc.env.example gfc.env`（`gfc.env` gitignore） |
+| 首启 | ipk **postinst 不在镜像构建时执行** → 必须 **`/etc/uci-defaults/99-gfc-firstboot`**（待入库） |
+
+## 允许的无须批准操作
+
+- 只读：`grep gfc *.manifest`、`grep gfc-client tmp/.packageinfo`、`feeds search`
+- 构建机跑 `rebuild-gfc-image.sh`（用户已授权固件任务时）
+- 更新 `FIRMWARE-BUILD-HANDOFF.md` / `BUILD-FIRMWARE.md`（用户要求文档时）
+
+## 固件任务固定口令
+
+> 严格按 `FIRMWARE-BUILD-HANDOFF.md`，构建机 `git pull` 后跑 `rebuild-gfc-image.sh`；以 **manifest 含 gfc** 为进镜像唯一标准；旧无 GFC 镜像可删；改 package 前先给 diff，确认后再写代码。
+
+## 违规处理
+
+若生成器/文档与「manifest 必须含 gfc-client」冲突，以 **manifest 实测**为准报告 bug，不得用无 GFC 镜像冒充成功。

@@ -1,5 +1,8 @@
 # GFC ImmortalWrt 固件构建
 
+> **会话状态 / 卡点 / 踩坑全集：** [`FIRMWARE-BUILD-HANDOFF.md`](FIRMWARE-BUILD-HANDOFF.md)  
+> **Cursor 规则：** [`.cursor/rules/gfc-firmware-build.mdc`](../../../.cursor/rules/gfc-firmware-build.mdc)
+
 ## 根因总结
 
 | 现象 | 原因 |
