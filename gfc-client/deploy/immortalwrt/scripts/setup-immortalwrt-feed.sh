@@ -3,7 +3,7 @@
 # Safe to source from rebuild-gfc-image.sh (no side effects unless run as main).
 set -euo pipefail
 
-GFC_FEED_SETUP_VERSION=3
+GFC_FEED_SETUP_VERSION=4
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FEED_SRC="${GFC_FEED_SRC:-$ROOT/feed}"
@@ -119,6 +119,13 @@ register_feed() {
   require_feeds_install_path
   remove_legacy_package_gfc
   refresh_packageinfo
+  bash "$ROOT/scripts/ensure-gfc-package-index.sh"
+}
+
+package_has_kconfig() {
+  local pkg="$1"
+  [[ -f "$IMT_SRC/tmp/.config-package.in" ]] \
+    && grep -q "config PACKAGE_${pkg}" "$IMT_SRC/tmp/.config-package.in"
 }
 
 merge_config() {
@@ -131,19 +138,33 @@ merge_config() {
     exit 1
   fi
   cd "$IMT_SRC"
-  make -j1 V=s prepare 2>/dev/null || make -j1 V=s 2>/dev/null || true
-  local tmp key line
+  bash "$ROOT/scripts/ensure-gfc-package-index.sh"
+  local tmp merged key line pkg skipped=0
   tmp="$(mktemp)"
+  merged="$(mktemp)"
   cp .config "$tmp"
+  while IFS= read -r line; do
+    [[ "$line" =~ ^CONFIG_PACKAGE_ ]] || continue
+    key="${line%%=*}"
+    pkg="${key#CONFIG_PACKAGE_}"
+    if package_has_kconfig "$pkg"; then
+      echo "$line" >>"$merged"
+    else
+      echo "==> WARN: skip $key (no Kconfig symbol — not in packageinfo or bad DEPENDS)" >&2
+      skipped=$((skipped + 1))
+    fi
+  done <"$FRAGMENT"
   while IFS= read -r line; do
     [[ "$line" =~ ^CONFIG_PACKAGE_ ]] || continue
     key="${line%%=*}"
     grep -v "^${key}=" "$tmp" >"${tmp}.new" || true
     mv "${tmp}.new" "$tmp"
-  done <"$FRAGMENT"
-  cat "$tmp" "$FRAGMENT" >.config
-  rm -f "$tmp"
-  echo "==> merged $(basename "$FRAGMENT") into .config (no oldconfig)"
+  done <"$merged"
+  cat "$tmp" "$merged" >.config
+  rm -f "$tmp" "$merged"
+  package_has_kconfig gfc-client \
+    || { echo "ERROR: CONFIG_PACKAGE_gfc-client not mergeable — fix package/Makefile DEPENDS (must be empty)" >&2; exit 1; }
+  echo "==> merged $(basename "$FRAGMENT") into .config (skipped=$skipped, no oldconfig)"
 }
 
 verify() {

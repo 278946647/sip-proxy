@@ -23,8 +23,8 @@ require() {
 
 require_feed_setup_script() {
   [[ -f "$GFC_FEED_SETUP" ]] || die "missing $GFC_FEED_SETUP"
-  grep -q 'GFC_FEED_SETUP_VERSION=3' "$GFC_FEED_SETUP" \
-    || die "outdated setup script (need v3: feeds update -i + install -f). Run: cd /opt/gfc/sip-proxy && git pull"
+  grep -q 'GFC_FEED_SETUP_VERSION=4' "$GFC_FEED_SETUP" \
+    || die "outdated setup script (need v4). Run: cd /opt/gfc/sip-proxy && git pull"
   grep -q 'feeds update -i gfc' "$GFC_FEED_SETUP" \
     || die "setup script missing feeds update -i — git pull sip-proxy on build machine"
 }
@@ -35,47 +35,44 @@ load_feed_setup() {
   source "$GFC_FEED_SETUP"
 }
 
+ensure_gfc_package_index() {
+  bash "$GFC_DEPLOY/scripts/ensure-gfc-package-index.sh"
+}
+
 merge_gfc_config() {
   local fragment="$GFC_DEPLOY/config/gfc-packages.config"
   [[ -f "$IMT_SRC/.config" ]] || die "missing $IMT_SRC/.config"
   [[ -f "$fragment" ]] || die "missing $fragment"
   cd "$IMT_SRC"
-  make -j1 V=s prepare >/dev/null 2>&1 || true
-  local tmp key line
+  ensure_gfc_package_index
+  local tmp merged key line pkg
   tmp="$(mktemp)"
+  merged="$(mktemp)"
   cp .config "$tmp"
+  while IFS= read -r line; do
+    [[ "$line" =~ ^CONFIG_PACKAGE_ ]] || continue
+    key="${line%%=*}"
+    pkg="${key#CONFIG_PACKAGE_}"
+    if grep -q "config PACKAGE_${pkg}" tmp/.config-package.in 2>/dev/null; then
+      echo "$line" >>"$merged"
+    else
+      log "WARN: skip $key (no Kconfig symbol)"
+    fi
+  done <"$fragment"
   while IFS= read -r line; do
     [[ "$line" =~ ^CONFIG_PACKAGE_ ]] || continue
     key="${line%%=*}"
     grep -v "^${key}=" "$tmp" >"${tmp}.new" || true
     mv "${tmp}.new" "$tmp"
-  done <"$fragment"
-  cat "$tmp" "$fragment" >.config
-  rm -f "$tmp"
+  done <"$merged"
+  cat "$tmp" "$merged" >.config
+  rm -f "$tmp" "$merged"
+  grep -q '^CONFIG_PACKAGE_gfc-client=y$' .config || die "CONFIG_PACKAGE_gfc-client not in .config after merge"
 }
 
-# OpenWrt image install list comes from Kconfig package-y + pkginfo/*.install (not per-feed make install).
+# OpenWrt image install list comes from Kconfig package-y + pkginfo/*.install.
 refresh_build_metadata() {
-  cd "$IMT_SRC"
-  log "refresh package metadata (prepare)"
-  make -j1 V=s prepare
-  grep -qi 'gfc-client' tmp/.packageinfo \
-    || die "gfc-client missing from tmp/.packageinfo — feeds/Kconfig not registered"
-  if [[ -f tmp/.config-package.in ]] && ! grep -qi 'config PACKAGE_gfc-client' tmp/.config-package.in; then
-    log "ERROR: gfc-client missing from Kconfig (tmp/.config-package.in)"
-    awk '/^Package: gfc-client$/,/^$/' tmp/.packageinfo 2>/dev/null || true
-    log "Hint: invalid Makefile DEPENDS drops gfc-client from Kconfig entirely (see 81947fd sqlite3-cli)"
-    local dep
-    for dep in sing-box unbound-daemon unbound-checkconf autossh dnsmasq-full nftables libcap-bin ca-bundle ip-full; do
-      if grep -q "^Package: ${dep}$" tmp/.packageinfo 2>/dev/null; then
-        log "  dep OK: $dep"
-      else
-        log "  dep MISSING in packageinfo: $dep"
-      fi
-    done
-    die "fix package/Makefile DEPENDS or run: bash scripts/setup-immortalwrt-feed.sh all"
-  fi
-  log "Kconfig OK: PACKAGE_gfc-client in tmp/.config-package.in"
+  ensure_gfc_package_index
 }
 
 ensure_feeds_only() {

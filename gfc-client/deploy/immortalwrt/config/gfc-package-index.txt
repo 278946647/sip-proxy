@@ -1,0 +1,28 @@
+# GFC OEM image package list (human-readable; mirrors config/gfc-packages.config).
+# Used by scripts/ensure-gfc-package-index.sh for feeds install + Kconfig validation.
+#
+# core-gfc
+gfc-client
+luci-app-gfc
+luci-base
+#
+# data-plane
+sing-box
+unbound-daemon
+unbound-checkconf
+kmod-tun
+nftables
+dnsmasq-full
+libcap-bin
+ca-bundle
+ip-full
+#
+# remote-ops
+autossh
+#
+# scene-ops-tools
+curl
+wget-ssl
+tcpdump
+iftop
+bmon
