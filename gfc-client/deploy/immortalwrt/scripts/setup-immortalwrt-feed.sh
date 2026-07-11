@@ -47,6 +47,11 @@ register_feed() {
   ./scripts/feeds update gfc
   ./scripts/feeds install -a
   ./scripts/feeds install gfc-client luci-app-gfc
+  # Drop legacy manual tree; rootfs only reliably picks up feeds path.
+  if [[ -d package/feeds/gfc/gfc-client ]]; then
+    rm -rf package/gfc 2>/dev/null || true
+  fi
+  make -j1 V=s prepare >/dev/null 2>&1 || true
 }
 
 merge_config() {
@@ -90,7 +95,10 @@ verify() {
     echo "WARN: tmp/.packageinfo missing — run: make -j1 V=s prepare"
   fi
   echo "==> feeds tree"
-  ls -la package/feeds/gfc/ 2>/dev/null || ls -la package/gfc/ 2>/dev/null || echo "WARN: no gfc package path"
+  ls -la package/feeds/gfc/ 2>/dev/null || echo "WARN: package/feeds/gfc missing"
+  if [[ -f tmp/.packageinfo ]]; then
+    grep 'Source-Makefile:.*gfc-client' tmp/.packageinfo || true
+  fi
 }
 
 cmd="${1:-all}"
