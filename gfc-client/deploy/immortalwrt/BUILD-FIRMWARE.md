@@ -47,8 +47,8 @@ rm -rf "$IMT_SRC/build_dir/target-x86_64_musl/root-"*
 rm -f "$IMT_SRC/build_dir/target-x86_64_musl/stamp/.rootfs_installed"
 
 cd "$IMT_SRC"
-make package/gfc-client/compile V=s GFC_CLIENT_SRC="$GFC_REPO"
-make -j$(nproc) V=s
+make package/install -j1 V=s          # 必须先装 rootfs，再编镜像
+make target/linux/install -j1 V=s     # 勿在删 root-* 后只跑 target/install
 
 grep -i gfc bin/targets/x86/64/*.manifest
 ```

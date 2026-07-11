@@ -6,6 +6,9 @@ IMT_SRC="${IMT_SRC:-/opt/gfc/immortalwrt}"
 GFC_REPO="${GFC_REPO:-/opt/gfc/sip-proxy/gfc-client}"
 GFC_DEPLOY="${GFC_REPO}/deploy/immortalwrt"
 GFC_FEED_SETUP="${GFC_DEPLOY}/scripts/setup-immortalwrt-feed.sh"
+TARGET_BUILD="${IMT_SRC}/build_dir/target-x86_64_musl"
+LINUX_BUILD="${TARGET_BUILD}/linux-x86_64"
+ROOTFS_DIR="${ROOTFS_DIR:-${TARGET_BUILD}/root-x86}"
 JOBS="${JOBS:-$(nproc)}"
 export PATH="/usr/local/go/bin:${PATH:-}"
 export GOFLAGS="${GOFLAGS:--buildvcs=false}"
@@ -79,14 +82,47 @@ build_packages() {
 }
 
 find_rootfs_dir() {
-  find "$IMT_SRC/build_dir/target-x86_64_musl" -maxdepth 1 -type d -name 'root-*' 2>/dev/null | head -1
+  if [[ -d "$ROOTFS_DIR" ]]; then
+    printf '%s\n' "$ROOTFS_DIR"
+    return 0
+  fi
+  find "$TARGET_BUILD" -maxdepth 1 -type d -name 'root-*' 2>/dev/null | head -1
 }
 
+# Bust rootfs + image outputs. Do NOT call make target/install alone after this —
+# OpenWrt may skip package/install when stamps exist, then tar/mksquashfs fails on missing root-x86.
 force_rootfs() {
   cd "$IMT_SRC"
-  rm -rf build_dir/target-x86_64_musl/root-*
-  rm -f build_dir/target-x86_64_musl/stamp/.rootfs_installed
-  rm -f build_dir/target-x86_64_musl/stamp/.target_install
+  log "bust rootfs + image cache (keep package build_dir/ipk)"
+  rm -rf "$TARGET_BUILD"/root-*
+  rm -rf "$LINUX_BUILD"/root.squashfs "$LINUX_BUILD"/root.ext4 "$LINUX_BUILD"/tmp
+  rm -f "$TARGET_BUILD/stamp/.rootfs_installed"
+  rm -f "$TARGET_BUILD/stamp/.target_install"
+  rm -f "$IMT_SRC/bin/targets/x86/64/"*.manifest
+  rm -f "$IMT_SRC/bin/targets/x86/64/"*rootfs.tar.gz
+  rm -f "$IMT_SRC/bin/targets/x86/64/"*ext4*combined*efi*.img.gz
+}
+
+require_rootfs_populated() {
+  local root="$1"
+  [[ -d "$root" ]] || die "rootfs dir missing: $root (run make package/install first)"
+  [[ -d "$root/etc" && -d "$root/usr" ]] \
+    || die "rootfs dir incomplete: $root (package/install did not populate rootfs)"
+}
+
+install_rootfs() {
+  cd "$IMT_SRC"
+  log "package/install -> populate $ROOTFS_DIR"
+  make package/install -j1 V=s
+  require_rootfs_populated "$ROOTFS_DIR"
+}
+
+build_target_images() {
+  cd "$IMT_SRC"
+  require_rootfs_populated "$ROOTFS_DIR"
+  log "target/linux/install (pack rootfs into images)"
+  make target/linux/install -j1 V=s
+  require_rootfs_populated "$ROOTFS_DIR"
 }
 
 opkg_install_gfc_into_rootfs() {
@@ -97,7 +133,7 @@ opkg_install_gfc_into_rootfs() {
   lipk="$(find "$IMT_SRC/bin" -name 'luci-app-gfc_*.ipk' | head -1)"
   [[ -n "$ipk" ]] || die "gfc-client ipk not found under bin/"
   [[ -x "$opkg" ]] || die "host opkg missing: $opkg"
-  [[ -d "$root" ]] || die "rootfs dir missing: $root"
+  require_rootfs_populated "$root"
   log "opkg install gfc into $root"
   "$opkg" install --dest "$root" --force-depends --force-overwrite "$ipk"
   if [[ -n "$lipk" ]]; then
@@ -110,19 +146,16 @@ build_image() {
   cd "$IMT_SRC"
   merge_gfc_config
   verify_dotconfig
-
-  log "target/install (sequential rootfs)"
-  make target/install -j1 V=s
+  install_rootfs
 
   local root
   root="$(find_rootfs_dir)"
-  if [[ -z "$root" ]] || [[ ! -x "$root/usr/bin/gfc-api" ]]; then
-    log "gfc missing from rootfs after target/install — opkg inject fallback"
-    [[ -n "$root" ]] || die "no root-* directory; target/install failed"
+  if [[ ! -x "$root/usr/bin/gfc-api" ]]; then
+    log "gfc missing from rootfs after package/install — opkg inject fallback"
     opkg_install_gfc_into_rootfs "$root"
-    log "rebuild images from patched rootfs"
-    make target/install -j1 V=s
   fi
+
+  build_target_images
 }
 
 verify_manifest() {
