@@ -4,6 +4,8 @@ set -euo pipefail
 
 IMT_SRC="${IMT_SRC:-/opt/gfc/immortalwrt}"
 GFC_REPO="${GFC_REPO:-/opt/gfc/sip-proxy/gfc-client}"
+GFC_DEPLOY="${GFC_REPO}/deploy/immortalwrt"
+GFC_FEED_SETUP="${GFC_DEPLOY}/scripts/setup-immortalwrt-feed.sh"
 JOBS="${JOBS:-$(nproc)}"
 export PATH="/usr/local/go/bin:${PATH:-}"
 export GOFLAGS="${GOFLAGS:--buildvcs=false}"
@@ -15,8 +17,22 @@ require() {
   command -v "$1" >/dev/null 2>&1 || die "missing command: $1 (install Go 1.22+ to /usr/local/go)"
 }
 
+require_feed_setup_script() {
+  [[ -f "$GFC_FEED_SETUP" ]] || die "missing $GFC_FEED_SETUP"
+  grep -q 'GFC_FEED_SETUP_VERSION=3' "$GFC_FEED_SETUP" \
+    || die "outdated setup script (need v3: feeds update -i + install -f). Run: cd /opt/gfc/sip-proxy && git pull"
+  grep -q 'feeds update -i gfc' "$GFC_FEED_SETUP" \
+    || die "setup script missing feeds update -i — git pull sip-proxy on build machine"
+}
+
+load_feed_setup() {
+  require_feed_setup_script
+  # shellcheck disable=SC1090
+  source "$GFC_FEED_SETUP"
+}
+
 merge_gfc_config() {
-  local fragment="$GFC_REPO/deploy/immortalwrt/config/gfc-packages.config"
+  local fragment="$GFC_DEPLOY/config/gfc-packages.config"
   [[ -f "$IMT_SRC/.config" ]] || die "missing $IMT_SRC/.config"
   [[ -f "$fragment" ]] || die "missing $fragment"
   cd "$IMT_SRC"
@@ -32,18 +48,13 @@ merge_gfc_config() {
 
 ensure_feeds_only() {
   cd "$IMT_SRC"
-  if [[ -d package/feeds/gfc/gfc-client ]]; then
-    log "feed path OK: package/feeds/gfc/gfc-client"
-    # Legacy manual symlink tree confuses metadata; remove if feed exists.
-    if [[ -L package/gfc/gfc-client || -d package/gfc/gfc-client ]]; then
-      log "remove legacy package/gfc (use package/feeds/gfc only)"
-      rm -rf package/gfc
-    fi
-  else
-    die "package/feeds/gfc/gfc-client missing — run setup-immortalwrt-feed.sh all"
-  fi
+  [[ -d package/feeds/gfc/gfc-client ]] \
+    || die "package/feeds/gfc/gfc-client missing after register_feed"
+  [[ ! -e package/gfc-client && ! -e package/luci-app-gfc && ! -e package/gfc ]] \
+    || die "legacy package/gfc* still present — re-run register_feed"
   grep 'Source-Makefile: package/feeds/gfc/gfc-client/Makefile' tmp/.packageinfo >/dev/null \
-    || die "packageinfo still not on feeds path — re-run setup-immortalwrt-feed.sh all"
+    || die "packageinfo not on feeds path — re-run register_feed"
+  log "feed path OK: package/feeds/gfc/gfc-client"
 }
 
 verify_dotconfig() {
@@ -53,7 +64,7 @@ verify_dotconfig() {
 }
 
 prepare_gfc_env() {
-  local env_dir="$GFC_REPO/deploy/immortalwrt/package/files/etc/gfc-client"
+  local env_dir="$GFC_DEPLOY/package/files/etc/gfc-client"
   [[ -f "$env_dir/gfc.env" ]] || cp "$env_dir/gfc.env.example" "$env_dir/gfc.env"
   cd "$GFC_REPO"
   go mod tidy
@@ -61,11 +72,9 @@ prepare_gfc_env() {
 
 build_packages() {
   cd "$IMT_SRC"
-  make "package/gfc-client/clean" V=s 2>/dev/null || true
-  make "package/feeds/gfc/gfc-client/compile" V=s "GFC_CLIENT_SRC=$GFC_REPO" \
-    || make "package/gfc-client/compile" V=s "GFC_CLIENT_SRC=$GFC_REPO"
-  make "package/feeds/gfc/luci-app-gfc/compile" V=s \
-    || make "package/luci-app-gfc/compile" V=s
+  make "package/feeds/gfc/gfc-client/clean" V=s 2>/dev/null || true
+  make "package/feeds/gfc/gfc-client/compile" V=s "GFC_CLIENT_SRC=$GFC_REPO"
+  make "package/feeds/gfc/luci-app-gfc/compile" V=s
   find bin -name 'gfc-client*.ipk' -print | grep -q . || die "gfc-client ipk not produced"
 }
 
@@ -132,7 +141,8 @@ verify_manifest() {
 
 main() {
   require go
-  bash "$GFC_REPO/deploy/immortalwrt/scripts/setup-immortalwrt-feed.sh" all
+  load_feed_setup
+  register_feed
   ensure_feeds_only
   merge_gfc_config
   verify_dotconfig

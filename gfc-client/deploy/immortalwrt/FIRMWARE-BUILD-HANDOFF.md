@@ -76,6 +76,7 @@ gfc-client/deploy/immortalwrt/
 |----|------|------|
 | **`manifest` 含 gfc-client** | ❌ **未通过** | 多次 `make` 后 `grep -i gfc *.manifest` 仍为空 |
 | **`rebuild-gfc-image.sh` 完整跑通** | ❌ | 最后在 `ERROR: manifest has no gfc-client` 退出 |
+| **feed setup v3（`update -i` + `install -f`）** | ⚠️ 待验证 | 构建机须 `git pull`；旧脚本 `feeds update gfc` 会反复 WARNING |
 | **含 GFC 的可刷机镜像** | ❌ | 现有 img/vmdk 为 **无 GFC** 版本，**应删除勿用** |
 | **`image/99-gfc-firstboot`** | ❌ 未入库 | 刷盘后 fw4/DNS/门户需手工脚本或 overlay |
 | **`go.sum` 入库** | ⚠️ | 构建机需 `go mod tidy`；仓库可能仍无 `go.sum` |
@@ -167,6 +168,8 @@ opkg list-installed | grep gfc
 | 以为 **`packageinfo` 有包 = 进镜像** | 还要 **`.config` 有 `=y`** 且 **rootfs 装入** |
 | 依赖 **`sqlite3-cli`**（不存在） | 已从 Makefile 移除；GFC 用 Go 内置 sqlite |
 | 只用 **`package/gfc/` 软链** | 必须 **`feeds.conf` src-link** → `package/feeds/gfc/` |
+| **`feeds update gfc` 不带 `-f`** | 用 **`feeds update -i gfc`** + **`feeds install -f gfc-client luci-app-gfc`**；禁止 `feeds install -a` |
+| 构建机脚本未 **`git pull`** | `rebuild` 会报 outdated setup；见 setup **v3** / `GFC_FEED_SETUP_VERSION=3` |
 
 ### 5.3 编译 gfc-client
 
