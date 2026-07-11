@@ -9,6 +9,7 @@ GFC_FEED_SETUP="${GFC_DEPLOY}/scripts/setup-immortalwrt-feed.sh"
 TARGET_BUILD="${IMT_SRC}/build_dir/target-x86_64_musl"
 LINUX_BUILD="${TARGET_BUILD}/linux-x86_64"
 ROOTFS_DIR="${ROOTFS_DIR:-${TARGET_BUILD}/root-x86}"
+STAGING_PKGINFO="${IMT_SRC}/staging_dir/target-x86_64_musl/pkginfo"
 JOBS="${JOBS:-$(nproc)}"
 export PATH="/usr/local/go/bin:${PATH:-}"
 export GOFLAGS="${GOFLAGS:--buildvcs=false}"
@@ -49,6 +50,21 @@ merge_gfc_config() {
   grep -q '^CONFIG_PACKAGE_luci-app-gfc=y$' .config || echo 'CONFIG_PACKAGE_luci-app-gfc=y' >>.config
 }
 
+# OpenWrt image install list comes from Kconfig package-y + pkginfo/*.install (not per-feed make install).
+refresh_build_metadata() {
+  cd "$IMT_SRC"
+  log "refresh package metadata (prepare)"
+  make -j1 V=s prepare
+  grep -qi 'gfc-client' tmp/.packageinfo \
+    || die "gfc-client missing from tmp/.packageinfo — feeds/Kconfig not registered"
+  if ! grep -Eiq 'gfc-client|feeds/gfc/gfc-client' tmp/.packagedeps 2>/dev/null; then
+    log "WARN: gfc-client not obvious in tmp/.packagedeps (may still install via opkg fallback)"
+  fi
+  if [[ -f tmp/.config-package.in ]] && ! grep -q 'CONFIG_PACKAGE_gfc-client' tmp/.config-package.in; then
+    die "CONFIG_PACKAGE_gfc-client missing from Kconfig (tmp/.config-package.in) — check DEPENDS/feeds path"
+  fi
+}
+
 ensure_feeds_only() {
   cd "$IMT_SRC"
   [[ -d package/feeds/gfc/gfc-client ]] \
@@ -56,7 +72,7 @@ ensure_feeds_only() {
   [[ ! -e package/gfc-client && ! -e package/luci-app-gfc && ! -e package/gfc ]] \
     || die "legacy package/gfc* still present — re-run register_feed"
   grep 'Source-Makefile: package/feeds/gfc/gfc-client/Makefile' tmp/.packageinfo >/dev/null \
-    || die "packageinfo not on feeds path — re-run register_feed"
+    || die "packageinfo still not on feeds path — re-run register_feed"
   log "feed path OK: package/feeds/gfc/gfc-client"
 }
 
@@ -73,12 +89,27 @@ prepare_gfc_env() {
   go mod tidy
 }
 
+make_gfc_package() {
+  local target="$1"
+  shift
+  cd "$IMT_SRC"
+  make "$target/compile" -j1 V=s "$@"
+}
+
 build_packages() {
   cd "$IMT_SRC"
   make "package/feeds/gfc/gfc-client/clean" V=s 2>/dev/null || true
-  make "package/feeds/gfc/gfc-client/compile" V=s "GFC_CLIENT_SRC=$GFC_REPO"
-  make "package/feeds/gfc/luci-app-gfc/compile" V=s
+  log "compile gfc-client ipk"
+  make_gfc_package "package/feeds/gfc/gfc-client" "GFC_CLIENT_SRC=$GFC_REPO"
+  log "compile luci-app-gfc ipk"
+  make_gfc_package "package/feeds/gfc/luci-app-gfc"
   find bin -name 'gfc-client*.ipk' -print | grep -q . || die "gfc-client ipk not produced"
+  local pkginfo="$STAGING_PKGINFO/gfc-client.default.install"
+  if [[ -f "$pkginfo" ]]; then
+    log "pkginfo: $(cat "$pkginfo")"
+  else
+    log "WARN: $pkginfo missing (package/install may skip gfc; will use rootfs inject)"
+  fi
 }
 
 find_rootfs_dir() {
@@ -87,6 +118,14 @@ find_rootfs_dir() {
     return 0
   fi
   find "$TARGET_BUILD" -maxdepth 1 -type d -name 'root-*' 2>/dev/null | head -1
+}
+
+find_gfc_ipk() {
+  find "$IMT_SRC/bin" -name 'gfc-client_*.ipk' | head -1
+}
+
+find_luci_ipk() {
+  find "$IMT_SRC/bin" -name 'luci-app-gfc_*.ipk' | head -1
 }
 
 # Bust rootfs + image outputs. Do NOT call make target/install alone after this —
@@ -117,13 +156,75 @@ install_rootfs() {
   require_rootfs_populated "$ROOTFS_DIR"
 }
 
-# package/install may skip feed-local pkgs when stamps exist; force copy into TARGET_DIR.
-install_gfc_packages_to_rootfs() {
-  cd "$IMT_SRC"
-  log "package/feeds/gfc/gfc-client/install (force into rootfs)"
-  make "package/feeds/gfc/gfc-client/install" -j1 V=s "GFC_CLIENT_SRC=$GFC_REPO"
-  log "package/feeds/gfc/luci-app-gfc/install (force into rootfs)"
-  make "package/feeds/gfc/luci-app-gfc/install" -j1 V=s
+diagnose_missing_gfc() {
+  local root="$1"
+  log "diagnose: gfc not in $root after package/install"
+  grep -E 'CONFIG_PACKAGE_gfc|gfc-client' "$IMT_SRC/.config" || true
+  ls -la "$STAGING_PKGINFO"/gfc-client* 2>/dev/null || log "no gfc-client pkginfo files"
+  if [[ -f "$IMT_SRC/tmp/opkg_install_list" ]]; then
+    log "opkg_install_list gfc lines:"
+    grep -i gfc "$IMT_SRC/tmp/opkg_install_list" || log "(gfc not in opkg_install_list)"
+  fi
+}
+
+opkg_install_ipk_into_rootfs() {
+  local root="$1" ipk="$2"
+  local opkg="$IMT_SRC/staging_dir/host/bin/opkg"
+  local arch="${GFC_OPKG_ARCH:-x86}"
+  [[ -x "$opkg" ]] || die "host opkg missing: $opkg"
+  mkdir -p "$root/tmp"
+  IPKG_NO_SCRIPT=1 IPKG_INSTROOT="$root" TMPDIR="$root/tmp" \
+    "$opkg" --offline-root "$root" \
+      --force-postinstall --force-overwrite --force-depends \
+      --add-dest root:/ \
+      --add-arch "all:100" \
+      --add-arch "${arch}:200" \
+      install "$ipk"
+}
+
+ipkg_extract_into_rootfs() {
+  local ipk="$1" root="$2"
+  local tmp
+  require ar
+  tmp="$(mktemp -d)"
+  (
+    cd "$tmp"
+    ar x "$ipk"
+    tar xzf data.tar.gz -C "$root"
+  )
+  rm -rf "$tmp"
+}
+
+ensure_gfc_in_rootfs() {
+  local root="$1"
+  local ipk lipk
+  ipk="$(find_gfc_ipk)"
+  lipk="$(find_luci_ipk)"
+  [[ -n "$ipk" ]] || die "gfc-client ipk not found under bin/"
+
+  if [[ -x "$root/usr/bin/gfc-api" ]]; then
+    log "rootfs already has gfc-api"
+    return 0
+  fi
+
+  diagnose_missing_gfc "$root"
+
+  log "inject gfc-client into rootfs via opkg offline-root"
+  if opkg_install_ipk_into_rootfs "$root" "$ipk"; then
+    :
+  else
+    log "opkg failed — extract ipk data.tar.gz into rootfs"
+    ipkg_extract_into_rootfs "$ipk" "$root"
+  fi
+
+  if [[ -n "$lipk" ]]; then
+    log "inject luci-app-gfc into rootfs"
+    opkg_install_ipk_into_rootfs "$root" "$lipk" \
+      || ipkg_extract_into_rootfs "$lipk" "$root"
+  fi
+
+  [[ -x "$root/usr/bin/gfc-api" ]] || die "gfc-api still missing after rootfs inject"
+  log "rootfs inject OK: $root/usr/bin/gfc-api"
 }
 
 build_target_images() {
@@ -134,52 +235,16 @@ build_target_images() {
   require_rootfs_populated "$ROOTFS_DIR"
 }
 
-opkg_install_gfc_into_rootfs() {
-  local root="$1"
-  local opkg="$IMT_SRC/staging_dir/host/bin/opkg"
-  local arch="${GFC_OPKG_ARCH:-x86}"
-  local ipk lipk
-  ipk="$(find "$IMT_SRC/bin" -name 'gfc-client_*.ipk' | head -1)"
-  lipk="$(find "$IMT_SRC/bin" -name 'luci-app-gfc_*.ipk' | head -1)"
-  [[ -n "$ipk" ]] || die "gfc-client ipk not found under bin/"
-  [[ -x "$opkg" ]] || die "host opkg missing: $opkg"
-  require_rootfs_populated "$root"
-  mkdir -p "$root/tmp"
-  log "opkg offline-root install gfc into $root (arch=$arch)"
-  # Match include/rootfs.mk — do NOT use --dest alone (reads host /etc/opkg.conf).
-  IPKG_NO_SCRIPT=1 IPKG_INSTROOT="$root" TMPDIR="$root/tmp" \
-    "$opkg" --offline-root "$root" \
-      --force-postinstall --force-overwrite --force-depends \
-      --add-dest root:/ \
-      --add-arch "all:100" \
-      --add-arch "${arch}:200" \
-      install "$ipk"
-  if [[ -n "$lipk" ]]; then
-    IPKG_NO_SCRIPT=1 IPKG_INSTROOT="$root" TMPDIR="$root/tmp" \
-      "$opkg" --offline-root "$root" \
-        --force-postinstall --force-overwrite --force-depends \
-        --add-dest root:/ \
-        --add-arch "all:100" \
-        --add-arch "${arch}:200" \
-        install "$lipk"
-  fi
-  [[ -x "$root/usr/bin/gfc-api" ]] || die "opkg install did not place /usr/bin/gfc-api"
-}
-
 build_image() {
   cd "$IMT_SRC"
   merge_gfc_config
   verify_dotconfig
+  refresh_build_metadata
   install_rootfs
-  install_gfc_packages_to_rootfs
 
   local root
   root="$(find_rootfs_dir)"
-  if [[ ! -x "$root/usr/bin/gfc-api" ]]; then
-    log "gfc still missing after package install — opkg offline-root fallback"
-    opkg_install_gfc_into_rootfs "$root"
-  fi
-
+  ensure_gfc_in_rootfs "$root"
   build_target_images
 }
 
@@ -204,6 +269,7 @@ main() {
   ensure_feeds_only
   merge_gfc_config
   verify_dotconfig
+  refresh_build_metadata
   prepare_gfc_env
   build_packages
   force_rootfs
