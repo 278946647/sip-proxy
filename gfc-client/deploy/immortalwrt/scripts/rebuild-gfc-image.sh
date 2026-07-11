@@ -117,6 +117,15 @@ install_rootfs() {
   require_rootfs_populated "$ROOTFS_DIR"
 }
 
+# package/install may skip feed-local pkgs when stamps exist; force copy into TARGET_DIR.
+install_gfc_packages_to_rootfs() {
+  cd "$IMT_SRC"
+  log "package/feeds/gfc/gfc-client/install (force into rootfs)"
+  make "package/feeds/gfc/gfc-client/install" -j1 V=s "GFC_CLIENT_SRC=$GFC_REPO"
+  log "package/feeds/gfc/luci-app-gfc/install (force into rootfs)"
+  make "package/feeds/gfc/luci-app-gfc/install" -j1 V=s
+}
+
 build_target_images() {
   cd "$IMT_SRC"
   require_rootfs_populated "$ROOTFS_DIR"
@@ -128,16 +137,31 @@ build_target_images() {
 opkg_install_gfc_into_rootfs() {
   local root="$1"
   local opkg="$IMT_SRC/staging_dir/host/bin/opkg"
+  local arch="${GFC_OPKG_ARCH:-x86}"
   local ipk lipk
   ipk="$(find "$IMT_SRC/bin" -name 'gfc-client_*.ipk' | head -1)"
   lipk="$(find "$IMT_SRC/bin" -name 'luci-app-gfc_*.ipk' | head -1)"
   [[ -n "$ipk" ]] || die "gfc-client ipk not found under bin/"
   [[ -x "$opkg" ]] || die "host opkg missing: $opkg"
   require_rootfs_populated "$root"
-  log "opkg install gfc into $root"
-  "$opkg" install --dest "$root" --force-depends --force-overwrite "$ipk"
+  mkdir -p "$root/tmp"
+  log "opkg offline-root install gfc into $root (arch=$arch)"
+  # Match include/rootfs.mk — do NOT use --dest alone (reads host /etc/opkg.conf).
+  IPKG_NO_SCRIPT=1 IPKG_INSTROOT="$root" TMPDIR="$root/tmp" \
+    "$opkg" --offline-root "$root" \
+      --force-postinstall --force-overwrite --force-depends \
+      --add-dest root:/ \
+      --add-arch "all:100" \
+      --add-arch "${arch}:200" \
+      install "$ipk"
   if [[ -n "$lipk" ]]; then
-    "$opkg" install --dest "$root" --force-depends --force-overwrite "$lipk"
+    IPKG_NO_SCRIPT=1 IPKG_INSTROOT="$root" TMPDIR="$root/tmp" \
+      "$opkg" --offline-root "$root" \
+        --force-postinstall --force-overwrite --force-depends \
+        --add-dest root:/ \
+        --add-arch "all:100" \
+        --add-arch "${arch}:200" \
+        install "$lipk"
   fi
   [[ -x "$root/usr/bin/gfc-api" ]] || die "opkg install did not place /usr/bin/gfc-api"
 }
@@ -147,11 +171,12 @@ build_image() {
   merge_gfc_config
   verify_dotconfig
   install_rootfs
+  install_gfc_packages_to_rootfs
 
   local root
   root="$(find_rootfs_dir)"
   if [[ ! -x "$root/usr/bin/gfc-api" ]]; then
-    log "gfc missing from rootfs after package/install — opkg inject fallback"
+    log "gfc still missing after package install — opkg offline-root fallback"
     opkg_install_gfc_into_rootfs "$root"
   fi
 

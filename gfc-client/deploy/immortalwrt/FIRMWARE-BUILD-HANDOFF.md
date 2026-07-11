@@ -171,6 +171,8 @@ opkg list-installed | grep gfc
 | **`feeds update gfc` 不带 `-f`** | 用 **`feeds update -i gfc`** + **`feeds install -f gfc-client luci-app-gfc`**；禁止 `feeds install -a` |
 | 构建机脚本未 **`git pull`** | `rebuild` 会报 outdated setup；见 setup **v3** / `GFC_FEED_SETUP_VERSION=3` |
 | 删 **`root-*`** 后直接 **`make target/install`** | 须先 **`make package/install`** 再 **`make target/linux/install`**，否则 `tar: root-x86: No such file` |
+| **opkg 注入用 `--dest`** | 须 **`--offline-root $ROOTFS`** + **`--add-dest root:/`**（同 `include/rootfs.mk`），勿读宿主 `/etc/opkg.conf` |
+| **`package/install` 无 gfc** | 再跑 **`make package/feeds/gfc/gfc-client/install`** 强制装入 rootfs |
 
 ### 5.3 编译 gfc-client
 
