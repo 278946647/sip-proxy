@@ -4,6 +4,7 @@
 **/.env
 !**/.env.example
 **/gfc.env
+!gfc-client/deploy/immortalwrt/package/files/etc/gfc-client/gfc.env.example
 **/install.env
 !**/install.env.example
 !**/node.env.example

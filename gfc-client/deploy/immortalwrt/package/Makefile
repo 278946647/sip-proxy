@@ -2,9 +2,14 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=gfc-client
 PKG_VERSION:=1.1.0
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)
+PKG_BUILD_DEPENDS:=golang/host
 GFC_CLIENT_SRC ?= $(abspath $(CURDIR)/../../..)
+
+# OpenWrt ARCH → Go GOARCH (GO_ARCH from golang/host when available)
+GFC_GOARCH=$(if $(GO_ARCH),$(GO_ARCH),$(if $(filter $(ARCH),x86_64),amd64,$(if $(filter $(ARCH),aarch64),arm64,$(ARCH))))
+GFC_GOFLAGS?=-buildvcs=false
 
 include $(INCLUDE_DIR)/package.mk
 
@@ -12,7 +17,7 @@ define Package/gfc-client
   SECTION:=net
   CATEGORY:=Network
   TITLE:=GFC client box management agent
-  DEPENDS:=+ca-bundle +ip-full +nftables +dnsmasq-full +sing-box +unbound-daemon +unbound-checkconf +libcap-bin +sqlite3-cli +autossh
+  DEPENDS:=+ca-bundle +ip-full +nftables +dnsmasq-full +sing-box +unbound-daemon +unbound-checkconf +libcap-bin +autossh
 endef
 
 define Package/gfc-client/description
@@ -25,7 +30,8 @@ define Build/Prepare
 endef
 
 define Build/Compile
-	$(MAKE) -C $(PKG_BUILD_DIR) build-openwrt GOOS=linux GOARCH=$(GO_ARCH) CGO_ENABLED=0
+	$(MAKE) -C $(PKG_BUILD_DIR) build-openwrt \
+		GOOS=linux GOARCH=$(GFC_GOARCH) CGO_ENABLED=0 GOFLAGS="$(GFC_GOFLAGS)"
 endef
 
 define Package/gfc-client/install
