@@ -167,6 +167,7 @@ opkg list-installed | grep gfc
 | 写入 GFC 后跑 **`make oldconfig`** | 常 **删掉** GFC 行 — 用 `rebuild-gfc-image.sh` 或写入后 **直接 make** |
 | 以为 **`packageinfo` 有包 = 进镜像** | 还要 **`.config` 有 `=y`** 且 **rootfs 装入** |
 | 依赖 **`sqlite3-cli`**（不存在） | 已从 Makefile 移除；GFC 用 Go 内置 sqlite |
+| **`DEPENDS` 含 feed 未索引包** | **整包从 Kconfig 消失**；`DEPENDS` 仅保留 base 包，sing-box/unbound/autossh 放 **`gfc-packages.config`** |
 | 只用 **`package/gfc/` 软链** | 必须 **`feeds.conf` src-link** → `package/feeds/gfc/` |
 | **`feeds update gfc` 不带 `-f`** | 用 **`feeds update -i gfc`** + **`feeds install -f gfc-client luci-app-gfc`**；禁止 `feeds install -a` |
 | 构建机脚本未 **`git pull`** | `rebuild` 会报 outdated setup；见 setup **v3** / `GFC_FEED_SETUP_VERSION=3` |

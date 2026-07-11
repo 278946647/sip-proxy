@@ -41,13 +41,17 @@ merge_gfc_config() {
   [[ -f "$fragment" ]] || die "missing $fragment"
   cd "$IMT_SRC"
   make -j1 V=s prepare >/dev/null 2>&1 || true
-  local tmp
+  local tmp key line
   tmp="$(mktemp)"
-  grep -vE 'CONFIG_PACKAGE_gfc-client|CONFIG_PACKAGE_luci-app-gfc' .config >"$tmp" || true
+  cp .config "$tmp"
+  while IFS= read -r line; do
+    [[ "$line" =~ ^CONFIG_PACKAGE_ ]] || continue
+    key="${line%%=*}"
+    grep -v "^${key}=" "$tmp" >"${tmp}.new" || true
+    mv "${tmp}.new" "$tmp"
+  done <"$fragment"
   cat "$tmp" "$fragment" >.config
   rm -f "$tmp"
-  grep -q '^CONFIG_PACKAGE_gfc-client=y$' .config || echo 'CONFIG_PACKAGE_gfc-client=y' >>.config
-  grep -q '^CONFIG_PACKAGE_luci-app-gfc=y$' .config || echo 'CONFIG_PACKAGE_luci-app-gfc=y' >>.config
 }
 
 # OpenWrt image install list comes from Kconfig package-y + pkginfo/*.install (not per-feed make install).
@@ -57,12 +61,21 @@ refresh_build_metadata() {
   make -j1 V=s prepare
   grep -qi 'gfc-client' tmp/.packageinfo \
     || die "gfc-client missing from tmp/.packageinfo — feeds/Kconfig not registered"
-  if ! grep -Eiq 'gfc-client|feeds/gfc/gfc-client' tmp/.packagedeps 2>/dev/null; then
-    log "WARN: gfc-client not obvious in tmp/.packagedeps (may still install via opkg fallback)"
+  if [[ -f tmp/.config-package.in ]] && ! grep -qi 'config PACKAGE_gfc-client' tmp/.config-package.in; then
+    log "ERROR: gfc-client missing from Kconfig (tmp/.config-package.in)"
+    awk '/^Package: gfc-client$/,/^$/' tmp/.packageinfo 2>/dev/null || true
+    log "Hint: invalid Makefile DEPENDS drops gfc-client from Kconfig entirely (see 81947fd sqlite3-cli)"
+    local dep
+    for dep in sing-box unbound-daemon unbound-checkconf autossh dnsmasq-full nftables libcap-bin ca-bundle ip-full; do
+      if grep -q "^Package: ${dep}$" tmp/.packageinfo 2>/dev/null; then
+        log "  dep OK: $dep"
+      else
+        log "  dep MISSING in packageinfo: $dep"
+      fi
+    done
+    die "fix package/Makefile DEPENDS or run: bash scripts/setup-immortalwrt-feed.sh all"
   fi
-  if [[ -f tmp/.config-package.in ]] && ! grep -q 'CONFIG_PACKAGE_gfc-client' tmp/.config-package.in; then
-    die "CONFIG_PACKAGE_gfc-client missing from Kconfig (tmp/.config-package.in) — check DEPENDS/feeds path"
-  fi
+  log "Kconfig OK: PACKAGE_gfc-client in tmp/.config-package.in"
 }
 
 ensure_feeds_only() {

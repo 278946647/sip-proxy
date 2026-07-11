@@ -132,17 +132,17 @@ merge_config() {
   fi
   cd "$IMT_SRC"
   make -j1 V=s prepare 2>/dev/null || make -j1 V=s 2>/dev/null || true
-  local tmp
+  local tmp key line
   tmp="$(mktemp)"
-  grep -vE 'CONFIG_PACKAGE_gfc-client|CONFIG_PACKAGE_luci-app-gfc' .config >"$tmp" || true
+  cp .config "$tmp"
+  while IFS= read -r line; do
+    [[ "$line" =~ ^CONFIG_PACKAGE_ ]] || continue
+    key="${line%%=*}"
+    grep -v "^${key}=" "$tmp" >"${tmp}.new" || true
+    mv "${tmp}.new" "$tmp"
+  done <"$FRAGMENT"
   cat "$tmp" "$FRAGMENT" >.config
   rm -f "$tmp"
-  if ! grep -q 'CONFIG_PACKAGE_gfc-client=y' .config; then
-    echo "CONFIG_PACKAGE_gfc-client=y" >>.config
-  fi
-  if ! grep -q '^CONFIG_PACKAGE_luci-app-gfc=y$' .config; then
-    echo "CONFIG_PACKAGE_luci-app-gfc=y" >>.config
-  fi
   echo "==> merged $(basename "$FRAGMENT") into .config (no oldconfig)"
 }
 
@@ -174,6 +174,14 @@ verify() {
     else
       echo "WARN: packageinfo not on feeds path:"
       grep 'Source-Makefile:.*gfc-client' tmp/.packageinfo || true
+      ok=1
+    fi
+  fi
+  if [[ -f tmp/.config-package.in ]]; then
+    if grep -qi 'config PACKAGE_gfc-client' tmp/.config-package.in; then
+      grep -i 'config PACKAGE_gfc-client' tmp/.config-package.in
+    else
+      echo "WARN: PACKAGE_gfc-client not in Kconfig — check package/Makefile DEPENDS"
       ok=1
     fi
   fi

@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=gfc-client
 PKG_VERSION:=1.1.0
-PKG_RELEASE:=2
+PKG_RELEASE:=3
 PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)
 PKG_BUILD_DEPENDS:=golang/host
 GFC_CLIENT_SRC ?= $(abspath $(CURDIR)/../../..)
@@ -17,7 +17,9 @@ define Package/gfc-client
   SECTION:=net
   CATEGORY:=Network
   TITLE:=GFC client box management agent
-  DEPENDS:=+ca-bundle +ip-full +nftables +dnsmasq-full +sing-box +unbound-daemon +unbound-checkconf +libcap-bin +autossh
+  # Keep DEPENDS minimal (base feed only). Invalid/missing deps drop gfc-client from Kconfig entirely.
+  # sing-box, unbound, autossh are selected via config/gfc-packages.config and runtime postinst/opkg.
+  DEPENDS:=+ca-bundle +ip-full +nftables +dnsmasq-full +libcap-bin
 endef
 
 define Package/gfc-client/description
