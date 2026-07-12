@@ -9,6 +9,9 @@ GFC_FEED_SETUP="${GFC_DEPLOY}/scripts/setup-immortalwrt-feed.sh"
 TARGET_BUILD="${IMT_SRC}/build_dir/target-x86_64_musl"
 LINUX_BUILD="${TARGET_BUILD}/linux-x86_64"
 ROOTFS_DIR="${ROOTFS_DIR:-${TARGET_BUILD}/root-x86}"
+# Image/Manifest + squashfs/ext4 are built from TARGET_DIR_ORIG, NOT TARGET_DIR.
+# package/install does: opkg install → CP TARGET_DIR → TARGET_DIR_ORIG → prepare_rootfs(TARGET_DIR)
+ROOTFS_ORIG_DIR="${ROOTFS_ORIG_DIR:-${TARGET_BUILD}/root.orig-x86}"
 STAGING_PKGINFO="${IMT_SRC}/staging_dir/target-x86_64_musl/pkginfo"
 JOBS="${JOBS:-$(nproc)}"
 export PATH="/usr/local/go/bin:${PATH:-}"
@@ -120,12 +123,14 @@ build_packages() {
 ensure_gfc_client_pkginfo() {
   local pkginfo="$STAGING_PKGINFO/gfc-client.default.install"
   cd "$IMT_SRC"
-  if [[ ! -f "$pkginfo" ]]; then
-    log "gfc-client.default.install missing — synthesize from ipk (no leaf install target on ImmortalWrt)"
-    synthesize_gfc_client_default_install "$(find_gfc_ipk)"
+  # Always rewrite: older scripts wrongly wrote a file listing here.
+  if [[ -f "$pkginfo" ]] && grep -qx 'gfc-client' "$pkginfo"; then
+    log "pkginfo OK: $pkginfo"
+  else
+    log "fix/write gfc-client.default.install (must be package name, not file list)"
+    synthesize_gfc_client_default_install
   fi
-  [[ -f "$pkginfo" ]] || die "gfc-client.default.install still missing — manifest will not list gfc-client"
-  log "pkginfo: $(wc -l <"$pkginfo") files in gfc-client.default.install"
+  grep -qx 'gfc-client' "$pkginfo" || die "gfc-client.default.install must contain exactly package name 'gfc-client'"
 }
 
 find_rootfs_dir() {
@@ -178,35 +183,13 @@ rootfs_has_gfc_opkg() {
 }
 
 synthesize_gfc_client_default_install() {
-  local ipk=$1
+  # OpenWrt PACKAGE_INSTALL_FILES: each *.default.install contains PACKAGE NAMES
+  # (one per line), NOT a file listing. package/Makefile does:
+  #   opkg install $(opkg_package_files $(cat *.install))
   local out="$STAGING_PKGINFO/gfc-client.default.install"
-  local tmp prepared data cleanup=0
-  [[ -f "$ipk" ]] || die "cannot synthesize pkginfo without ipk"
-  tmp="$(mktemp -d)"
-  prepared="$(prepare_ipk_for_opkg "$ipk")"
-  [[ "$prepared" != "$ipk" ]] && cleanup=1
-  ipkg_unpack_members "$prepared" "$tmp"
-  shopt -s nullglob
-  local members=( "$tmp"/data.tar.* "$tmp"/*/data.tar.* )
-  shopt -u nullglob
-  : >"$out"
-  for data in "${members[@]}"; do
-    [[ -f "$data" ]] || continue
-    case "$data" in
-      *.tar.gz|*.tgz) tar tzf "$data" >>"$out" ;;
-      *.tar.zst|*.tzst)
-        if command -v zstd >/dev/null 2>&1; then
-          zstd -dc "$data" | tar tf - >>"$out"
-        else
-          "$IMT_SRC/staging_dir/host/bin/zstd" -dc "$data" | tar tf - >>"$out"
-        fi
-        ;;
-      *.tar.xz|*.txz) tar tJf "$data" >>"$out" ;;
-    esac
-  done
-  rm -rf "$tmp"
-  (( cleanup )) && rm -f "$prepared"
-  [[ -s "$out" ]] || die "failed to synthesize gfc-client.default.install from $ipk"
+  mkdir -p "$STAGING_PKGINFO"
+  printf '%s\n' gfc-client >"$out"
+  log "wrote $out (package name only — required for opkg_install_list)"
 }
 
 validate_ipk() {
@@ -263,9 +246,47 @@ require_rootfs_populated() {
 
 install_rootfs() {
   cd "$IMT_SRC"
-  log "package/install -> populate $ROOTFS_DIR"
+  log "package/install -> populate $ROOTFS_DIR (+ snapshot $ROOTFS_ORIG_DIR)"
   make package/install -j1 V=s
   require_rootfs_populated "$ROOTFS_DIR"
+  [[ -d "$ROOTFS_ORIG_DIR" ]] || die "missing $ROOTFS_ORIG_DIR after package/install (Image/Manifest uses ORIG)"
+  if grep -qE 'gfc-client_.*\.ipk' "$IMT_SRC/tmp/opkg_install_list" 2>/dev/null; then
+    log "opkg_install_list includes gfc-client ipk"
+  else
+    log "WARN: gfc-client still missing from opkg_install_list — will inject into TARGET_DIR + ORIG"
+  fi
+}
+
+# Manifest + images come from TARGET_DIR_ORIG. Inject must update BOTH trees.
+sync_gfc_into_orig() {
+  local root=$1
+  local orig="${2:-$ROOTFS_ORIG_DIR}"
+  [[ -d "$orig" ]] || die "ORIG rootfs missing: $orig"
+  log "sync gfc from $(basename "$root") → $(basename "$orig") (required for Image/Manifest)"
+  mkdir -p "$orig/usr/bin" "$orig/usr/lib" "$orig/etc" "$orig/usr/lib/opkg/info"
+  for bin in gfc-api gfc-agent gfc-bootstrap; do
+    [[ -f "$root/usr/bin/$bin" ]] && cp -a "$root/usr/bin/$bin" "$orig/usr/bin/$bin"
+  done
+  [[ -d "$root/usr/lib/gfc-client" ]] && rm -rf "$orig/usr/lib/gfc-client" && cp -a "$root/usr/lib/gfc-client" "$orig/usr/lib/"
+  [[ -d "$root/etc/gfc-client" ]] && rm -rf "$orig/etc/gfc-client" && cp -a "$root/etc/gfc-client" "$orig/etc/"
+  [[ -d "$root/etc/init.d" ]] && for s in gfc-api gfc-agent gfc-unbound gfc-sing-box gfc-routing; do
+    [[ -f "$root/etc/init.d/$s" ]] && cp -a "$root/etc/init.d/$s" "$orig/etc/init.d/$s"
+  done
+  if [[ -f "$root/usr/lib/opkg/info/gfc-client.control" ]]; then
+    cp -a "$root/usr/lib/opkg/info/gfc-client".* "$orig/usr/lib/opkg/info/" 2>/dev/null || true
+  fi
+  if grep -q '^Package: gfc-client$' "$root/usr/lib/opkg/status" 2>/dev/null; then
+    if ! grep -q '^Package: gfc-client$' "$orig/usr/lib/opkg/status" 2>/dev/null; then
+      awk '
+        BEGIN { keep=0 }
+        /^Package: gfc-client$/ { keep=1 }
+        keep { print }
+        keep && /^$/ { exit }
+      ' "$root/usr/lib/opkg/status" >>"$orig/usr/lib/opkg/status"
+    fi
+  fi
+  rootfs_has_gfc_opkg "$orig" || die "ORIG still missing gfc-client opkg after sync"
+  [[ -x "$orig/usr/bin/gfc-api" ]] || die "ORIG still missing gfc-api after sync"
 }
 
 diagnose_missing_gfc() {
@@ -403,7 +424,7 @@ register_opkg_metadata_from_ipk() {
       echo "Package: $pkg"
       echo "Version: $ver"
       echo "Depends: ${depends:-}"
-      echo "Status: install user installed"
+      echo "Status: install ok installed"
       echo "Architecture: ${arch:-$(detect_opkg_arch)}"
       echo "Installed-Time: $(date +%s)"
       echo
@@ -442,46 +463,75 @@ ensure_gfc_in_rootfs() {
   ipk="$(find_gfc_ipk)" || die "gfc-client ipk not found under bin/ (run build_packages first)"
   lipk="$(find_luci_ipk 2>/dev/null || true)"
 
-  if rootfs_has_gfc_opkg "$root"; then
-    log "rootfs already has gfc-client opkg metadata"
+  # Prefer native install path: if ORIG already has opkg metadata, package/install succeeded.
+  if rootfs_has_gfc_opkg "$ROOTFS_ORIG_DIR" && [[ -x "$ROOTFS_ORIG_DIR/usr/bin/gfc-api" ]]; then
+    log "ORIG already has gfc-client (native package/install) — OK for manifest"
+    return 0
+  fi
+
+  if rootfs_has_gfc_opkg "$root" && [[ -x "$root/usr/bin/gfc-api" ]]; then
+    log "TARGET_DIR has gfc; syncing to ORIG for Image/Manifest"
+    sync_gfc_into_orig "$root" "$ROOTFS_ORIG_DIR"
     return 0
   fi
 
   diagnose_missing_gfc "$root"
   cd "$IMT_SRC"
 
-  log "register gfc-client via opkg (required for manifest; arch=$(detect_opkg_arch))"
+  log "register gfc-client via opkg into TARGET_DIR (arch=$(detect_opkg_arch))"
   if ! opkg_install_ipk_into_rootfs "$root" "$ipk"; then
-    log "opkg failed on prepared ipk — try original .ipk path"
-    opkg_install_ipk_into_rootfs "$root" "$ipk" || true
-  fi
-  if ! rootfs_has_gfc_opkg "$root"; then
+    log "opkg install failed — extract + register metadata"
     if [[ ! -x "$root/usr/bin/gfc-api" ]]; then
-      log "extract gfc-client payload from ipk"
       ipkg_extract_into_rootfs "$ipk" "$root"
     fi
-    log "write gfc-client opkg metadata from ipk control (host opkg could not install tar ipk)"
     register_opkg_metadata_from_ipk "$ipk" "$root"
   fi
 
   if [[ -n "$lipk" ]] && ! grep -q '^Package: luci-app-gfc$' "$root/usr/lib/opkg/status" 2>/dev/null; then
     log "register luci-app-gfc via opkg"
     opkg_install_ipk_into_rootfs "$root" "$lipk" \
-      || ipkg_extract_into_rootfs "$lipk" "$root"
+      || { ipkg_extract_into_rootfs "$lipk" "$root"; register_opkg_metadata_from_ipk "$lipk" "$root"; }
   fi
 
   [[ -x "$root/usr/bin/gfc-api" ]] || die "gfc-api still missing after rootfs inject"
   rootfs_has_gfc_opkg "$root" \
-    || die "gfc-api present but opkg status missing — manifest will not list gfc-client"
-  log "rootfs OK: gfc-api + opkg metadata"
+    || die "gfc-api present but opkg status missing on TARGET_DIR"
+  sync_gfc_into_orig "$root" "$ROOTFS_ORIG_DIR"
+  log "rootfs OK: gfc-api + opkg on TARGET_DIR and ORIG"
+}
+
+regenerate_manifest_from_orig() {
+  local orig="$ROOTFS_ORIG_DIR"
+  local manifest="$IMT_SRC/bin/targets/x86/64/immortalwrt-x86-64-generic.manifest"
+  local opkg="$IMT_SRC/staging_dir/host/bin/opkg"
+  local arch
+  arch="$(detect_opkg_arch)"
+  [[ -x "$opkg" ]] || die "host opkg missing"
+  [[ -d "$orig" ]] || die "ORIG missing for manifest regenerate"
+  mkdir -p "$(dirname "$manifest")"
+  log "regenerate manifest via opkg list-installed on ORIG"
+  IPKG_NO_SCRIPT=1 IPKG_INSTROOT="$orig" TMPDIR="$orig/tmp" \
+    "$opkg" --offline-root "$orig" \
+      --add-dest root:/ \
+      --add-arch "all:100" \
+      --add-arch "${arch}:200" \
+      list-installed >"$manifest"
+  grep -q gfc-client "$manifest" || die "regenerated manifest still missing gfc-client"
 }
 
 build_target_images() {
   cd "$IMT_SRC"
   require_rootfs_populated "$ROOTFS_DIR"
-  log "target/linux/install (pack rootfs into images)"
+  rootfs_has_gfc_opkg "$ROOTFS_ORIG_DIR" \
+    || die "ORIG missing gfc-client before image build — Image/Manifest would omit it"
+  log "target/linux/install (pack ORIG rootfs into images)"
   make target/linux/install -j1 V=s
   require_rootfs_populated "$ROOTFS_DIR"
+  # Belt-and-suspenders: OpenWrt Image/Manifest reads ORIG; rewrite if race/stale.
+  if ! grep -q gfc-client "$IMT_SRC/bin/targets/x86/64/"*.manifest 2>/dev/null; then
+    log "WARN: image build manifest missing gfc-client — regenerating from ORIG"
+    regenerate_manifest_from_orig
+  fi
 }
 
 build_image() {
@@ -500,11 +550,16 @@ build_image() {
 verify_manifest() {
   cd "$IMT_SRC"
   local manifest="bin/targets/x86/64/immortalwrt-x86-64-generic.manifest"
-  local root
+  local root orig
   root="$(find_rootfs_dir)"
+  orig="$ROOTFS_ORIG_DIR"
   [[ -f "$manifest" ]] || die "missing $manifest"
-  log "rootfs: $(test -x "$root/usr/bin/gfc-api" && echo has gfc-api || echo NO gfc-api)"
-  log "opkg: $(rootfs_has_gfc_opkg "$root" && echo gfc-client registered || echo NO gfc-client opkg entry)"
+  log "TARGET_DIR: $(test -x "$root/usr/bin/gfc-api" && echo has gfc-api || echo NO gfc-api)"
+  log "ORIG: $(rootfs_has_gfc_opkg "$orig" && echo gfc-client registered || echo NO gfc-client opkg)"
+  if ! grep -q gfc-client "$manifest"; then
+    log "manifest stale — regenerate from ORIG"
+    regenerate_manifest_from_orig
+  fi
   log "manifest gfc lines:"
   grep -i gfc "$manifest" || true
   grep -i gfc-client "$manifest" >/dev/null || die "manifest has no gfc-client"

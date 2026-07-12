@@ -76,14 +76,14 @@ gfc-client/deploy/immortalwrt/
 
 | 项 | 状态 | 说明 |
 |----|------|------|
-| **feed / packageindex / Kconfig** | ✅ 已通过 | `ensure-gfc-package-index.sh`、feeds-only 路径 |
-| **gfc-client / luci ipk 编译** | ✅ 已通过 | `gfc-client_1.1.0-r4_x86_64.ipk` 等 |
-| **rootfs 装入 gfc** | ⚠️ **当前卡点** | `gfc-api` 在 rootfs，但 **无 opkg 元数据** → manifest 无 `gfc-client` |
-| **`manifest` 含 gfc-client** | ❌ 未通过 | manifest 只统计 **opkg 已安装** 包；tar/make 解包不算 |
-| **`rebuild-gfc-image.sh` 完整跑通** | ⚠️ 差一步 | 修 opkg arch 后应能过 `verify_manifest` |
-| **含 GFC 的可刷机镜像** | ❌ | 现有 img 无 GFC，manifest 通过后才有 |
-| **`image/99-gfc-firstboot`** | ❌ 未入库 | P1：刷盘后 init 启用 |
-| **E2E 刷机 + 激活** | ❌ | manifest 通过后 |
+| **feed / packageindex / Kconfig** | ✅ | feeds-only + ensure index |
+| **gfc-client / luci ipk** | ✅ | `gfc-client_1.1.0-r4_x86_64.ipk` |
+| **root-x86 有 gfc-api** | ✅ | 但 **不够** — 镜像不读它 |
+| **`root.orig-x86` 有 gfc** | ⚠️ **真卡点** | `package/install` 快照 ORIG 后，`Image/Manifest` + 镜像都读 **ORIG** |
+| **`gfc-client.default.install` 内容** | ⚠️ 曾写错 | 必须是包名一行 `gfc-client`，**不是**文件列表 |
+| **`manifest` 含 gfc-client** | ❌ | 修 ORIG 同步后应通过 |
+| **`image/99-gfc-firstboot`** | ❌ | P1 |
+| **E2E 刷机** | ❌ | manifest 通过后 |
 
 ---
 
@@ -174,7 +174,8 @@ opkg list-installed | grep gfc
 | **opkg architecture incompatible** | ipk 为 `_x86_64.ipk` 时 **`GFC_OPKG_ARCH=x86_64`**；可从 `.config` 的 `CONFIG_TARGET_ARCH_PACKAGES` 自动检测 |
 | **ar: ipk file format not recognized** | ipk 可能为 **tar 外层** 或 **data.tar.zst**；脚本已支持 tar/ar + zst 解包 |
 | **`package/install` 无 gfc** | 查 **`pkginfo/gfc-client.default.install`**（缺则不进 `opkg_install_list`）；脚本会从 ipk 合成 |
-| **有 gfc-api 无 manifest gfc-client** | 文件在 rootfs 但 **无 `/usr/lib/opkg/info/gfc-client.control`** — 须 **opkg install**（gzip ipk 需 gunzip 后再装） |
+| **有 gfc-api 无 manifest gfc-client** | 查 **`root.orig-x86`**（不是 `root-x86`）；`Image/Manifest` = `opkg list-installed` on **ORIG** |
+| **`gfc-client.default.install` 写文件列表** | **错误**；OpenWrt 要求该文件内容为包名 `gfc-client`，供 `opkg_install_list` 使用 |
 | **`make package/feeds/.../install`** | **不存在**（叶子包无 install 目标）；只能 **`compile`** + **`package/install`** 或 **opkg/ipk 注入** |
 
 ### 5.3 编译 gfc-client
