@@ -60,6 +60,7 @@ Feed setup：**v4** — `feeds update -i gfc` + `feeds install -f`（禁止 plai
 - 保留或依赖 legacy **`package/gfc/`**（必须 **`package/feeds/gfc/`**）
 - 给 `gfc-client` 加非空 **`DEPENDS`**（未索引依赖 → 整包从 Kconfig 消失）
 - 用 **`CONFIG_PACKAGE_nftables`**（应 **`nftables-json`** + **`kmod-nft-core`**）
+- 用 **`CONFIG_PACKAGE_kmod-sched-htb`**（应 **`kmod-sched-core`**，内含 sch_htb）
 - 以 **ipk 存在**代替 **manifest 含 gfc-client**
 - ipk 安装 **`/www/index.html`**（与 **luci-base** clash；由 firstboot 覆盖）
 - deploy `*.sh` 保持 **0644**（hotplug/init 直接执行会 Permission denied；install 必须 `chmod 0755`）

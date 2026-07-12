@@ -99,7 +99,7 @@ install_tc_deps() {
 	if ! command -v tc >/dev/null 2>&1; then
 		opkg install tc-tiny 2>/dev/null || opkg install ip-full 2>/dev/null || true
 	fi
-	for mod in kmod-sched-core kmod-sched-htb kmod-ifb; do
+	for mod in kmod-sched-core kmod-ifb; do
 		opkg install "$mod" 2>/dev/null || true
 	done
 }

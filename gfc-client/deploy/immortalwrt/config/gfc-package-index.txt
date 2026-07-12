@@ -19,7 +19,6 @@ ca-bundle
 ip-full
 tc-tiny
 kmod-sched-core
-kmod-sched-htb
 kmod-ifb
 #
 # remote-ops (packages feed)

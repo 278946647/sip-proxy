@@ -10,7 +10,7 @@ INDEX="${GFC_PACKAGE_INDEX:-$ROOT/config/gfc-package-index.txt}"
 BASE_TREE_PACKAGES=(
   ca-bundle ip-full dnsmasq-full kmod-tun kmod-nft-core
   nftables-json nftables-nojson
-  tc-tiny kmod-sched-core kmod-sched-htb kmod-ifb
+  tc-tiny kmod-sched-core kmod-ifb
 )
 
 # GFC src-link feed
@@ -38,6 +38,8 @@ resolve_package_candidates() {
   local name=$1
   case "$name" in
     nftables) printf '%s\n' nftables-json nftables-nojson ;;
+    # HTB qdisc is built into kmod-sched-core; no standalone kmod-sched-htb.
+    kmod-sched-htb) printf '%s\n' kmod-sched-core ;;
     *) printf '%s\n' "$name" ;;
   esac
 }
@@ -103,6 +105,9 @@ diagnose_missing() {
     log "  try: ls $IMT_SRC/package/network/utils/nftables 2>/dev/null"
     if [[ "$name" == "nftables" || "$name" == nftables-* ]]; then
       log "  note: use nftables-json or nftables-nojson in gfc-packages.config (no Package: nftables)"
+    fi
+    if [[ "$name" == "kmod-sched-htb" ]]; then
+      log "  note: use kmod-sched-core (includes sch_htb); no Package: kmod-sched-htb"
     fi
   else
     log "  category: packages/luci feed"

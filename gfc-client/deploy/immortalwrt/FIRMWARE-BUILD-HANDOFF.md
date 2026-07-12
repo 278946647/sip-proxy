@@ -60,7 +60,7 @@
 | `7bb5583` | r5 | `99-gfc-firstboot`（`image/files` + package） |
 | `b5f770e` | r6 | DHCP **`force=1`**；CGI 优先 **curl**；未激活缩短 TUN 等待；www 进 ipk |
 | `b28f0f3` | r7 | **dropbear Port 212**；**`99-gfc-tun` hotplug**；sing-box 后轮询再跑 routing |
-| （本提交） | **r10** | 去重 fwmark rule；`passwd` 设 OEM 密码；`tc-tiny`+htb/ifb；控制面 TID=TID-日期-名称 |
+| （本提交） | **r10** | 去重 fwmark rule；`passwd` 设 OEM 密码；`tc-tiny`+`kmod-sched-core`(含 HTB)+`kmod-ifb`；控制面 TID=TID-日期-名称 |
 | （r9 提交） | r9 | deploy `*.sh` 强制 +x；`sh` 调 routing；lan ifup 重启 dnsmasq；默认 root 密码；占位主机名→线路 TID |
 
 ### 2.4 设计结论（勿再争论）
@@ -184,6 +184,7 @@ cp "$IMT_SRC/bin/targets/x86/64/"*ext4*combined*efi*.img.gz /opt/gfc/dist/gfc-os
 | `feeds update gfc` / `feeds install -a` | **`feeds update -i gfc`** + **`feeds install -f gfc-client luci-app-gfc`** |
 | `DEPENDS` 含未索引包（sing-box、sqlite3-cli…） | **整包从 Kconfig 消失**；`DEPENDS` **保持空** |
 | `CONFIG_PACKAGE_nftables=y` | 无此 Package；用 **`nftables-json`** + **`kmod-nft-core`** |
+| `CONFIG_PACKAGE_kmod-sched-htb=y` | **无此 Package**；HTB 在 **`kmod-sched-core`**（再加 `tc-tiny` + `kmod-ifb`） |
 | 合并 GFC 后跑 **`make defconfig` / `oldconfig`** | **禁止** — 会清掉 GFC 选包 |
 | 以为 packageinfo 有 = 进镜像 | 还要 `.config=y` + **装进 ORIG rootfs** |
 
