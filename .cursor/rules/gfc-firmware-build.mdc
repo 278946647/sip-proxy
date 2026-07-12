@@ -23,17 +23,17 @@ alwaysApply: false
 3. 根目录 `HANDOFF.md` — 产品背景（细节以 1 为准）
 4. `docs/NFT_ARCHITECTURE.md` / `UNBOUND_ARCHITECTURE.md` / `SINGBOX_ARCHITECTURE.md` — 数据面（改 deploy 脚本时不得违反）
 
-## 当前状态摘要（2026-07-12 / `b28f0f3` / `PKG_RELEASE:=7`）
+## 当前状态摘要（2026-07-12 / `PKG_RELEASE:=8`）
 
-- **已完成：** tools/toolchain；feed-only 管线；manifest 可含 gfc-client；ORIG 同步；firstboot 入库；DHCP `force=1`；CGI curl；dropbear 212；gfctun hotplug 补 `ip rule`
-- **当前卡点：** 用 **r7** 镜像在构建机 **重建 + 刷机 E2E**（非再改构建原理）
+- **已完成：** tools/toolchain；feed-only 管线；manifest 可含 gfc-client；ORIG 同步；firstboot 入库；DHCP `force=1`；CGI curl；dropbear 212；gfctun hotplug；r8 去掉 ipk `/www/index.html`（luci-base clash）
+- **当前卡点：** 用 **r8** 镜像在构建机 **重建 + 刷机 E2E**（非再改构建原理）
 - **构建机：** Ubuntu 22.04，`/opt/gfc/{sip-proxy,immortalwrt}`，用户 **gfcbuild**，Go **1.22+** `/usr/local/go`
 - **产品契约：** 未激活也要 DHCP+NAT+DNS hijack；策略路由等 `gfctun`；SSH 管理口 **212**
 
 ## 新会话第一步
 
 1. 读 `FIRMWARE-BUILD-HANDOFF.md` §0–§5
-2. 构建机：`git pull` → `rebuild-gfc-image.sh` → 确认 manifest **`1.1.0-r7`**（或更新）
+2. 构建机：`git pull` → `rebuild-gfc-image.sh` → 确认 manifest **`1.1.0-r8`**（或更新）
 3. 刷最新 `*ext4*combined*efi*.img.gz`，按 HANDOFF §4 P1 验收
 
 ## 修改前必须做的事
@@ -61,6 +61,7 @@ Feed setup：**v4** — `feeds update -i gfc` + `feeds install -f`（禁止 plai
 - 给 `gfc-client` 加非空 **`DEPENDS`**（未索引依赖 → 整包从 Kconfig 消失）
 - 用 **`CONFIG_PACKAGE_nftables`**（应 **`nftables-json`** + **`kmod-nft-core`**）
 - 以 **ipk 存在**代替 **manifest 含 gfc-client**
+- ipk 安装 **`/www/index.html`**（与 **luci-base** clash；由 firstboot 覆盖）
 - 只注入 **`root-x86`** 不同步 **`root.orig-x86`**
 - **`gfc-client.default.install`** 写成文件列表（必须单行包名 `gfc-client`）
 - opkg offline 使用 arch **`x86`**（必须 **`x86_64`**）

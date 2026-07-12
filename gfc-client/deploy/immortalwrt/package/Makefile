@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=gfc-client
 PKG_VERSION:=1.1.0
-PKG_RELEASE:=7
+PKG_RELEASE:=8
 PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)
 PKG_BUILD_DEPENDS:=golang/host
 GFC_CLIENT_SRC ?= $(abspath $(CURDIR)/../../..)
@@ -62,11 +62,12 @@ define Package/gfc-client/install
 	$(INSTALL_DIR) $(1)/etc/hotplug.d/net
 	$(INSTALL_BIN) ./files/etc/hotplug.d/net/99-gfc-tun $(1)/etc/hotplug.d/net/99-gfc-tun
 
-	# Port-80 activation assets (uhttpd); also refreshed by 99-gfc-firstboot / 99-gfc-portal.
+	# Port-80 activation assets (uhttpd). Do NOT install /www/index.html here —
+	# luci-base owns that path (opkg clash). 99-gfc-firstboot / 99-gfc-portal
+	# overwrite it at runtime from $DEPLOY/www/index.html.
 	$(INSTALL_DIR) $(1)/www/cgi-bin $(1)/www/gfc
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/deploy/immortalwrt/www/cgi-bin/gfc-activation $(1)/www/cgi-bin/gfc-activation
 	$(CP) $(PKG_BUILD_DIR)/deploy/immortalwrt/www/gfc/* $(1)/www/gfc/
-	$(CP) $(PKG_BUILD_DIR)/deploy/immortalwrt/www/index.html $(1)/www/index.html
 endef
 
 define Package/gfc-client/postinst
