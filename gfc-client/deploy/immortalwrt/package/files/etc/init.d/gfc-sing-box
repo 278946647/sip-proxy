@@ -46,8 +46,15 @@ start_service() {
 	procd_set_param stderr 1
 	procd_close_instance
 	(
-		sleep 8
-		/usr/lib/gfc-client/deploy/immortalwrt/gfc-routing.sh start >/dev/null 2>&1 || true
+		# Wait for gfctun then install fwmark → table 2022 (hotplug is backup).
+		i=0
+		while [ "$i" -lt 20 ]; do
+			ip link show "${GFC_TUN_INTERFACE:-gfctun}" >/dev/null 2>&1 && break
+			i=$((i + 1))
+			sleep 1
+		done
+		GFC_ROUTING_TUN_WAIT=3 /usr/lib/gfc-client/deploy/immortalwrt/gfc-routing.sh start \
+			>>/tmp/gfc-routing-after-singbox.log 2>&1 || true
 	) &
 }
 

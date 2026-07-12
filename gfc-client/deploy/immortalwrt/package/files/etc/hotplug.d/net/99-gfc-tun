@@ -1,0 +1,17 @@
+#!/bin/sh
+# When sing-box creates gfctun, apply fwmark policy routing (NAT/DNS already present).
+[ "${ACTION:-}" = "add" ] || exit 0
+
+case "${DEVICENAME:-}${INTERFACE:-}${DEVICE:-}" in
+*gfctun*) ;;
+*) exit 0 ;;
+esac
+
+[ -x /usr/lib/gfc-client/deploy/immortalwrt/gfc-routing.sh ] || exit 0
+
+# Avoid blocking hotplug; short wait for TUN to be fully up.
+(
+	sleep 1
+	GFC_ROUTING_TUN_WAIT=5 /usr/lib/gfc-client/deploy/immortalwrt/gfc-routing.sh start \
+		>>/tmp/gfc-routing-hotplug.log 2>&1 || true
+) &

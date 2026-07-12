@@ -471,7 +471,7 @@ start_rules() {
 	load_cn_set
 	load_bypass_set
 	wait_tun || {
-		echo "WARN: $TUN_IFACE not up; DNS hijack and CN policy set applied, policy route deferred" >&2
+		echo "WARN: $TUN_IFACE not up; DNS hijack and CN policy set applied, policy route deferred (hotplug 99-gfc-tun will apply when TUN appears)" >&2
 		exit 0
 	}
 	ip -4 rule add pref 100 fwmark "$MARK" lookup "$TABLE" 2>/dev/null || \
