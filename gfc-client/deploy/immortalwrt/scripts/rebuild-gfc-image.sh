@@ -42,13 +42,20 @@ ensure_gfc_package_index() {
   bash "$GFC_DEPLOY/scripts/ensure-gfc-package-index.sh"
 }
 
+# Remove both CONFIG_PACKAGE_foo=... and "# CONFIG_PACKAGE_foo is not set" so =y wins.
+scrub_package_config_lines() {
+  local file="$1" key="$2"
+  grep -v -E "^${key}=|^# ${key} is not set\$" "$file" >"${file}.new" || true
+  mv "${file}.new" "$file"
+}
+
 merge_gfc_config() {
   local fragment="$GFC_DEPLOY/config/gfc-packages.config"
   [[ -f "$IMT_SRC/.config" ]] || die "missing $IMT_SRC/.config"
   [[ -f "$fragment" ]] || die "missing $fragment"
   cd "$IMT_SRC"
   ensure_gfc_package_index
-  local tmp merged key line pkg
+  local tmp merged key line pkg skipped=0
   tmp="$(mktemp)"
   merged="$(mktemp)"
   cp .config "$tmp"
@@ -60,19 +67,25 @@ merge_gfc_config() {
       echo "$line" >>"$merged"
     else
       log "WARN: skip $key (no Kconfig symbol)"
+      skipped=$((skipped + 1))
     fi
   done <"$fragment"
+  # Required bandwidth packages must never be silently skipped.
+  for pkg in tc-tiny kmod-sched-core kmod-ifb; do
+    grep -q "^CONFIG_PACKAGE_${pkg}=y$" "$merged" \
+      || die "merge skipped required CONFIG_PACKAGE_${pkg}=y (Kconfig missing?)"
+  done
   while IFS= read -r line; do
     [[ "$line" =~ ^CONFIG_PACKAGE_ ]] || continue
     key="${line%%=*}"
-    grep -v "^${key}=" "$tmp" >"${tmp}.new" || true
-    mv "${tmp}.new" "$tmp"
+    scrub_package_config_lines "$tmp" "$key"
   done <"$merged"
   cat "$tmp" "$merged" >.config
   rm -f "$tmp" "$merged"
   # Stale invalid symbols from older fragments (HTB is inside kmod-sched-core).
-  sed -i '/^CONFIG_PACKAGE_kmod-sched-htb=/d' .config
+  sed -i '/^CONFIG_PACKAGE_kmod-sched-htb=/d;/^# CONFIG_PACKAGE_kmod-sched-htb is not set$/d' .config
   grep -q '^CONFIG_PACKAGE_gfc-client=y$' .config || die "CONFIG_PACKAGE_gfc-client not in .config after merge"
+  log "merged gfc-packages.config (skipped=$skipped)"
 }
 
 # OpenWrt image install list comes from Kconfig package-y + pkginfo/*.install.
@@ -92,9 +105,22 @@ ensure_feeds_only() {
 }
 
 verify_dotconfig() {
+  local pkg
   cd "$IMT_SRC"
   grep -q '^CONFIG_PACKAGE_gfc-client=y$' .config || die ".config missing CONFIG_PACKAGE_gfc-client=y"
   grep -q '^CONFIG_PACKAGE_luci-app-gfc=y$' .config || die ".config missing CONFIG_PACKAGE_luci-app-gfc=y"
+  for pkg in tc-tiny kmod-sched-core kmod-ifb; do
+    grep -q "^CONFIG_PACKAGE_${pkg}=y$" .config || die ".config missing CONFIG_PACKAGE_${pkg}=y"
+    grep -qE "^# CONFIG_PACKAGE_${pkg} is not set$" .config \
+      && die ".config still has '# CONFIG_PACKAGE_${pkg} is not set' alongside =y"
+  done
+}
+
+# tc-tiny installs binary at /usr/libexec/tc-tiny; /sbin/tc is ALTERNATIVES symlink.
+rootfs_has_tc() {
+  local root="$1"
+  [[ -x "$root/sbin/tc" || -x "$root/usr/sbin/tc" || -x "$root/usr/libexec/tc-tiny" \
+    || -x "$root/usr/libexec/tc-full" || -x "$root/usr/libexec/tc-bpf" ]]
 }
 
 prepare_gfc_env() {
@@ -133,6 +159,13 @@ build_packages() {
   make_gfc_package "package/feeds/gfc/luci-app-gfc"
   find bin -name 'gfc-client*.ipk' -print | grep -q . || die "gfc-client ipk not produced"
   ensure_gfc_client_pkginfo
+  # Bandwidth shaping: ensure tc-tiny (+ deps) are built before package/install.
+  log "compile tc-tiny / kmod-sched-core / kmod-ifb (HTB shaping)"
+  make package/network/utils/iproute2/compile -j"$JOBS" V=s \
+    || die "iproute2 (tc-tiny) compile failed"
+  make package/kernel/linux/compile -j"$JOBS" V=s 2>/dev/null || true
+  find bin -name 'tc-tiny_*.ipk' -print | grep -q . \
+    || die "tc-tiny ipk not produced — check CONFIG_PACKAGE_tc-tiny=y and iproute2 build"
 }
 
 ensure_gfc_client_pkginfo() {
@@ -603,7 +636,7 @@ build_image() {
 verify_manifest() {
   cd "$IMT_SRC"
   local manifest="bin/targets/x86/64/immortalwrt-x86-64-generic.manifest"
-  local root orig
+  local root orig pkg
   root="$(find_rootfs_dir)"
   orig="$ROOTFS_ORIG_DIR"
   [[ -f "$manifest" ]] || die "missing $manifest"
@@ -618,6 +651,15 @@ verify_manifest() {
   grep -i gfc "$manifest" || true
   grep -i gfc-client "$manifest" >/dev/null || die "manifest has no gfc-client"
   grep -i luci-app-gfc "$manifest" >/dev/null || die "manifest has no luci-app-gfc"
+  for pkg in tc-tiny kmod-sched-core kmod-ifb; do
+    grep -qE "^${pkg}( |$)" "$manifest" \
+      || die "manifest missing ${pkg} (bandwidth shaping will fail on device)"
+  done
+  log "manifest tc/htb lines:"
+  grep -E '^(tc-tiny|kmod-sched-core|kmod-ifb) ' "$manifest" || true
+  rootfs_has_tc "$orig" \
+    || die "ORIG missing tc binary (/sbin/tc or /usr/libexec/tc-tiny) — package/install did not ship tc-tiny"
+  log "ORIG tc: $(ls -la "$orig/sbin/tc" "$orig/usr/libexec/tc-tiny" 2>/dev/null || true)"
   [[ -f "$orig/etc/uci-defaults/99-gfc-firstboot" ]] \
     || die "ORIG missing /etc/uci-defaults/99-gfc-firstboot"
   ls -lh bin/targets/x86/64/*ext4*combined*efi*.img.gz

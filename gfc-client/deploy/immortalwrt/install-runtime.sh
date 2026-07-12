@@ -106,7 +106,10 @@ install_tc_deps() {
 		return 0
 	fi
 	if ! command -v tc >/dev/null 2>&1; then
-		opkg install tc-tiny 2>/dev/null || opkg install ip-full 2>/dev/null || true
+		# tc-tiny → /usr/libexec/tc-tiny; /sbin/tc via ALTERNATIVES (ip-full has no tc).
+		opkg install tc-tiny 2>/dev/null || true
+		[ -x /usr/libexec/tc-tiny ] && [ ! -e /sbin/tc ] \
+			&& ln -sf /usr/libexec/tc-tiny /sbin/tc 2>/dev/null || true
 	fi
 	for mod in kmod-sched-core kmod-ifb; do
 		opkg install "$mod" 2>/dev/null || true

@@ -13,6 +13,24 @@ IFACE="${GFC_TUN_INTERFACE:-gfctun}"
 IFB="${GFC_IFB_INTERFACE:-ifb-gfc}"
 BUNDLE="${GFC_LIB}/state/config_bundle.json"
 
+# OpenWrt tc-tiny installs to /usr/libexec/tc-tiny; /sbin/tc is ALTERNATIVES.
+resolve_tc() {
+	if command -v tc >/dev/null 2>&1; then
+		command -v tc
+		return 0
+	fi
+	local c
+	for c in /sbin/tc /usr/sbin/tc /usr/libexec/tc-tiny /usr/libexec/tc-full /usr/libexec/tc-bpf; do
+		if [ -x "$c" ]; then
+			echo "$c"
+			return 0
+		fi
+	done
+	return 1
+}
+
+TC_BIN="$(resolve_tc 2>/dev/null || true)"
+
 read_bandwidth_mbps() {
 	if [ ! -f "$BUNDLE" ]; then
 		return 1
@@ -31,13 +49,14 @@ read_bandwidth_mbps() {
 }
 
 teardown_shaping() {
-	if ! command -v tc >/dev/null 2>&1; then
+	[ -n "$TC_BIN" ] || TC_BIN="$(resolve_tc 2>/dev/null || true)"
+	if [ -z "$TC_BIN" ]; then
 		return 0
 	fi
-	tc qdisc del dev "$IFACE" root 2>/dev/null || true
-	tc qdisc del dev "$IFACE" ingress 2>/dev/null || true
+	"$TC_BIN" qdisc del dev "$IFACE" root 2>/dev/null || true
+	"$TC_BIN" qdisc del dev "$IFACE" ingress 2>/dev/null || true
 	if ip link show "$IFB" >/dev/null 2>&1; then
-		tc qdisc del dev "$IFB" root 2>/dev/null || true
+		"$TC_BIN" qdisc del dev "$IFB" root 2>/dev/null || true
 		ip link del "$IFB" 2>/dev/null || true
 	fi
 }
@@ -60,8 +79,9 @@ apply_shaping() {
 		return 0
 	fi
 
-	if ! command -v tc >/dev/null 2>&1; then
-		echo "WARN: tc not installed; skip bandwidth shaping" >&2
+	[ -n "$TC_BIN" ] || TC_BIN="$(resolve_tc 2>/dev/null || true)"
+	if [ -z "$TC_BIN" ]; then
+		echo "WARN: tc not installed (need tc-tiny → /sbin/tc or /usr/libexec/tc-tiny); skip bandwidth shaping" >&2
 		return 0
 	fi
 
@@ -75,25 +95,25 @@ apply_shaping() {
 	teardown_shaping
 
 	# Upload path: LAN → gfctun → sing-box
-	tc qdisc add dev "$IFACE" root handle 1: htb default 10
-	tc class add dev "$IFACE" parent 1: classid 1:1 htb rate "${rate_mbps}mbit" ceil "${rate_mbps}mbit"
-	tc class add dev "$IFACE" parent 1:1 classid 1:10 htb rate "${rate_mbps}mbit" ceil "${rate_mbps}mbit" prio 0
-	tc qdisc add dev "$IFACE" parent 1:10 handle 10: fq_codel 2>/dev/null || true
+	"$TC_BIN" qdisc add dev "$IFACE" root handle 1: htb default 10
+	"$TC_BIN" class add dev "$IFACE" parent 1: classid 1:1 htb rate "${rate_mbps}mbit" ceil "${rate_mbps}mbit"
+	"$TC_BIN" class add dev "$IFACE" parent 1:1 classid 1:10 htb rate "${rate_mbps}mbit" ceil "${rate_mbps}mbit" prio 0
+	"$TC_BIN" qdisc add dev "$IFACE" parent 1:10 handle 10: fq_codel 2>/dev/null || true
 
 	# Download path: sing-box → gfctun → LAN (ingress redirect to IFB)
 	ip link add "$IFB" type ifb 2>/dev/null || true
 	ip link set "$IFB" up 2>/dev/null || true
 
-	tc qdisc add dev "$IFACE" handle ffff: ingress
-	tc filter add dev "$IFACE" parent ffff: protocol all u32 match u32 0 0 \
+	"$TC_BIN" qdisc add dev "$IFACE" handle ffff: ingress
+	"$TC_BIN" filter add dev "$IFACE" parent ffff: protocol all u32 match u32 0 0 \
 		action mirred egress redirect dev "$IFB" 2>/dev/null || true
 
-	tc qdisc add dev "$IFB" root handle 2: htb default 20
-	tc class add dev "$IFB" parent 2: classid 2:1 htb rate "${rate_mbps}mbit" ceil "${rate_mbps}mbit"
-	tc class add dev "$IFB" parent 2:1 classid 2:20 htb rate "${rate_mbps}mbit" ceil "${rate_mbps}mbit" prio 0
-	tc qdisc add dev "$IFB" parent 2:20 handle 20: fq_codel 2>/dev/null || true
+	"$TC_BIN" qdisc add dev "$IFB" root handle 2: htb default 20
+	"$TC_BIN" class add dev "$IFB" parent 2: classid 2:1 htb rate "${rate_mbps}mbit" ceil "${rate_mbps}mbit"
+	"$TC_BIN" class add dev "$IFB" parent 2:1 classid 2:20 htb rate "${rate_mbps}mbit" ceil "${rate_mbps}mbit" prio 0
+	"$TC_BIN" qdisc add dev "$IFB" parent 2:20 handle 20: fq_codel 2>/dev/null || true
 
-	echo "tc htb: ${IFACE} egress+ingress ${rate_mbps}mbit (ifb=${IFB})"
+	echo "tc htb: ${IFACE} egress+ingress ${rate_mbps}mbit (ifb=${IFB} bin=${TC_BIN})"
 }
 
 case "$ACTION" in

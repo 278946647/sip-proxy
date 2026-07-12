@@ -30,18 +30,18 @@ alwaysApply: false
 3. 根目录 `HANDOFF.md` — 产品背景（细节以 1–2 为准）
 4. `docs/NFT_ARCHITECTURE.md` / `UNBOUND_ARCHITECTURE.md` / `SINGBOX_ARCHITECTURE.md` — 数据面（改 deploy 时不得违反）
 
-## 当前状态摘要（2026-07-12 / `PKG_RELEASE:=11` / `70d9ddf`）
+## 当前状态摘要（2026-07-12 / `PKG_RELEASE:=12`）
 
-- **本会话已完成（源码）：** r8 去 index clash；r9 routing +x + DHCP hotplug + 密码框架 + 设备名 TID；r10 ip-rule 去重 + passwd + tc/htb（无假包 kmod-sched-htb）+ 控制面 TID=日期+名称；r11 WAN=首块/LAN=末块网卡
-- **当前卡点：** 构建机编出 **r11** 镜像并刷机 **完整 E2E**（非再改构建原理）
+- **本会话已完成（源码）：** r8–r11 见 HANDOFF；**r12** 强制 `tc-tiny` 进镜像（merge scrub `# is not set`、manifest/ORIG 硬验收、`apply-tc-htb` 认 `/usr/libexec/tc-tiny`）
+- **当前卡点：** 构建机编出 **r12** 镜像并刷机 **完整 E2E**（含 tc）
 - **构建机：** Ubuntu 22.04，`/opt/gfc/{sip-proxy,immortalwrt}`，用户 **gfcbuild**，Go **1.22+** `/usr/local/go`
 - **产品契约：** 未激活也要 DHCP+NAT+DNS hijack；策略路由等 `gfctun`；SSH **212**；OEM 密码 **`Wgh@125434`**；WAN=首块 NIC、LAN=末块
 
 ## 新会话第一步
 
 1. 读 `FIRMWARE-BUILD-HANDOFF.md` §0–§5 与 `BUILD-FIRMWARE.md` §1–§6
-2. 构建机：`git pull` → `rebuild-gfc-image.sh` → 确认 manifest **`1.1.0-r11`**（或更新）
-3. 刷最新 `*ext4*combined*efi*.img.gz`，按 HANDOFF / BUILD-FIRMWARE E2E 验收
+2. 构建机：`git pull` → `rebuild-gfc-image.sh` → 确认 manifest **`1.1.0-r12`** + **`tc-tiny`**
+3. 刷最新 `*ext4*combined*efi*.img.gz`，按 HANDOFF / BUILD-FIRMWARE E2E 验收（含 `/sbin/tc` 或 `/usr/libexec/tc-tiny`）
 
 ## 修改前必须做的事
 
@@ -98,7 +98,7 @@ Feed setup：**v4** — `feeds update -i gfc` + `feeds install -f`（禁止 plai
 | SSH | dropbear Port **212** |
 | 策略路由 | `gfc-routing` + **`99-gfc-tun`** + sing-box post-start（`sh` 调用） |
 | DHCP | dnsmasq `port=0`、`force=1`、option `6` + **lan ifup hotplug** |
-| 限速 | `tc-tiny` + `kmod-sched-core` + `kmod-ifb` |
+| 限速 | `tc-tiny` + `kmod-sched-core` + `kmod-ifb`；验收 manifest + ORIG `/usr/libexec/tc-tiny`（`/sbin/tc`=ALTERNATIVES） |
 | OEM 密码 | **`Wgh@125434`**（`passwd` / `97-gfc-oem-root-password`） |
 
 ## 允许的无须批准操作

@@ -157,13 +157,19 @@ merge_config() {
   while IFS= read -r line; do
     [[ "$line" =~ ^CONFIG_PACKAGE_ ]] || continue
     key="${line%%=*}"
-    grep -v "^${key}=" "$tmp" >"${tmp}.new" || true
+    # Drop both =y/=m and "# CONFIG_PACKAGE_foo is not set" so fragment =y wins.
+    grep -v -E "^${key}=|^# ${key} is not set\$" "$tmp" >"${tmp}.new" || true
     mv "${tmp}.new" "$tmp"
   done <"$merged"
   cat "$tmp" "$merged" >.config
   rm -f "$tmp" "$merged"
+  sed -i '/^CONFIG_PACKAGE_kmod-sched-htb=/d;/^# CONFIG_PACKAGE_kmod-sched-htb is not set$/d' .config
   package_has_kconfig gfc-client \
     || { echo "ERROR: CONFIG_PACKAGE_gfc-client not mergeable — fix package/Makefile DEPENDS (must be empty)" >&2; exit 1; }
+  for pkg in tc-tiny kmod-sched-core kmod-ifb; do
+    grep -q "^CONFIG_PACKAGE_${pkg}=y$" .config \
+      || { echo "ERROR: .config missing CONFIG_PACKAGE_${pkg}=y after merge" >&2; exit 1; }
+  done
   echo "==> merged $(basename "$FRAGMENT") into .config (skipped=$skipped, no oldconfig)"
 }
 
