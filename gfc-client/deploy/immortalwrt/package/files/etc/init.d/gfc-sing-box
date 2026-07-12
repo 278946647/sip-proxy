@@ -53,7 +53,7 @@ start_service() {
 			i=$((i + 1))
 			sleep 1
 		done
-		GFC_ROUTING_TUN_WAIT=3 /usr/lib/gfc-client/deploy/immortalwrt/gfc-routing.sh start \
+		GFC_ROUTING_TUN_WAIT=3 sh /usr/lib/gfc-client/deploy/immortalwrt/gfc-routing.sh start \
 			>>/tmp/gfc-routing-after-singbox.log 2>&1 || true
 	) &
 }

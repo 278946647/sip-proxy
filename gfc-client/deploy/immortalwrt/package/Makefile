@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=gfc-client
 PKG_VERSION:=1.1.0
-PKG_RELEASE:=8
+PKG_RELEASE:=9
 PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)
 PKG_BUILD_DEPENDS:=golang/host
 GFC_CLIENT_SRC ?= $(abspath $(CURDIR)/../../..)
@@ -45,6 +45,9 @@ define Package/gfc-client/install
 	$(INSTALL_DIR) $(1)/usr/lib/gfc-client
 	$(CP) $(PKG_BUILD_DIR)/deploy $(1)/usr/lib/gfc-client/
 	if [ -d "$(PKG_BUILD_DIR)/share" ]; then $(CP) $(PKG_BUILD_DIR)/share $(1)/usr/lib/gfc-client/; fi
+	# Git may store *.sh as 0644; hotplug/init invoke them directly — force +x.
+	chmod -R a+X $(1)/usr/lib/gfc-client/deploy
+	find $(1)/usr/lib/gfc-client/deploy -type f \( -name '*.sh' -o -path '*/cgi-bin/*' \) -exec chmod 0755 {} +
 
 	$(INSTALL_DIR) $(1)/etc/gfc-client
 	$(INSTALL_CONF) ./files/etc/gfc-client/gfc.env $(1)/etc/gfc-client/gfc.env
@@ -61,6 +64,8 @@ define Package/gfc-client/install
 
 	$(INSTALL_DIR) $(1)/etc/hotplug.d/net
 	$(INSTALL_BIN) ./files/etc/hotplug.d/net/99-gfc-tun $(1)/etc/hotplug.d/net/99-gfc-tun
+	$(INSTALL_DIR) $(1)/etc/hotplug.d/iface
+	$(INSTALL_BIN) ./files/etc/hotplug.d/iface/99-gfc-dnsmasq $(1)/etc/hotplug.d/iface/99-gfc-dnsmasq
 
 	# Port-80 activation assets (uhttpd). Do NOT install /www/index.html here —
 	# luci-base owns that path (opkg clash). 99-gfc-firstboot / 99-gfc-portal

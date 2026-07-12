@@ -81,6 +81,31 @@ def _device_key_from_mac(lan_mac: str | None, device_id: str | None) -> str:
     return secrets.token_hex(8).upper()
 
 
+_PLACEHOLDER_DEVICE_NAMES = frozenset(
+    {
+        "",
+        "(none)",
+        "none",
+        "openwrt",
+        "immortalwrt",
+        "localhost",
+        "gfc-client",
+    }
+)
+
+
+def _is_placeholder_device_name(name: str | None) -> bool:
+    return (name or "").strip().lower() in _PLACEHOLDER_DEVICE_NAMES
+
+
+def _initial_device_name(requested: str | None, tid: str) -> str:
+    """Prefer a real client name; otherwise use line TID for easy identification."""
+    name = (requested or "").strip()
+    if _is_placeholder_device_name(name):
+        return tid
+    return name
+
+
 async def _ensure_reverse_ports(session: AsyncSession, device: ClientDevice) -> None:
     await ensure_device_reverse_ports(session, device)
 
@@ -128,7 +153,7 @@ async def activate_client(
         if existing.line_id and existing.line_id != line.id:
             raise HTTPException(409, "device already bound to another line")
         device.line_id = line.id
-        device.name = body.device_name
+        device.name = _initial_device_name(body.device_name, line.tid)
         device.lan_mac = body.lan_mac
         device.device_id = body.device_id or device_key
         device.proxy_mode = body.proxy_mode
@@ -138,7 +163,7 @@ async def activate_client(
     else:
         device = ClientDevice(
             device_key=device_key,
-            name=body.device_name,
+            name=_initial_device_name(body.device_name, line.tid),
             lan_mac=body.lan_mac,
             device_id=body.device_id or device_key,
             line_id=line.id,
@@ -243,8 +268,16 @@ async def client_heartbeat(
 ) -> ClientHeartbeatResponse:
     device = await _auth_client(session, authorization)
     device.last_seen_at = utc_now()
-    if body.device_name:
-        device.name = body.device_name
+    # Do not let stock OpenWrt hostname "(none)" / ImmortalWrt overwrite a
+    # platform-edited name. Fill placeholder names from line TID when possible.
+    if body.device_name and not _is_placeholder_device_name(body.device_name):
+        device.name = body.device_name.strip()
+    elif _is_placeholder_device_name(device.name):
+        line = device.line
+        if line is None and device.line_id:
+            line = await session.get(Line, device.line_id)
+        if line and line.tid:
+            device.name = line.tid
     if body.agent_version:
         device.agent_version = body.agent_version
     if body.proxy_mode:

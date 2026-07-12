@@ -108,11 +108,18 @@ func (r *Runner) tick() {
 			return
 		}
 		state = st
+		// Prefer line TID as local display name when hostname is a stock placeholder
+		// (e.g. ImmortalWrt "(none)"); platform also maps placeholders → TID.
+		deviceName := r.cfg.DeviceName
+		if st.TID != "" && isPlaceholderDeviceName(deviceName) {
+			deviceName = st.TID
+			r.cfg.DeviceName = st.TID
+		}
 		if err := r.saveState(st); err != nil {
 			fmt.Printf("save state: %v\n", err)
 		}
 		_ = r.store.SaveDevice(store.Device{
-			DeviceKey: st.DeviceKey, DeviceName: r.cfg.DeviceName, LanMAC: mac,
+			DeviceKey: st.DeviceKey, DeviceName: deviceName, LanMAC: mac,
 			DeviceID: deviceID, LineID: st.LineID, TID: st.TID, ClientToken: st.ClientToken,
 			ControlPlaneURL: client.ActiveServer(), ProxyMode: r.cfg.ProxyMode, State: "active",
 		})
@@ -122,6 +129,9 @@ func (r *Runner) tick() {
 		client, err = controlplane.New(servers, state.ClientToken)
 		if err != nil {
 			return
+		}
+		if state.TID != "" && isPlaceholderDeviceName(r.cfg.DeviceName) {
+			r.cfg.DeviceName = state.TID
 		}
 	}
 
@@ -366,4 +376,13 @@ func (r *Runner) syncReverseSSH(cmd *reversessh.Command) (bool, string, bool) {
 	ok, msg := r.revSSH.SyncCommand(cmd)
 	active := r.revSSH.Status()["active"] == "active"
 	return ok, msg, active
+}
+
+func isPlaceholderDeviceName(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "", "(none)", "none", "openwrt", "immortalwrt", "localhost", "gfc-client":
+		return true
+	default:
+		return false
+	}
 }

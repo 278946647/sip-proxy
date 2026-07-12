@@ -1,0 +1,6 @@
+#!/bin/sh
+# Restart dnsmasq when LAN comes up so DHCP serves after br-lan is ready.
+[ "${ACTION:-}" = "ifup" ] || exit 0
+[ "${INTERFACE:-}" = "lan" ] || exit 0
+[ -x /etc/init.d/dnsmasq ] || exit 0
+/etc/init.d/dnsmasq restart >/dev/null 2>&1 || true

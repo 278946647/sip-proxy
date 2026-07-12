@@ -7,11 +7,13 @@ case "${DEVICENAME:-}${INTERFACE:-}${DEVICE:-}" in
 *) exit 0 ;;
 esac
 
-[ -x /usr/lib/gfc-client/deploy/immortalwrt/gfc-routing.sh ] || exit 0
+ROUTING=/usr/lib/gfc-client/deploy/immortalwrt/gfc-routing.sh
+[ -f "$ROUTING" ] || exit 0
 
 # Avoid blocking hotplug; short wait for TUN to be fully up.
+# Always invoke via sh — deploy/*.sh may lack +x if installed from 0644 tree.
 (
 	sleep 1
-	GFC_ROUTING_TUN_WAIT=5 /usr/lib/gfc-client/deploy/immortalwrt/gfc-routing.sh start \
+	GFC_ROUTING_TUN_WAIT=5 sh "$ROUTING" start \
 		>>/tmp/gfc-routing-hotplug.log 2>&1 || true
 ) &

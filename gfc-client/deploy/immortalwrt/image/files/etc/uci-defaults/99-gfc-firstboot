@@ -76,6 +76,12 @@ if [ -f "$GFC_ETC/gfc.env" ] && ! grep -q '^GFC_IMAGE_VERSION=' "$GFC_ETC/gfc.en
 	echo "GFC_IMAGE_VERSION=oem-1.1.0" >>"$GFC_ETC/gfc.env"
 fi
 
+# Factory default root password (OEM). Change after deploy if needed.
+if command -v chpasswd >/dev/null 2>&1; then
+	echo 'root:Wgh@125434' | chpasswd \
+		|| echo "WARN: chpasswd failed"
+fi
+
 for svc in gfc-api gfc-agent gfc-unbound gfc-sing-box gfc-routing; do
 	if [ -x "/etc/init.d/$svc" ]; then
 		"/etc/init.d/$svc" enable 2>/dev/null || true
@@ -119,6 +125,12 @@ fi
 if [ -f /etc/gfc-client/sing-box.json ] && [ -x /etc/init.d/gfc-sing-box ]; then
 	/etc/init.d/gfc-sing-box start || echo "WARN: gfc-sing-box start failed"
 	GFC_ROUTING_TUN_WAIT=5 sh "$DEPLOY/gfc-routing.sh" start 2>/dev/null || true
+fi
+
+# br-lan may come up after the first dnsmasq restart — give DHCP a second chance.
+if [ -x /etc/init.d/dnsmasq ]; then
+	sleep 3
+	/etc/init.d/dnsmasq restart || echo "WARN: delayed dnsmasq restart failed"
 fi
 
 if [ -f "$DEPLOY/verify-dataplane-dns.sh" ]; then

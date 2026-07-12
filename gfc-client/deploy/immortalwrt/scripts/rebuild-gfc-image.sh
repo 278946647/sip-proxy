@@ -288,6 +288,17 @@ sync_gfc_into_orig() {
       [[ -f "$f" ]] && cp -a "$f" "$orig/etc/uci-defaults/"
     done
   fi
+  if [[ -d "$root/etc/hotplug.d" ]]; then
+    mkdir -p "$orig/etc/hotplug.d"
+    for sub in net iface; do
+      if [[ -d "$root/etc/hotplug.d/$sub" ]]; then
+        mkdir -p "$orig/etc/hotplug.d/$sub"
+        for f in "$root/etc/hotplug.d/$sub"/99-gfc-*; do
+          [[ -f "$f" ]] && cp -a "$f" "$orig/etc/hotplug.d/$sub/"
+        done
+      fi
+    done
+  fi
   [[ -d "$root/etc/init.d" ]] && for s in gfc-api gfc-agent gfc-unbound gfc-sing-box gfc-routing; do
     [[ -f "$root/etc/init.d/$s" ]] && cp -a "$root/etc/init.d/$s" "$orig/etc/init.d/$s"
   done

@@ -1,7 +1,7 @@
 # GFC x86 固件构建 — 会话交接（FIRMWARE BUILD HANDOFF）
 
 > 写给**完全没有本对话上下文**的新会话。  
-> 最后更新：**2026-07-12**（r8：去掉 ipk `/www/index.html` 与 luci-base clash）  
+> 最后更新：**2026-07-12**（r9：deploy *.sh +x；lan ifup 重启 dnsmasq；默认 root 密码；设备名占位→TID）  
 > 仓库：`sip-proxy` / `gfc-client/deploy/immortalwrt/`  
 > 构建机：`/opt/gfc/{sip-proxy,immortalwrt}`（Ubuntu 22.04，用户 `gfcbuild`）  
 > Cursor 规则：[`gfc-firmware-build.mdc`](../../../.cursor/rules/gfc-firmware-build.mdc)
@@ -13,7 +13,7 @@
 
 ## 0. 新会话开场白（直接粘贴）
 
-> 我们在做 **GFC x86 ImmortalWrt OEM 固件**。构建管线已能产出 **manifest 含 `gfc-client`** 的镜像；首启/刷码/SSH/策略路由源码已修到 `PKG_RELEASE:=8`。**当前卡在：用含 r8 的镜像重建并刷机做 E2E 验收**（DHCP、NAT、Web 激活、SSH 212、`ip rule`）。请先读 `gfc-client/deploy/immortalwrt/FIRMWARE-BUILD-HANDOFF.md`，严格按 `.cursor/rules/gfc-firmware-build.mdc`。构建机 `git pull` 后跑 `rebuild-gfc-image.sh`，刷最新 `*ext4*combined*efi*.img.gz`。
+> 我们在做 **GFC x86 ImmortalWrt OEM 固件**。构建管线已能产出 **manifest 含 `gfc-client`** 的镜像；首启/刷码/SSH/策略路由源码已修到 `PKG_RELEASE:=9`。**当前卡在：用含 r9 的镜像重建并刷机做 E2E 验收**（DHCP、NAT、Web 激活、SSH 212、`ip rule`）。请先读 `gfc-client/deploy/immortalwrt/FIRMWARE-BUILD-HANDOFF.md`，严格按 `.cursor/rules/gfc-firmware-build.mdc`。构建机 `git pull` 后跑 `rebuild-gfc-image.sh`，刷最新 `*ext4*combined*efi*.img.gz`。
 
 ---
 
@@ -60,7 +60,8 @@
 | `7bb5583` | r5 | `99-gfc-firstboot`（`image/files` + package） |
 | `b5f770e` | r6 | DHCP **`force=1`**；CGI 优先 **curl**；未激活缩短 TUN 等待；www 进 ipk |
 | `b28f0f3` | r7 | **dropbear Port 212**；**`99-gfc-tun` hotplug**；sing-box 后轮询再跑 routing |
-| （本提交） | **r8** | ipk **不**装 `/www/index.html`（避免与 luci-base clash）；首启仍 `cp -f` 覆盖 |
+| （本提交） | **r9** | deploy `*.sh` 强制 +x；`sh` 调 routing；lan ifup 重启 dnsmasq；默认 root 密码；占位主机名→线路 TID |
+| （r8 提交） | r8 | ipk **不**装 `/www/index.html`（避免与 luci-base clash）；首启仍 `cp -f` 覆盖 |
 
 ### 2.4 设计结论（勿再争论）
 
@@ -77,13 +78,14 @@ gfc-client/deploy/immortalwrt/
   scripts/setup-immortalwrt-feed.sh     # v4: feeds update -i + install -f
   scripts/ensure-gfc-package-index.sh   # 运行时包进 packageinfo
   config/gfc-packages.config            # CONFIG_PACKAGE_*=y（勿 defconfig/oldconfig）
-  package/Makefile                      # PKG_VERSION=1.1.0 PKG_RELEASE=8；DEPENDS 空；勿装 /www/index.html
+  package/Makefile                      # PKG_VERSION=1.1.0 PKG_RELEASE=9；DEPENDS 空；chmod deploy/*.sh；勿装 /www/index.html
   package/files/etc/uci-defaults/99-gfc-firstboot
   package/files/etc/hotplug.d/net/99-gfc-tun
+  package/files/etc/hotplug.d/iface/99-gfc-dnsmasq  # lan ifup → dnsmasq restart
   image/files/etc/uci-defaults/99-gfc-firstboot   # overlay → $IMT_SRC/files
   configure-dnsmasq-dhcp.sh             # port=0, option 6, force=1
   configure-dropbear-ssh.sh             # Port 212
-  gfc-routing.sh                        # NAT/DNS 先；TUN 后再 ip rule
+  gfc-routing.sh                        # NAT/DNS 先；TUN 后再 ip rule（须 +x 或 sh 调用）
   www/cgi-bin/gfc-activation            # CGI → 127.0.0.1:8080（prefer curl）
 ```
 
@@ -93,21 +95,21 @@ gfc-client/deploy/immortalwrt/
 
 | 项 | 状态 | 说明 |
 |----|------|------|
-| 含 **r8** 的镜像是否已在构建机编出并刷机 | ⚠️ **当前卡点** | 源码已 push；需 `git pull` + `rebuild-gfc-image.sh` + 刷最新 img.gz |
+| 含 **r9** 的镜像是否已在构建机编出并刷机 | ⚠️ **当前卡点** | 源码已 push；需 `git pull` + `rebuild-gfc-image.sh` + 刷最新 img.gz |
 | 旧镜像 E2E | ⚠️ | 现场可能仍是 r4–r6 或更早：SSH 22、无 hotplug、首启不全 |
 | Web 刷码 | ⚠️ 待 r6+ 镜像验证 | busybox wget POST 曾失败；已改 curl；需实机确认无 `flash request failed` |
-| 策略路由 | ⚠️ 待激活路径验证 | WAN 无租约 → agent 不激活 → 无 `gfctun` → `ip rule` 仍空（属预期，先修 WAN） |
+| 策略路由 | ⚠️ 待 r9 验证 | r8 曾因 `gfc-routing.sh` 无 +x → Permission denied；r9 已 chmod + `sh` 调用 |
 | SSH 212 | ⚠️ 待 r7 镜像验证 | 源码已修；旧盘需重刷或现场跑 `configure-dropbear-ssh.sh` |
 | P1 dist/vmdk 打包 | ❌ 未做 | 可选 |
 | 数据面改契约 | 🚫 | 不在本任务范围 |
 
-**一句话：** 构建逻辑与 OEM 源码缺口已修完；**卡在「用 r8 固件重建 + 刷机验收闭环」。**
+**一句话：** 构建逻辑与 OEM 源码缺口已修完；**卡在「用 r9 固件重建 + 刷机验收闭环」。**
 
 ---
 
 ## 4. 下一步计划（严格顺序）
 
-### P0 — 重建并刷含 r8 的镜像（必须）
+### P0 — 重建并刷含 r9 的镜像（必须）
 
 ```bash
 export PATH=/usr/local/go/bin:$PATH
@@ -126,7 +128,7 @@ bash "$GFC_REPO/deploy/immortalwrt/scripts/rebuild-gfc-image.sh"
 
 ```bash
 grep gfc-client "$IMT_SRC/bin/targets/x86/64/"*.manifest
-# 期望类似: gfc-client - 1.1.0-r8
+# 期望类似: gfc-client - 1.1.0-r9
 test -f "$IMT_SRC/build_dir/target-x86_64_musl/root.orig-x86/etc/uci-defaults/99-gfc-firstboot"
 test -f "$IMT_SRC/build_dir/target-x86_64_musl/root.orig-x86/etc/hotplug.d/net/99-gfc-tun"
 ls -lt "$IMT_SRC/bin/targets/x86/64/"*ext4*combined*efi*.img.gz | head -3
@@ -194,6 +196,8 @@ cp "$IMT_SRC/bin/targets/x86/64/"*ext4*combined*efi*.img.gz /opt/gfc/dist/gfc-os
 | opkg arch 用 `x86` | 必须 **`x86_64`**（与 ipk 名一致） |
 | 以为 ipk 是 `ar` | 可能是 **gzip → GNU tar**；需健壮解包 |
 | **ipk 装 `/www/index.html`** | **禁止** — 与 **luci-base** clash；源文件放 `deploy/.../www/`，由 **firstboot** `cp -f` |
+| deploy `*.sh` 无执行位 | install 必须 `chmod 0755`；调用方优先 `sh script`（否则 Permission denied → 无 `ip rule`） |
+| PC 无 DHCP 直到手动 restart dnsmasq | `force=1` 不够；需 **lan ifup hotplug** + firstboot 延迟 restart |
 | 删 `root-*` 后只 `make target/install` | 须先 **`make package/install`** 再 **`target/linux/install`** |
 | `make package/feeds/.../install` | **叶子包无此目标**；用 compile + package/install 或 opkg 注入 |
 | 以 **ipk 存在** 当成功 | 唯一标准：**`grep gfc-client *.manifest`** |
@@ -225,7 +229,8 @@ cp "$IMT_SRC/bin/targets/x86/64/"*ext4*combined*efi*.img.gz /opt/gfc/dist/gfc-os
 ## 6. 关键 Git 提交（固件线，新→旧）
 
 ```
-（本提交） fix: do not ship /www/index.html in gfc-client ipk (r8)
+（本提交） fix: routing +x, DHCP hotplug, OEM password, device name→TID (r9)
+0837ab6  fix: omit /www/index.html from ipk (r8)
 b28f0f3  fix: policy route on gfctun hotplug; SSH dropbear :212 (r7)
 b5f770e  fix: OEM firstboot DHCP/NAT and web flash CGI (r6)
 7bb5583  feat: OEM 99-gfc-firstboot (r5)

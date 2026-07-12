@@ -5,10 +5,12 @@ STOP=21
 
 USE_PROCD=0
 
+ROUTING=/usr/lib/gfc-client/deploy/immortalwrt/gfc-routing.sh
+
 start_service() {
 	# Prefer direct script so boot always installs NAT/DNS hijack even without gfctun.
 	export GFC_ROUTING_TUN_WAIT="${GFC_ROUTING_TUN_WAIT:-2}"
-	/usr/lib/gfc-client/deploy/immortalwrt/gfc-routing.sh start
+	sh "$ROUTING" start
 }
 
 start() {
@@ -16,7 +18,7 @@ start() {
 }
 
 stop() {
-	/usr/lib/gfc-client/deploy/immortalwrt/gfc-routing.sh stop
+	sh "$ROUTING" stop
 }
 
 restart() {
