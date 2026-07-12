@@ -23,8 +23,8 @@ alwaysApply: false
 
 ## 当前状态摘要（2026-07-12）
 
-- **已完成：** tools/toolchain；ImmortalWrt 无 GFC 全量镜像；`gfc-client`/`luci-app-gfc` ipk 可编；仓库有 `setup-immortalwrt-feed.sh`、`rebuild-gfc-image.sh`
-- **未完成：** `manifest` 含 `gfc-client`；含 GFC 的可刷机 img；`image/99-gfc-firstboot`
+- **已完成：** tools/toolchain；含 GFC 的 ImmortalWrt 镜像（manifest 有 gfc-client）；`99-gfc-firstboot` 已入库
+- **未完成：** 含 firstboot 的镜像重建 + 刷机 E2E（`verify-dataplane-dns.sh` + activate）
 - **构建机：** Ubuntu 22.04，`/opt/gfc/{sip-proxy,immortalwrt}`，用户 **gfcbuild**，Go **1.22+** 在 `/usr/local/go`
 
 ## 修改前必须做的事

@@ -82,8 +82,8 @@ gfc-client/deploy/immortalwrt/
 | **`root.orig-x86` 有 gfc** | ⚠️ **真卡点** | `package/install` 快照 ORIG 后，`Image/Manifest` + 镜像都读 **ORIG** |
 | **`gfc-client.default.install` 内容** | ⚠️ 曾写错 | 必须是包名一行 `gfc-client`，**不是**文件列表 |
 | **`manifest` 含 gfc-client** | ❌ | 修 ORIG 同步后应通过 |
-| **`image/99-gfc-firstboot`** | ❌ | P1 |
-| **E2E 刷机** | ❌ | manifest 通过后 |
+| **`image/99-gfc-firstboot`** | ✅ 已入库 | `image/files` + `package/files`；`PKG_RELEASE:=5`；重建镜像后刷机生效 |
+| **E2E 刷机** | ❌ | 刷盘后查 `/tmp/gfc-firstboot.log` + `verify-dataplane-dns.sh` |
 
 ---
 
@@ -130,11 +130,12 @@ opkg list-installed | grep gfc
 # http://<LAN>/gfc/activate.html
 ```
 
-### P3 — 入库首启 overlay（需用户「确认修改」）
+### P3 — 首启 overlay（已入库，需重建镜像）
 
-- `image/files/etc/uci-defaults/99-gfc-firstboot`  
-- 调用：`disable-immortalwrt-fw4.sh`、`configure-dnsmasq-dhcp.sh`、`install-luci-app.sh`  
-- 软链：`ln -sfn .../image/files → $IMT_SRC/files` → 再 `make target/install`
+- `image/files/etc/uci-defaults/99-gfc-firstboot`
+- `package/files/etc/uci-defaults/99-gfc-firstboot`（随 `gfc-client` ipk）
+- `rebuild-gfc-image.sh` 会 `ln -sfn image/files → $IMT_SRC/files`
+- 调用：`disable-immortalwrt-fw4.sh`、`configure-dnsmasq-dhcp.sh`、enable GFC、`gfc-bootstrap`、`gfc-routing`
 
 ### P4 — 日常 OTA
 

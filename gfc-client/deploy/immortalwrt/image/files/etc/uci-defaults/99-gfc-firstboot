@@ -1,0 +1,106 @@
+#!/bin/sh
+# GFC OEM first boot (uci-defaults).
+# ipk postinst exits early when IPKG_INSTROOT is set during image build, so this
+# script performs the runtime enablement that postinst would do on a live device.
+#
+# Exit 0 → OpenWrt deletes this file (one-shot).
+# Non-zero → retry on next boot.
+set -eu
+
+GFC_ROOT="${GFC_ROOT:-/usr/lib/gfc-client}"
+GFC_ETC="${GFC_ETC:-/etc/gfc-client}"
+GFC_LIB="${GFC_LIB:-/var/lib/gfc-client}"
+GFC_LOG_DIR="${GFC_LOG_DIR:-/var/log/gfc-client}"
+DEPLOY="${GFC_ROOT}/deploy/immortalwrt"
+LOG="/tmp/gfc-firstboot.log"
+
+exec >>"$LOG" 2>&1
+echo "=== GFC firstboot $(date -Iseconds 2>/dev/null || date) ==="
+
+if [ ! -x /usr/bin/gfc-api ] || [ ! -x /usr/bin/gfc-bootstrap ]; then
+	echo "ERROR: gfc binaries missing — abort so firstboot can retry"
+	exit 1
+fi
+
+mkdir -p \
+	"$GFC_ETC" \
+	"$GFC_LIB/state" \
+	"$GFC_LIB/rules" \
+	"$GFC_LIB/dns-lists" \
+	"$GFC_LOG_DIR"
+
+# Stock unbound conflicts with gfc-unbound on :53.
+if [ -x /etc/init.d/unbound ]; then
+	/etc/init.d/unbound stop 2>/dev/null || true
+	/etc/init.d/unbound disable 2>/dev/null || true
+fi
+
+# Stock fw4 conflicts with GFC nft (inet gfc / nat / gfc_dns_hijack).
+if [ -f "$DEPLOY/disable-immortalwrt-fw4.sh" ]; then
+	sh "$DEPLOY/disable-immortalwrt-fw4.sh" || echo "WARN: disable fw4 failed"
+fi
+
+# dnsmasq DHCP-only; advertise LAN gateway as DNS (option 6).
+if [ -f "$DEPLOY/configure-dnsmasq-dhcp.sh" ]; then
+	sh "$DEPLOY/configure-dnsmasq-dhcp.sh" || echo "WARN: configure dnsmasq failed"
+fi
+
+# LuCI / portal landing (also provided by luci-app-gfc as 99-gfc-portal).
+if [ -x /etc/uci-defaults/99-gfc-portal ]; then
+	/etc/uci-defaults/99-gfc-portal || echo "WARN: 99-gfc-portal failed"
+elif [ -f "$DEPLOY/luci-app-gfc/root/etc/uci-defaults/99-gfc-portal" ]; then
+	sh "$DEPLOY/luci-app-gfc/root/etc/uci-defaults/99-gfc-portal" || echo "WARN: portal script failed"
+fi
+
+# Mark OEM image (do not invent WAN iface; leave gfc.env defaults from package).
+if [ -f "$GFC_ETC/gfc.env" ] && ! grep -q '^GFC_IMAGE_VERSION=' "$GFC_ETC/gfc.env" 2>/dev/null; then
+	echo "GFC_IMAGE_VERSION=oem-1.1.0" >>"$GFC_ETC/gfc.env"
+fi
+
+for svc in gfc-api gfc-agent gfc-unbound gfc-sing-box gfc-routing; do
+	if [ -x "/etc/init.d/$svc" ]; then
+		"/etc/init.d/$svc" enable 2>/dev/null || true
+	fi
+done
+
+# Unactivated factory image: bootstrap configs only (no device_id / line activation).
+if [ -f "$GFC_LIB/state/config_bundle.json" ]; then
+	gfc-bootstrap --reapply >/tmp/gfc-bootstrap.log 2>&1 \
+		|| echo "WARN: gfc-bootstrap --reapply failed (see /tmp/gfc-bootstrap.log)"
+else
+	gfc-bootstrap >/tmp/gfc-bootstrap.log 2>&1 \
+		|| echo "WARN: gfc-bootstrap failed (see /tmp/gfc-bootstrap.log)"
+fi
+
+# Base LAN path before activation: NAT + DNS hijack via gfc-routing.
+if [ -x /etc/init.d/gfc-routing ]; then
+	/etc/init.d/gfc-routing start 2>/dev/null \
+		|| sh "$DEPLOY/gfc-routing.sh" start 2>/dev/null \
+		|| echo "WARN: gfc-routing start failed"
+fi
+
+if [ -x /etc/init.d/gfc-api ]; then
+	/etc/init.d/gfc-api start 2>/dev/null || true
+fi
+if [ -x /etc/init.d/gfc-unbound ]; then
+	/etc/init.d/gfc-unbound start 2>/dev/null || true
+fi
+if [ -x /etc/init.d/dnsmasq ]; then
+	/etc/init.d/dnsmasq restart 2>/dev/null || true
+fi
+if [ -x /etc/init.d/gfc-agent ]; then
+	/etc/init.d/gfc-agent start 2>/dev/null || true
+fi
+
+# Proxy plane only when activated (sing-box.json present).
+if [ -f /etc/gfc-client/sing-box.json ] && [ -x /etc/init.d/gfc-sing-box ]; then
+	/etc/init.d/gfc-sing-box start 2>/dev/null || true
+fi
+
+if [ -f "$DEPLOY/verify-dataplane-dns.sh" ]; then
+	sh "$DEPLOY/verify-dataplane-dns.sh" \
+		|| echo "WARN: verify-dataplane-dns.sh failed (see above)"
+fi
+
+echo "GFC firstboot done"
+exit 0

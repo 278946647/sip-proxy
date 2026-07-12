@@ -102,6 +102,19 @@ prepare_gfc_env() {
   go mod tidy
 }
 
+# ImmortalWrt prepare_rootfs copies $IMT_SRC/files into rootfs (and per-fs images).
+link_image_files_overlay() {
+  local src="$GFC_DEPLOY/image/files"
+  local dst="$IMT_SRC/files"
+  [[ -d "$src/etc/uci-defaults" ]] || die "missing image overlay: $src"
+  [[ -f "$src/etc/uci-defaults/99-gfc-firstboot" ]] || die "missing 99-gfc-firstboot in $src"
+  if [[ -L "$dst" || -e "$dst" ]]; then
+    rm -rf "$dst"
+  fi
+  ln -sfn "$src" "$dst"
+  log "ImmortalWrt files overlay: $dst -> $src"
+}
+
 make_gfc_package() {
   local target="$1"
   shift
@@ -269,6 +282,12 @@ sync_gfc_into_orig() {
   done
   [[ -d "$root/usr/lib/gfc-client" ]] && rm -rf "$orig/usr/lib/gfc-client" && cp -a "$root/usr/lib/gfc-client" "$orig/usr/lib/"
   [[ -d "$root/etc/gfc-client" ]] && rm -rf "$orig/etc/gfc-client" && cp -a "$root/etc/gfc-client" "$orig/etc/"
+  if [[ -d "$root/etc/uci-defaults" ]]; then
+    mkdir -p "$orig/etc/uci-defaults"
+    for f in "$root/etc/uci-defaults"/99-gfc-*; do
+      [[ -f "$f" ]] && cp -a "$f" "$orig/etc/uci-defaults/"
+    done
+  fi
   [[ -d "$root/etc/init.d" ]] && for s in gfc-api gfc-agent gfc-unbound gfc-sing-box gfc-routing; do
     [[ -f "$root/etc/init.d/$s" ]] && cp -a "$root/etc/init.d/$s" "$orig/etc/init.d/$s"
   done
@@ -539,11 +558,20 @@ build_image() {
   merge_gfc_config
   verify_dotconfig
   refresh_build_metadata
+  link_image_files_overlay
   install_rootfs
 
   local root
   root="$(find_rootfs_dir)"
   ensure_gfc_in_rootfs "$root"
+  # Overlay + ipk both ship firstboot; ensure ORIG has it before image pack.
+  if [[ ! -f "$ROOTFS_ORIG_DIR/etc/uci-defaults/99-gfc-firstboot" ]]; then
+    mkdir -p "$ROOTFS_ORIG_DIR/etc/uci-defaults"
+    cp -a "$GFC_DEPLOY/image/files/etc/uci-defaults/99-gfc-firstboot" \
+      "$ROOTFS_ORIG_DIR/etc/uci-defaults/99-gfc-firstboot"
+    chmod +x "$ROOTFS_ORIG_DIR/etc/uci-defaults/99-gfc-firstboot"
+    log "injected 99-gfc-firstboot into ORIG"
+  fi
   build_target_images
 }
 
@@ -556,6 +584,7 @@ verify_manifest() {
   [[ -f "$manifest" ]] || die "missing $manifest"
   log "TARGET_DIR: $(test -x "$root/usr/bin/gfc-api" && echo has gfc-api || echo NO gfc-api)"
   log "ORIG: $(rootfs_has_gfc_opkg "$orig" && echo gfc-client registered || echo NO gfc-client opkg)"
+  log "firstboot: $(test -f "$orig/etc/uci-defaults/99-gfc-firstboot" && echo present || echo MISSING)"
   if ! grep -q gfc-client "$manifest"; then
     log "manifest stale — regenerate from ORIG"
     regenerate_manifest_from_orig
@@ -564,6 +593,8 @@ verify_manifest() {
   grep -i gfc "$manifest" || true
   grep -i gfc-client "$manifest" >/dev/null || die "manifest has no gfc-client"
   grep -i luci-app-gfc "$manifest" >/dev/null || die "manifest has no luci-app-gfc"
+  [[ -f "$orig/etc/uci-defaults/99-gfc-firstboot" ]] \
+    || die "ORIG missing /etc/uci-defaults/99-gfc-firstboot"
   ls -lh bin/targets/x86/64/*ext4*combined*efi*.img.gz
 }
 
