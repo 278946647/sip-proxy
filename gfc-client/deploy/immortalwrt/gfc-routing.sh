@@ -444,8 +444,13 @@ load_cn_set() {
 }
 
 wait_tun() {
-	local i
-	for i in $(seq 1 30); do
+	local i max="${GFC_ROUTING_TUN_WAIT:-30}"
+	# Unactivated OEM: no sing-box.json yet → do not block 30s on every start.
+	if [ ! -f "${GFC_ETC}/sing-box.json" ] && [ "$max" -gt 3 ] 2>/dev/null; then
+		max=2
+	fi
+	[ "$max" -gt 0 ] 2>/dev/null || return 1
+	for i in $(seq 1 "$max"); do
 		ip link show "$TUN_IFACE" >/dev/null 2>&1 && return 0
 		sleep 1
 	done

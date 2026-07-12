@@ -1,12 +1,18 @@
 #!/bin/sh /etc/rc.common
 
-START=90
+START=95
 STOP=21
 
 USE_PROCD=0
 
-start() {
+start_service() {
+	# Prefer direct script so boot always installs NAT/DNS hijack even without gfctun.
+	export GFC_ROUTING_TUN_WAIT="${GFC_ROUTING_TUN_WAIT:-2}"
 	/usr/lib/gfc-client/deploy/immortalwrt/gfc-routing.sh start
+}
+
+start() {
+	start_service
 }
 
 stop() {
@@ -16,4 +22,9 @@ stop() {
 restart() {
 	stop
 	start
+}
+
+boot() {
+	# After network; short tun wait on cold boot before activation.
+	GFC_ROUTING_TUN_WAIT=2 start_service
 }

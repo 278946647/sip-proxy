@@ -27,7 +27,21 @@ mkdir -p \
 	"$GFC_LIB/state" \
 	"$GFC_LIB/rules" \
 	"$GFC_LIB/dns-lists" \
-	"$GFC_LOG_DIR"
+	"$GFC_LOG_DIR" \
+	/www/cgi-bin \
+	/www/gfc
+
+# Ensure activation CGI + portal assets exist on port 80 (uhttpd).
+if [ -f "$DEPLOY/www/cgi-bin/gfc-activation" ]; then
+	cp -f "$DEPLOY/www/cgi-bin/gfc-activation" /www/cgi-bin/gfc-activation
+	chmod +x /www/cgi-bin/gfc-activation
+fi
+if [ -d "$DEPLOY/www/gfc" ]; then
+	cp -f "$DEPLOY/www/gfc/"* /www/gfc/ 2>/dev/null || true
+fi
+if [ -f "$DEPLOY/www/index.html" ]; then
+	cp -f "$DEPLOY/www/index.html" /www/index.html
+fi
 
 # Stock unbound conflicts with gfc-unbound on :53.
 if [ -x /etc/init.d/unbound ]; then
@@ -40,7 +54,7 @@ if [ -f "$DEPLOY/disable-immortalwrt-fw4.sh" ]; then
 	sh "$DEPLOY/disable-immortalwrt-fw4.sh" || echo "WARN: disable fw4 failed"
 fi
 
-# dnsmasq DHCP-only; advertise LAN gateway as DNS (option 6).
+# dnsmasq DHCP-only + force=1; advertise LAN gateway as DNS (option 6).
 if [ -f "$DEPLOY/configure-dnsmasq-dhcp.sh" ]; then
 	sh "$DEPLOY/configure-dnsmasq-dhcp.sh" || echo "WARN: configure dnsmasq failed"
 fi
@@ -72,29 +86,34 @@ else
 		|| echo "WARN: gfc-bootstrap failed (see /tmp/gfc-bootstrap.log)"
 fi
 
-# Base LAN path before activation: NAT + DNS hijack via gfc-routing.
-if [ -x /etc/init.d/gfc-routing ]; then
-	/etc/init.d/gfc-routing start 2>/dev/null \
-		|| sh "$DEPLOY/gfc-routing.sh" start 2>/dev/null \
-		|| echo "WARN: gfc-routing start failed"
-fi
-
+# API/agent first so /gfc/activate.html CGI can reach :8080.
 if [ -x /etc/init.d/gfc-api ]; then
-	/etc/init.d/gfc-api start 2>/dev/null || true
-fi
-if [ -x /etc/init.d/gfc-unbound ]; then
-	/etc/init.d/gfc-unbound start 2>/dev/null || true
-fi
-if [ -x /etc/init.d/dnsmasq ]; then
-	/etc/init.d/dnsmasq restart 2>/dev/null || true
+	/etc/init.d/gfc-api start || echo "WARN: gfc-api start failed"
 fi
 if [ -x /etc/init.d/gfc-agent ]; then
-	/etc/init.d/gfc-agent start 2>/dev/null || true
+	/etc/init.d/gfc-agent start || echo "WARN: gfc-agent start failed"
+fi
+if [ -x /etc/init.d/gfc-unbound ]; then
+	/etc/init.d/gfc-unbound start || echo "WARN: gfc-unbound start failed"
+fi
+if [ -x /etc/init.d/dnsmasq ]; then
+	/etc/init.d/dnsmasq restart || echo "WARN: dnsmasq restart failed"
+fi
+
+# Base LAN path before activation: NAT + DNS hijack (do not hide stderr).
+# Skip long gfctun wait on firstboot (unactivated).
+if [ -f "$DEPLOY/gfc-routing.sh" ]; then
+	GFC_ROUTING_TUN_WAIT=0 sh "$DEPLOY/gfc-routing.sh" start \
+		|| echo "WARN: gfc-routing start failed"
+elif [ -x /etc/init.d/gfc-routing ]; then
+	GFC_ROUTING_TUN_WAIT=0 /etc/init.d/gfc-routing start \
+		|| echo "WARN: gfc-routing init start failed"
 fi
 
 # Proxy plane only when activated (sing-box.json present).
 if [ -f /etc/gfc-client/sing-box.json ] && [ -x /etc/init.d/gfc-sing-box ]; then
-	/etc/init.d/gfc-sing-box start 2>/dev/null || true
+	/etc/init.d/gfc-sing-box start || echo "WARN: gfc-sing-box start failed"
+	GFC_ROUTING_TUN_WAIT=5 sh "$DEPLOY/gfc-routing.sh" start 2>/dev/null || true
 fi
 
 if [ -f "$DEPLOY/verify-dataplane-dns.sh" ]; then

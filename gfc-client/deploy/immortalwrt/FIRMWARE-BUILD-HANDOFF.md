@@ -83,7 +83,7 @@ gfc-client/deploy/immortalwrt/
 | **`gfc-client.default.install` 内容** | ⚠️ 曾写错 | 必须是包名一行 `gfc-client`，**不是**文件列表 |
 | **`manifest` 含 gfc-client** | ❌ | 修 ORIG 同步后应通过 |
 | **`image/99-gfc-firstboot`** | ✅ 已入库 | `image/files` + `package/files`；`PKG_RELEASE:=5`；重建镜像后刷机生效 |
-| **E2E 刷机** | ❌ | 刷盘后查 `/tmp/gfc-firstboot.log` + `verify-dataplane-dns.sh` |
+| **E2E 刷机** | ⚠️ | 首启后需验证 DHCP `force=1`、NAT、Web 刷码（CGI curl）；`PKG_RELEASE:=6` |
 
 ---
 

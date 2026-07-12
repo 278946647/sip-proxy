@@ -1,6 +1,9 @@
 #!/bin/sh
 # Same-origin activation API proxy for port 80 (uhttpd CGI).
 # Forwards to gfc-api on localhost without exposing admin token to the browser.
+#
+# Prefer curl: ImmortalWrt busybox wget often cannot POST JSON via --post-file=-
+# (browser then shows generic "flash request failed").
 set -eu
 
 API="${GFC_API_URL:-http://127.0.0.1:8080/api/v1}"
@@ -14,8 +17,43 @@ print_headers() {
 
 json_error() {
 	print_headers
-	printf '%s\n' "{\"ok\":false,\"error\":{\"message\":\"$1\"}}"
+	# Escape quotes/backslashes for minimal JSON safety.
+	msg=$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')
+	printf '%s\n' "{\"ok\":false,\"error\":{\"message\":\"${msg}\"}}"
 	exit 0
+}
+
+http_get() {
+	url=$1
+	if command -v curl >/dev/null 2>&1; then
+		curl -sS -m "$TIMEOUT" "$url" 2>/dev/null && return 0
+	fi
+	wget -qO- -T "$TIMEOUT" "$url" 2>/dev/null && return 0
+	return 1
+}
+
+http_post_json() {
+	url=$1
+	body=$2
+	tmp=$(mktemp 2>/dev/null || echo /tmp/gfc-cgi-body.$$)
+	printf '%s' "$body" >"$tmp"
+	if command -v curl >/dev/null 2>&1; then
+		# Do not use -f: API returns JSON body on 4xx (invalid code, etc.).
+		curl -sS -m "$TIMEOUT" \
+			-H 'Content-Type: application/json' \
+			--data-binary @"$tmp" \
+			"$url"
+		rc=$?
+		rm -f "$tmp"
+		return "$rc"
+	fi
+	wget -qO- -T "$TIMEOUT" \
+		--header='Content-Type: application/json' \
+		--post-file="$tmp" \
+		"$url"
+	rc=$?
+	rm -f "$tmp"
+	return "$rc"
 }
 
 read_body() {
@@ -31,11 +69,12 @@ GET)
 	case "$ACTION" in
 	status)
 		print_headers
-		wget -qO- -T "$TIMEOUT" "$API/activation" 2>/dev/null || printf '{"ok":false,"error":{"message":"activation status unavailable"}}'
+		http_get "$API/activation" \
+			|| printf '{"ok":false,"error":{"message":"activation status unavailable (is gfc-api running on :8080?)"}}'
 		;;
 	health)
 		print_headers
-		wget -qO- -T "$TIMEOUT" "$API/health" 2>/dev/null || printf '{"ok":false}'
+		http_get "$API/health" || printf '{"ok":false}'
 		;;
 	*)
 		json_error "unknown action"
@@ -48,11 +87,9 @@ POST)
 		json_error "empty body"
 	fi
 	print_headers
-	printf '%s' "$BODY" | wget -qO- -T "$TIMEOUT" \
-		--header='Content-Type: application/json' \
-		--post-file=- \
-		"$API/activation/flash" 2>/dev/null \
-		|| printf '{"ok":false,"error":{"message":"flash request failed"}}'
+	if ! http_post_json "$API/activation/flash" "$BODY"; then
+		printf '%s\n' '{"ok":false,"error":{"message":"flash request failed (gfc-api unreachable on 127.0.0.1:8080 — check /etc/init.d/gfc-api)"}}'
+	fi
 	;;
 *)
 	json_error "method not allowed"

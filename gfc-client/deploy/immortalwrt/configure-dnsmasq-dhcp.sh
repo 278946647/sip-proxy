@@ -20,6 +20,9 @@ fi
 
 uci set dhcp.@dnsmasq[0].port='0'
 uci set dhcp.@dnsmasq[0].noresolv='1'
+# Force DHCP even if another server is detected on the segment (lab/cascade).
+# Without this, dnsmasq refuses DHCP and LAN clients get no address.
+uci set dhcp.@dnsmasq[0].force='1'
 uci -q delete dhcp.@dnsmasq[0].server
 uci set dhcp.@dnsmasq[0].cachesize='0'
 
@@ -51,7 +54,7 @@ uci add_list dhcp.lan.dns="$LAN_ADDR" 2>/dev/null || true
 uci commit dhcp
 
 got="$(uci -q get dhcp.lan.dhcp_option 2>/dev/null || true)"
-echo "dnsmasq DHCP: port=0, dns=$LAN_ADDR, dhcp_option=$got"
+echo "dnsmasq DHCP: port=0, force=1, dns=$LAN_ADDR, dhcp_option=$got"
 case " $got " in
 *" 6,$LAN_ADDR "*|*"6,$LAN_ADDR"*) ;;
 *)
