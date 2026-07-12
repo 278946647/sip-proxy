@@ -111,9 +111,12 @@ verify_dotconfig() {
   grep -q '^CONFIG_PACKAGE_luci-app-gfc=y$' .config || die ".config missing CONFIG_PACKAGE_luci-app-gfc=y"
   for pkg in tc-tiny kmod-sched-core kmod-ifb; do
     grep -q "^CONFIG_PACKAGE_${pkg}=y$" .config || die ".config missing CONFIG_PACKAGE_${pkg}=y"
-    grep -qE "^# CONFIG_PACKAGE_${pkg} is not set$" .config \
-      && die ".config still has '# CONFIG_PACKAGE_${pkg} is not set' alongside =y"
+    # Must use if/then: under set -e, "grep -q && die" returns 1 when absent and aborts the script.
+    if grep -qE "^# CONFIG_PACKAGE_${pkg} is not set$" .config; then
+      die ".config still has '# CONFIG_PACKAGE_${pkg} is not set' alongside =y"
+    fi
   done
+  log ".config OK: gfc + tc-tiny + kmod-sched-core + kmod-ifb"
 }
 
 # tc-tiny installs binary at /usr/libexec/tc-tiny; /sbin/tc is ALTERNATIVES symlink.

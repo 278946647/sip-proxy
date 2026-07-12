@@ -31,6 +31,7 @@
 | 8 | 创建线路时名称不进 TID | 控制面：`TID-{日期}-{名称}`；留空则随机 |
 | 9 | WAN/LAN 口反了（stock lan=eth0 wan=eth1） | **r11**：首启探测，**WAN=首块、LAN=末块** |
 | 10 | 刷机后仍无 `tc` | **r12**：merge 清 `# … is not set`；verify 强制 manifest/ORIG 有 tc；`apply-tc-htb` 认 `/usr/libexec/tc-tiny` |
+| 11 | rebuild 在 merge 后静默退出 | **`set -e` + `grep -q && die`**：未匹配时函数返回 1 → 脚本中止；改为 `if grep` |
 
 **相关提交（新→旧）：** r12 → `70d9ddf` → `6eb067a` → `fde1f00` → `1212375` → …
 
@@ -139,6 +140,7 @@
 | `CONFIG_PACKAGE_kmod-sched-htb` | **无此包**；用 **`kmod-sched-core`**（含 sch_htb）+ `tc-tiny` + `kmod-ifb` |
 | 合并后 `defconfig` / `oldconfig` | **禁止** |
 | merge 只删 `CONFIG_*=` 留 `# … is not set` | **r12** 同时 scrub；verify 硬失败 |
+| `verify_dotconfig` 用 `grep -q && die` | **`set -e` 下未匹配会静默退出**；必须用 `if grep; then die; fi` |
 | 只验 gfc、不验 tc | **r12** manifest/ORIG 必须有 tc-tiny |
 | `opkg install ip-full` 当 tc 回退 | **错**；ip-full 不含 tc |
 

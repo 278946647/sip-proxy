@@ -275,6 +275,7 @@ GFC_ROUTING_TUN_WAIT=5 sh /usr/lib/gfc-client/deploy/immortalwrt/gfc-routing.sh 
 | lan=eth0 wan=eth1 | stock 默认；刷 r11+ 或跑 `configure-network-ports.sh` |
 | 设备上无 `tc` 但有 `/usr/libexec/tc-tiny` | ALTERNATIVES 未链上；`ln -sf /usr/libexec/tc-tiny /sbin/tc` 或重刷 r12 |
 | rebuild 报 manifest/ORIG missing tc-tiny | `.config` 未选中或 iproute2 未编出；查 merge scrub 与 `find bin -name 'tc-tiny_*.ipk'` |
+| rebuild 在 `merged gfc-packages.config` 后静默回提示符 | r12 初版 `verify_dotconfig` 的 `grep -q && die` 触发 `set -e`；pull 含 `if grep` 的修复后再跑 |
 
 ---
 
