@@ -1,10 +1,24 @@
 # GFC 会话交接（HANDOFF）
 
 > 写给**完全没有上下文**的新对话。  
-> 最后更新：**2026-07-10**（GFC x86 专用固件 OEM 化方案 + 既有 ImmortalWrt 客户端运维背景）。  
+> 最后更新：**2026-07-12**（固件线状态已迁出；本文保留产品/数据面背景）。  
 > 仓库：`sip-proxy`（`gfc-platform/` 控制平台 + `gfc-client/` ImmortalWrt 客户端）。
 
-**说明：** `main` 上可能还有与本文并行的工作（远程运维、路由模式拆分、RBAC 等）。若任务与「固件构建」无关，见本文 **§8 历史背景**；若涉及 unbound/nft/sing-box 底层，必须先读架构文档出差异表。
+## ⚠️ 固件 OEM 构建（当前主线）— 请先读这里
+
+| 文档 | 用途 |
+|------|------|
+| [`gfc-client/deploy/immortalwrt/FIRMWARE-BUILD-HANDOFF.md`](gfc-client/deploy/immortalwrt/FIRMWARE-BUILD-HANDOFF.md) | **唯一真相**：已完成 / 卡点 / 下一步 / 踩坑 |
+| [`.cursor/rules/gfc-firmware-build.mdc`](.cursor/rules/gfc-firmware-build.mdc) | Cursor 规则（禁令 + 契约） |
+| [`gfc-client/deploy/immortalwrt/BUILD-FIRMWARE.md`](gfc-client/deploy/immortalwrt/BUILD-FIRMWARE.md) | 构建机操作简版 |
+
+**当前卡点（2026-07-12）：** 源码已到 `PKG_RELEASE:=7`（`b28f0f3`）；需构建机重建 r7 镜像并刷机 E2E（DHCP/NAT/Web 激活/SSH 212/`ip rule`）。
+
+**新会话开场白：** 见 `FIRMWARE-BUILD-HANDOFF.md` §0。
+
+---
+
+**说明：** 下文偏 2026-07-10 方案期，部分条目已过时（如「首启未入库」「manifest 无 gfc」）。若任务是固件构建，**以 FIRMWARE-BUILD-HANDOFF 为准**。其它工作（远程运维、路由模式、RBAC）见本文其余章节；unbound/nft/sing-box 底层须先读架构文档出差异表。
 
 ---
 

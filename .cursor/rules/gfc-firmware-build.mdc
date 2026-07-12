@@ -1,14 +1,16 @@
 ---
-description: GFC x86 ImmortalWrt 固件/OEM 镜像构建上下文与禁令（会话记忆固化）
+description: GFC x86 ImmortalWrt OEM 固件构建 — 状态、禁令、踩坑记忆固化（新会话必读）
 globs:
   - "**/deploy/immortalwrt/**"
   - "**/gfc-os/**"
-  - "**/build.sh"
   - "**/BUILD-FIRMWARE.md"
   - "**/FIRMWARE-BUILD-HANDOFF.md"
   - "**/gfc-packages.config"
   - "**/setup-immortalwrt-feed.sh"
   - "**/rebuild-gfc-image.sh"
+  - "**/99-gfc-firstboot"
+  - "**/configure-dropbear-ssh.sh"
+  - "**/99-gfc-tun"
 alwaysApply: false
 ---
 
@@ -16,24 +18,31 @@ alwaysApply: false
 
 ## 权威文档（优先级从高到低）
 
-1. `gfc-client/deploy/immortalwrt/FIRMWARE-BUILD-HANDOFF.md` — **本会话状态、卡点、踩坑**
+1. `gfc-client/deploy/immortalwrt/FIRMWARE-BUILD-HANDOFF.md` — **会话状态、卡点、踩坑全集**
 2. `gfc-client/deploy/immortalwrt/BUILD-FIRMWARE.md` — 操作步骤
-3. 根目录 `HANDOFF.md` — 产品/首启 overlay P0
-4. `docs/NFT_ARCHITECTURE.md`、`docs/UNBOUND_ARCHITECTURE.md`、`docs/SINGBOX_ARCHITECTURE.md` — 数据面（改 package 内脚本时不得违反）
+3. 根目录 `HANDOFF.md` — 产品背景（细节以 1 为准）
+4. `docs/NFT_ARCHITECTURE.md` / `UNBOUND_ARCHITECTURE.md` / `SINGBOX_ARCHITECTURE.md` — 数据面（改 deploy 脚本时不得违反）
 
-## 当前状态摘要（2026-07-12）
+## 当前状态摘要（2026-07-12 / `b28f0f3` / `PKG_RELEASE:=7`）
 
-- **已完成：** tools/toolchain；含 GFC 的 ImmortalWrt 镜像（manifest 有 gfc-client）；`99-gfc-firstboot` 已入库
-- **未完成：** 含 firstboot 的镜像重建 + 刷机 E2E（`verify-dataplane-dns.sh` + activate）
-- **构建机：** Ubuntu 22.04，`/opt/gfc/{sip-proxy,immortalwrt}`，用户 **gfcbuild**，Go **1.22+** 在 `/usr/local/go`
+- **已完成：** tools/toolchain；feed-only 管线；manifest 可含 gfc-client；ORIG 同步；firstboot 入库；DHCP `force=1`；CGI curl；dropbear 212；gfctun hotplug 补 `ip rule`
+- **当前卡点：** 用 **r7** 镜像在构建机 **重建 + 刷机 E2E**（非再改构建原理）
+- **构建机：** Ubuntu 22.04，`/opt/gfc/{sip-proxy,immortalwrt}`，用户 **gfcbuild**，Go **1.22+** `/usr/local/go`
+- **产品契约：** 未激活也要 DHCP+NAT+DNS hijack；策略路由等 `gfctun`；SSH 管理口 **212**
+
+## 新会话第一步
+
+1. 读 `FIRMWARE-BUILD-HANDOFF.md` §0–§5
+2. 构建机：`git pull` → `rebuild-gfc-image.sh` → 确认 manifest **`1.1.0-r7`**（或更新）
+3. 刷最新 `*ext4*combined*efi*.img.gz`，按 HANDOFF §4 P1 验收
 
 ## 修改前必须做的事
 
-1. 阅读 `FIRMWARE-BUILD-HANDOFF.md` §3–§5
-2. 若改 `package/Makefile`、feed 脚本、defconfig：先输出 **差异说明**，等用户 **「确认修改」**（除非用户明确点名文件）
-3. 未获批准：**只读分析**，不写 feed/镜像脚本
+1. 若改 `package/Makefile`、feed/rebuild 脚本、选包、firstboot：先输出 **差异说明**，等用户 **「确认修改」**（用户已点名文件除外）
+2. 未获批准：**只读分析**，不写 feed/镜像脚本
+3. 改 nft/unbound/sing-box 行为：走对应 **no-change-without-approval** 规则，不得借口「固件首启方便」
 
-## 构建入口（推荐顺序）
+## 构建入口
 
 ```bash
 export PATH=/usr/local/go/bin:$PATH
@@ -43,41 +52,50 @@ bash "$GFC_REPO/deploy/immortalwrt/scripts/rebuild-gfc-image.sh"
 grep -i gfc "$IMT_SRC/bin/targets/x86/64/"*.manifest   # 必须通过
 ```
 
+Feed setup：**v4** — `feeds update -i gfc` + `feeds install -f`（禁止 plain `feeds update gfc` / `feeds install -a`）。
+
 ## 绝对禁止
 
-- 在合并 `gfc-packages.config` 或手写 `CONFIG_PACKAGE_gfc-*=y` 之后运行 **`make defconfig`** 或 **`make oldconfig`**（会删除 GFC 选包）
-- 仅用 **`package/gfc/` 软链**而不 **`feeds.conf` src-link + feeds install**（rootfs 可能无 GFC）
-- 以 **ipk 存在**代替 **manifest 含 gfc** 作为「进镜像」判断
-- 在 **`bin/packages/`** 找不到 ipk 就认定失败（查 **`bin/targets/x86/64/packages/`**）
-- **`dd of=/dev/sdX`** 字面量（占位符；曾误创建 `/dev/sdX` 普通文件）
-- 恢复 **`sqlite3-cli`** 到 `gfc-client` DEPENDS（ImmortalWrt feed 无此包 → Kconfig 不注册）
-- **root** 与 **gfcbuild** 混编导致 `.config` Permission denied
-- 用 **apt golang-go 1.18** 编 gfc-client
-- 无 **`GOFLAGS=-buildvcs=false`**（OpenWrt build_dir 无 `.git`）
-- 未经批准改 nft/unbound/sing-box 数据面行为以「方便固件首启」
+- 合并 GFC 选包后跑 **`make defconfig`** / **`make oldconfig`**
+- 保留或依赖 legacy **`package/gfc/`**（必须 **`package/feeds/gfc/`**）
+- 给 `gfc-client` 加非空 **`DEPENDS`**（未索引依赖 → 整包从 Kconfig 消失）
+- 用 **`CONFIG_PACKAGE_nftables`**（应 **`nftables-json`** + **`kmod-nft-core`**）
+- 以 **ipk 存在**代替 **manifest 含 gfc-client**
+- 只注入 **`root-x86`** 不同步 **`root.orig-x86`**
+- **`gfc-client.default.install`** 写成文件列表（必须单行包名 `gfc-client`）
+- opkg offline 使用 arch **`x86`**（必须 **`x86_64`**）
+- 删 `root-*` 后只跑 **`make target/install`**（须先 **`package/install`**）
+- **`dd of=/dev/sdX`** 字面量；用 apt **golang 1.18**；无 **`GOFLAGS=-buildvcs=false`**
+- 认定「刷码后立刻无 `ip rule`」为 bug（无 `gfctun` 时延迟是设计）
+- 只改 `GFC_SSH_PORT` 就认为 SSH 已是 212（必须改 **dropbear**）
+- 未经批准改数据面表名/mark/hook/DNS 架构
 
 ## 必须遵守的包/路径契约
 
 | 项 | 要求 |
 |----|------|
-| Feed | `src-link gfc` → `deploy/immortalwrt/feed/`；**删除 legacy `package/gfc/`** |
+| Feed | `src-link gfc` → `deploy/immortalwrt/feed/`；删除 legacy `package/gfc*` |
 | packageinfo | `Source-Makefile: package/feeds/gfc/gfc-client/Makefile` |
-| .config | `CONFIG_PACKAGE_gfc-client=y`、`CONFIG_PACKAGE_luci-app-gfc=y` |
-| 验收 | `immortalwrt-x86-64-generic.manifest` 含 **gfc-client**、**luci-app-gfc** |
-| 刷盘镜像 | **ext4** `*combined-efi*.img.gz`，非 squashfs |
-| gfc.env | 构建前 `cp gfc.env.example gfc.env`（`gfc.env` gitignore） |
-| 首启 | ipk **postinst 不在镜像构建时执行** → 必须 **`/etc/uci-defaults/99-gfc-firstboot`**（待入库） |
+| .config | `CONFIG_PACKAGE_gfc-client=y`、`luci-app-gfc=y` + `gfc-packages.config` |
+| DEPENDS | **空**；运行时包仅 fragment / ensure-index |
+| 验收 | `*.manifest` 含 **gfc-client**、**luci-app-gfc** |
+| ORIG | `package/install` 快照 → 镜像读 **root.orig-x86** |
+| 刷盘镜像 | **ext4** `*combined-efi*.img.gz` |
+| 首启 | **`99-gfc-firstboot`**（postinst 在 `IPKG_INSTROOT` 不执行） |
+| SSH | firstboot → **`configure-dropbear-ssh.sh`** → Port **212** |
+| 策略路由 | `gfc-routing` + **`hotplug.d/net/99-gfc-tun`** + sing-box post-start |
+| DHCP | dnsmasq `port=0`、`force=1`、option `6,<LAN网关>` |
 
 ## 允许的无须批准操作
 
-- 只读：`grep gfc *.manifest`、`grep gfc-client tmp/.packageinfo`、`feeds search`
-- 构建机跑 `rebuild-gfc-image.sh`（用户已授权固件任务时）
-- 更新 `FIRMWARE-BUILD-HANDOFF.md` / `BUILD-FIRMWARE.md`（用户要求文档时）
+- 只读：`grep gfc *.manifest`、`grep gfc-client tmp/.packageinfo`、对照 HANDOFF 做 gap
+- 用户已授权固件任务时：构建机跑 `rebuild-gfc-image.sh`
+- 用户要求时：更新 `FIRMWARE-BUILD-HANDOFF.md` / `BUILD-FIRMWARE.md` / 本规则
 
 ## 固件任务固定口令
 
-> 严格按 `FIRMWARE-BUILD-HANDOFF.md`，构建机 `git pull` 后跑 `rebuild-gfc-image.sh`；以 **manifest 含 gfc** 为进镜像唯一标准；旧无 GFC 镜像可删；改 package 前先给 diff，确认后再写代码。
+> 严格按 `FIRMWARE-BUILD-HANDOFF.md`，构建机 `git pull` 后跑 `rebuild-gfc-image.sh`；以 **manifest 含 gfc** 为进镜像唯一标准；刷最新 img.gz 做 E2E；改 package/脚本前先给 diff，确认后再写代码。
 
 ## 违规处理
 
-若生成器/文档与「manifest 必须含 gfc-client」冲突，以 **manifest 实测**为准报告 bug，不得用无 GFC 镜像冒充成功。
+若文档与「manifest 必须含 gfc-client / ORIG 同步 / DEPENDS 为空」冲突，以 **构建机实测** 报告 bug，不得用无 GFC 镜像或只改文档迁就错误实现。

@@ -1,7 +1,8 @@
 # GFC ImmortalWrt 固件构建
 
-> **会话状态 / 卡点 / 踩坑全集：** [`FIRMWARE-BUILD-HANDOFF.md`](FIRMWARE-BUILD-HANDOFF.md)  
-> **Cursor 规则：** [`.cursor/rules/gfc-firmware-build.mdc`](../../../.cursor/rules/gfc-firmware-build.mdc)
+> **会话状态 / 卡点 / 踩坑全集：** [`FIRMWARE-BUILD-HANDOFF.md`](FIRMWARE-BUILD-HANDOFF.md)（2026-07-12 已固化；当前卡点 = **r7 镜像重建 + 刷机 E2E**）  
+> **Cursor 规则：** [`.cursor/rules/gfc-firmware-build.mdc`](../../../.cursor/rules/gfc-firmware-build.mdc)  
+> **包版本：** `gfc-client` `1.1.0-r7`（`b28f0f3`）
 
 ## 根因总结
 
