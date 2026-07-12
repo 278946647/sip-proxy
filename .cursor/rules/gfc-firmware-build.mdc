@@ -6,11 +6,18 @@ globs:
   - "**/BUILD-FIRMWARE.md"
   - "**/FIRMWARE-BUILD-HANDOFF.md"
   - "**/gfc-packages.config"
+  - "**/gfc-package-index.txt"
   - "**/setup-immortalwrt-feed.sh"
   - "**/rebuild-gfc-image.sh"
+  - "**/ensure-gfc-package-index.sh"
   - "**/99-gfc-firstboot"
+  - "**/98-gfc-network-ports"
+  - "**/97-gfc-oem-root-password"
   - "**/configure-dropbear-ssh.sh"
+  - "**/configure-network-ports.sh"
+  - "**/configure-dnsmasq-dhcp.sh"
   - "**/99-gfc-tun"
+  - "**/99-gfc-dnsmasq"
 alwaysApply: false
 ---
 
@@ -18,27 +25,27 @@ alwaysApply: false
 
 ## 权威文档（优先级从高到低）
 
-1. `gfc-client/deploy/immortalwrt/FIRMWARE-BUILD-HANDOFF.md` — **会话状态、卡点、踩坑全集**
-2. `gfc-client/deploy/immortalwrt/BUILD-FIRMWARE.md` — 操作步骤
-3. 根目录 `HANDOFF.md` — 产品背景（细节以 1 为准）
-4. `docs/NFT_ARCHITECTURE.md` / `UNBOUND_ARCHITECTURE.md` / `SINGBOX_ARCHITECTURE.md` — 数据面（改 deploy 脚本时不得违反）
+1. `gfc-client/deploy/immortalwrt/FIRMWARE-BUILD-HANDOFF.md` — **会话状态、本会话任务、卡点、踩坑全集**
+2. `gfc-client/deploy/immortalwrt/BUILD-FIRMWARE.md` — **操作手册**（命令、目录、模块、验收）
+3. 根目录 `HANDOFF.md` — 产品背景（细节以 1–2 为准）
+4. `docs/NFT_ARCHITECTURE.md` / `UNBOUND_ARCHITECTURE.md` / `SINGBOX_ARCHITECTURE.md` — 数据面（改 deploy 时不得违反）
 
-## 当前状态摘要（2026-07-12 / `PKG_RELEASE:=11`）
+## 当前状态摘要（2026-07-12 / `PKG_RELEASE:=11` / `70d9ddf`）
 
-- **已完成：** … r10 tc/passwd/ip-rule；**r11** 首启网卡：WAN=首块、LAN=末块
-- **当前卡点：** 用 **r11** 镜像重建 + 刷机 E2E
+- **本会话已完成（源码）：** r8 去 index clash；r9 routing +x + DHCP hotplug + 密码框架 + 设备名 TID；r10 ip-rule 去重 + passwd + tc/htb（无假包 kmod-sched-htb）+ 控制面 TID=日期+名称；r11 WAN=首块/LAN=末块网卡
+- **当前卡点：** 构建机编出 **r11** 镜像并刷机 **完整 E2E**（非再改构建原理）
 - **构建机：** Ubuntu 22.04，`/opt/gfc/{sip-proxy,immortalwrt}`，用户 **gfcbuild**，Go **1.22+** `/usr/local/go`
-- **产品契约：** 未激活也要 DHCP+NAT+DNS hijack；策略路由等 `gfctun`；SSH 管理口 **212**
+- **产品契约：** 未激活也要 DHCP+NAT+DNS hijack；策略路由等 `gfctun`；SSH **212**；OEM 密码 **`Wgh@125434`**；WAN=首块 NIC、LAN=末块
 
 ## 新会话第一步
 
-1. 读 `FIRMWARE-BUILD-HANDOFF.md` §0–§5
+1. 读 `FIRMWARE-BUILD-HANDOFF.md` §0–§5 与 `BUILD-FIRMWARE.md` §1–§6
 2. 构建机：`git pull` → `rebuild-gfc-image.sh` → 确认 manifest **`1.1.0-r11`**（或更新）
-3. 刷最新 `*ext4*combined*efi*.img.gz`，按 HANDOFF §4 P1 验收
+3. 刷最新 `*ext4*combined*efi*.img.gz`，按 HANDOFF / BUILD-FIRMWARE E2E 验收
 
 ## 修改前必须做的事
 
-1. 若改 `package/Makefile`、feed/rebuild 脚本、选包、firstboot：先输出 **差异说明**，等用户 **「确认修改」**（用户已点名文件除外）
+1. 若改 `package/Makefile`、feed/rebuild 脚本、选包、firstboot/网卡脚本：先输出 **差异说明**，等用户 **「确认修改」**（用户已点名文件除外）
 2. 未获批准：**只读分析**，不写 feed/镜像脚本
 3. 改 nft/unbound/sing-box 行为：走对应 **no-change-without-approval** 规则，不得借口「固件首启方便」
 
@@ -60,17 +67,19 @@ Feed setup：**v4** — `feeds update -i gfc` + `feeds install -f`（禁止 plai
 - 保留或依赖 legacy **`package/gfc/`**（必须 **`package/feeds/gfc/`**）
 - 给 `gfc-client` 加非空 **`DEPENDS`**（未索引依赖 → 整包从 Kconfig 消失）
 - 用 **`CONFIG_PACKAGE_nftables`**（应 **`nftables-json`** + **`kmod-nft-core`**）
-- 用 **`CONFIG_PACKAGE_kmod-sched-htb`**（应 **`kmod-sched-core`**，内含 sch_htb）
+- 用 **`CONFIG_PACKAGE_kmod-sched-htb`**（应 **`kmod-sched-core`**，内含 sch_htb；另加 `tc-tiny` + `kmod-ifb`）
 - 以 **ipk 存在**代替 **manifest 含 gfc-client**
 - ipk 安装 **`/www/index.html`**（与 **luci-base** clash；由 firstboot 覆盖）
-- deploy `*.sh` 保持 **0644**（hotplug/init 直接执行会 Permission denied；install 必须 `chmod 0755`）
+- deploy `*.sh` 保持 **0644**（须 install `chmod 0755`；调用优先 **`sh script`**）
 - 只注入 **`root-x86`** 不同步 **`root.orig-x86`**
 - **`gfc-client.default.install`** 写成文件列表（必须单行包名 `gfc-client`）
 - opkg offline 使用 arch **`x86`**（必须 **`x86_64`**）
 - 删 `root-*` 后只跑 **`make target/install`**（须先 **`package/install`**）
 - **`dd of=/dev/sdX`** 字面量；用 apt **golang 1.18**；无 **`GOFLAGS=-buildvcs=false`**
-- 认定「刷码后立刻无 `ip rule`」为 bug（无 `gfctun` 时延迟是设计）
+- 认定「刷码后立刻无 `ip rule`」为 bug（无 `gfctun` 时延迟是设计；另查脚本 +x）
 - 只改 `GFC_SSH_PORT` 就认为 SSH 已是 212（必须改 **dropbear**）
+- 仅用 `chpasswd` 设 OEM 密码（OpenWrt 常无此命令 → 用 **`passwd`**）
+- 假定 ImmortalWrt stock「lan=eth0/wan=eth1」即产品口序（OEM **WAN=首块 / LAN=末块**）
 - 未经批准改数据面表名/mark/hook/DNS 架构
 
 ## 必须遵守的包/路径契约
@@ -84,21 +93,24 @@ Feed setup：**v4** — `feeds update -i gfc` + `feeds install -f`（禁止 plai
 | 验收 | `*.manifest` 含 **gfc-client**、**luci-app-gfc** |
 | ORIG | `package/install` 快照 → 镜像读 **root.orig-x86** |
 | 刷盘镜像 | **ext4** `*combined-efi*.img.gz` |
-| 首启 | **`99-gfc-firstboot`**（postinst 在 `IPKG_INSTROOT` 不执行） |
-| SSH | firstboot → **`configure-dropbear-ssh.sh`** → Port **212** |
-| 策略路由 | `gfc-routing` + **`hotplug.d/net/99-gfc-tun`** + sing-box post-start |
-| DHCP | dnsmasq `port=0`、`force=1`、option `6,<LAN网关>` |
+| 首启 | `97` 密码 → `98` 网卡 → **`99-gfc-firstboot`** |
+| 网卡 | **WAN=首块物理 NIC**；**LAN(br-lan)=末块**；同步 `GFC_WAN_IFACE` |
+| SSH | dropbear Port **212** |
+| 策略路由 | `gfc-routing` + **`99-gfc-tun`** + sing-box post-start（`sh` 调用） |
+| DHCP | dnsmasq `port=0`、`force=1`、option `6` + **lan ifup hotplug** |
+| 限速 | `tc-tiny` + `kmod-sched-core` + `kmod-ifb` |
+| OEM 密码 | **`Wgh@125434`**（`passwd` / `97-gfc-oem-root-password`） |
 
 ## 允许的无须批准操作
 
-- 只读：`grep gfc *.manifest`、`grep gfc-client tmp/.packageinfo`、对照 HANDOFF 做 gap
+- 只读：`grep gfc *.manifest`、对照 HANDOFF / BUILD-FIRMWARE 做 gap
 - 用户已授权固件任务时：构建机跑 `rebuild-gfc-image.sh`
 - 用户要求时：更新 `FIRMWARE-BUILD-HANDOFF.md` / `BUILD-FIRMWARE.md` / 本规则
 
 ## 固件任务固定口令
 
-> 严格按 `FIRMWARE-BUILD-HANDOFF.md`，构建机 `git pull` 后跑 `rebuild-gfc-image.sh`；以 **manifest 含 gfc** 为进镜像唯一标准；刷最新 img.gz 做 E2E；改 package/脚本前先给 diff，确认后再写代码。
+> 严格按 `FIRMWARE-BUILD-HANDOFF.md` 与 `BUILD-FIRMWARE.md`，构建机 `git pull` 后跑 `rebuild-gfc-image.sh`；以 **manifest 含 gfc** 为进镜像唯一标准；刷最新 img.gz 做 E2E；改 package/脚本前先给 diff，确认后再写代码。
 
 ## 违规处理
 
-若文档与「manifest 必须含 gfc-client / ORIG 同步 / DEPENDS 为空」冲突，以 **构建机实测** 报告 bug，不得用无 GFC 镜像或只改文档迁就错误实现。
+若文档与「manifest 必须含 gfc-client / ORIG 同步 / DEPENDS 为空 / 无 kmod-sched-htb」冲突，以 **构建机实测** 报告 bug，不得用无 GFC 镜像或只改文档迁就错误实现。

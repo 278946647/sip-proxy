@@ -1,167 +1,115 @@
 # GFC x86 固件构建 — 会话交接（FIRMWARE BUILD HANDOFF）
 
 > 写给**完全没有本对话上下文**的新会话。  
-> 最后更新：**2026-07-12**（r11：首启探测网卡 WAN=首块 / LAN=末块）
+> 最后更新：**2026-07-12**（会话收尾固化；源码 `PKG_RELEASE:=11` / `70d9ddf`）  
 > 仓库：`sip-proxy` / `gfc-client/deploy/immortalwrt/`  
 > 构建机：`/opt/gfc/{sip-proxy,immortalwrt}`（Ubuntu 22.04，用户 `gfcbuild`）  
 > Cursor 规则：[`gfc-firmware-build.mdc`](../../../.cursor/rules/gfc-firmware-build.mdc)
 
-**权威操作步骤（简版）：** [`BUILD-FIRMWARE.md`](BUILD-FIRMWARE.md)  
-**产品/首启总览：** 根目录 [`HANDOFF.md`](../../../HANDOFF.md)（旧；以本文 §2–§4 为准）
+**操作手册（命令/目录/模块）：** [`BUILD-FIRMWARE.md`](BUILD-FIRMWARE.md)  
+**产品背景（旧）：** 根目录 [`HANDOFF.md`](../../../HANDOFF.md)（细节以本文 + BUILD-FIRMWARE 为准）
 
 ---
 
 ## 0. 新会话开场白（直接粘贴）
 
-> 我们在做 **GFC x86 ImmortalWrt OEM 固件**。构建管线已能产出 **manifest 含 `gfc-client`** 的镜像；首启/刷码/SSH/策略路由源码已修到 `PKG_RELEASE:=11`。**当前卡在：用含 r11 的镜像重建并刷机做 E2E 验收**（含 WAN=首块/LAN=末块网卡）。请先读 `gfc-client/deploy/immortalwrt/FIRMWARE-BUILD-HANDOFF.md`，严格按 `.cursor/rules/gfc-firmware-build.mdc`。构建机 `git pull` 后跑 `rebuild-gfc-image.sh`，刷最新 `*ext4*combined*efi*.img.gz`。
+> 我们在做 **GFC x86 ImmortalWrt OEM 固件**。源码已到 **`PKG_RELEASE:=11`**（WAN=首块网卡、LAN=末块、routing +x、OEM 密码、tc/htb、DHCP hotplug 等）。**当前卡点：用含 r11 的镜像在构建机重建并刷机做完整 E2E**。请先读 `gfc-client/deploy/immortalwrt/FIRMWARE-BUILD-HANDOFF.md` 与 `BUILD-FIRMWARE.md`，严格按 `.cursor/rules/gfc-firmware-build.mdc`。构建机 `git pull` 后跑 `rebuild-gfc-image.sh`，刷最新 `*ext4*combined*efi*.img.gz`。
 
 ---
 
-## 1. 任务总览（我们在做什么）
+## 1. 本会话做了什么任务（2026-07-12）
 
-| 主题 | 目标 |
-|------|------|
-| **GFC OS / OEM 固件** | ImmortalWrt 全量编译 → `combined-efi.img.gz`，刷盘即用 |
-| **内置组件** | `gfc-client`、`luci-app-gfc`、LuCI、sing-box、unbound、nftables-json、dnsmasq-full、运维工具 |
-| **产品形态** | 未激活也能 **DHCP + NAT + DNS 劫持**；激活后才开代理（`sing-box` / `gfctun`） |
-| **发布物** | ext4 EFI 镜像 + ipk +（可选）vmdk + `dist/gfc-os-v1/` |
-| **验收** | manifest 含 gfc；刷机后 DHCP/NAT/Web 刷码；激活后 `ip rule`；SSH **212** |
+| # | 任务 | 结果 |
+|---|------|------|
+| 1 | 修 `gfc-client` vs `luci-base` 争 `/www/index.html` | **r8**：ipk 不装 index；首启 `cp -f` |
+| 2 | E2E：激活后无 `ip rule` | 根因 **`gfc-routing.sh` 无 +x** → Permission denied；**r9** chmod + `sh` 调用 |
+| 3 | PC 需手动 `dnsmasq restart` 才拿 IP | **r9**：`hotplug.d/iface/99-gfc-dnsmasq` + firstboot 延迟 restart |
+| 4 | 默认 root 密码 `Wgh@125434` | **r9/r10**：`97-gfc-oem-root-password`（`passwd` 回退，非仅 chpasswd） |
+| 5 | 平台设备名 `(none)` | 控制面：占位主机名 → 线路 **TID**；heartbeat 不覆盖已改名 |
+| 6 | 双 `fwmark→2022` rule | **r10**：循环清光再只加 `pref 100` |
+| 7 | tc/HTB 限速缺模块 | **r10**：`tc-tiny` + `kmod-sched-core` + `kmod-ifb`；**禁止** 假包名 `kmod-sched-htb` |
+| 8 | 创建线路时名称不进 TID | 控制面：`TID-{日期}-{名称}`；留空则随机 |
+| 9 | WAN/LAN 口反了（stock lan=eth0 wan=eth1） | **r11**：首启探测，**WAN=首块、LAN=末块** |
 
-**产品方向：** 「每台手动装 runtime tar」→「OEM 出厂镜像 + 线路码激活」。
+**相关提交（新→旧）：** `70d9ddf` → `6eb067a` → `fde1f00` → `1212375` → `98a5cd0` → `0837ab6` …
 
 ---
 
-## 2. 已经完成了什么
+## 2. 已经完成了什么（累计）
 
-### 2.1 构建机环境
+### 2.1 构建机与管线
 
 | 项 | 状态 |
 |----|------|
-| ImmortalWrt 树 | ✅ `/opt/gfc/immortalwrt`（x86_64 generic） |
-| tools / toolchain | ✅ `gfcbuild` 用户 |
-| Go 1.22+ | ✅ `/usr/local/go`（需 `PATH` / profile） |
-| 一键脚本 | ✅ `scripts/rebuild-gfc-image.sh` + `setup-immortalwrt-feed.sh` **v4** |
+| ImmortalWrt x86_64 + tools/toolchain | ✅ `/opt/gfc/immortalwrt`，用户 `gfcbuild` |
+| Go 1.22+ | ✅ `/usr/local/go` + `GOFLAGS=-buildvcs=false` |
+| Feed-only（无 legacy `package/gfc/`） | ✅ `package/feeds/gfc/` |
+| `DEPENDS` 空 + `gfc-packages.config` | ✅ |
+| manifest 含 gfc-client / luci-app-gfc | ✅（每次 rebuild 实测） |
+| ORIG `root.orig-x86` 同步 | ✅ |
+| 一键 `rebuild-gfc-image.sh` | ✅ |
 
-### 2.2 构建管线（P0 构建成功标准已达成过）
+### 2.2 OEM 产品能力（源码侧，须刷对应 rN 镜像验证）
 
-| 项 | 状态 | 说明 |
-|----|------|------|
-| Feed 仅 `package/feeds/gfc/` | ✅ | 禁止 legacy `package/gfc/` |
-| `gfc-client` Kconfig 注册 | ✅ | **`DEPENDS` 必须为空**；运行时包走 `gfc-packages.config` |
-| ipk 产出 | ✅ | `gfc-client_1.1.0-r*_x86_64.ipk` |
-| **manifest 含 gfc-client** | ✅ | 曾通过；以每次 rebuild 实测为准 |
-| **ORIG rootfs 同步** | ✅ | 镜像读 `root.orig-x86`，不只 `root-x86` |
-| 选包 fragment | ✅ | `config/gfc-packages.config`（`nftables-json` 等） |
+| 能力 | 版本 | 说明 |
+|------|------|------|
+| 首启 NAT + DNS hijack（未激活可上网） | r5+ | `99-gfc-firstboot` + `gfc-routing` |
+| DHCP `force=1` + option 6 | r6+ | |
+| Web 刷码 CGI（curl） | r6+ | |
+| SSH dropbear **212** | r7+ | |
+| gfctun hotplug → `ip rule` | r7+ / r9 修 +x | |
+| 门户 index 不与 luci clash | r8+ | |
+| deploy 脚本可执行 + lan DHCP hotplug | r9+ | |
+| OEM root 密码 `Wgh@125434` | r10+（passwd） | |
+| tc/HTB/ifb 进镜像 | r10+ | HTB ∈ `kmod-sched-core` |
+| WAN=首块 / LAN=末块 | r11+ | `configure-network-ports.sh` |
 
-### 2.3 OEM 首启与运行时修复（源码已 push）
+### 2.3 设计结论（勿再争论）
 
-| Commit | PKG | 内容 |
-|--------|-----|------|
-| `7bb5583` | r5 | `99-gfc-firstboot`（`image/files` + package） |
-| `b5f770e` | r6 | DHCP **`force=1`**；CGI 优先 **curl**；未激活缩短 TUN 等待；www 进 ipk |
-| `b28f0f3` | r7 | **dropbear Port 212**；**`99-gfc-tun` hotplug**；sing-box 后轮询再跑 routing |
-| （本提交） | **r11** | 首启 `configure-network-ports`：WAN=首块物理网卡、LAN(br-lan)=末块；同步 `GFC_WAN_IFACE` |
-| （r10 提交） | r10 | 去重 fwmark rule；`passwd` 设 OEM 密码；`tc-tiny`+`kmod-sched-core`(含 HTB)+`kmod-ifb`；控制面 TID=TID-日期-名称 |
-| （r9 提交） | r9 | deploy `*.sh` 强制 +x；`sh` 调 routing；lan ifup 重启 dnsmasq；默认 root 密码；占位主机名→线路 TID |
-
-### 2.4 设计结论（勿再争论）
-
-1. **未激活也要通网：** firstboot / `gfc-routing` 先装 NAT + DNS hijack；`gfctun` 未出现时 **延迟** `ip rule`，不算「routing 失败」。
-2. **刷码 ≠ 策略路由立刻齐全：** flash 只到 `pending_activate`；`fwmark 0x2023 → table 2022` 要等 **agent 激活 + sing-box 起 TUN**（hotplug / post-start 补装）。
-3. **`GFC_SSH_PORT=212` ≠ dropbear 已改：** 以前只影响 nft bypass；r7 起 firstboot 调 `configure-dropbear-ssh.sh`。
-4. **数据面契约不变：** 固件工作不擅自改 nft/unbound/sing-box 架构；见 `docs/*_ARCHITECTURE.md` + 对应 no-change 规则。
-
-### 2.5 关键路径速查
-
-```text
-gfc-client/deploy/immortalwrt/
-  scripts/rebuild-gfc-image.sh          # 一键编镜像 + ORIG 同步 + manifest 验收
-  scripts/setup-immortalwrt-feed.sh     # v4: feeds update -i + install -f
-  scripts/ensure-gfc-package-index.sh   # 运行时包进 packageinfo
-  config/gfc-packages.config            # CONFIG_PACKAGE_*=y（勿 defconfig/oldconfig）
-  package/Makefile                      # PKG_VERSION=1.1.0 PKG_RELEASE=9；DEPENDS 空；chmod deploy/*.sh；勿装 /www/index.html
-  package/files/etc/uci-defaults/99-gfc-firstboot
-  package/files/etc/hotplug.d/net/99-gfc-tun
-  package/files/etc/hotplug.d/iface/99-gfc-dnsmasq  # lan ifup → dnsmasq restart
-  image/files/etc/uci-defaults/99-gfc-firstboot   # overlay → $IMT_SRC/files
-  configure-dnsmasq-dhcp.sh             # port=0, option 6, force=1
-  configure-dropbear-ssh.sh             # Port 212
-  gfc-routing.sh                        # NAT/DNS 先；TUN 后再 ip rule（须 +x 或 sh 调用）
-  www/cgi-bin/gfc-activation            # CGI → 127.0.0.1:8080（prefer curl）
-```
+1. 未激活：NAT + DNS hijack 先上；无 `gfctun` 时 **延迟** `ip rule` 是设计。  
+2. 刷码 ≠ 立刻有策略路由；要等 agent + sing-box TUN + hotplug/post-start。  
+3. `GFC_SSH_PORT` ≠ dropbear 端口；必须改 dropbear UCI。  
+4. ImmortalWrt stock 常 **lan=eth0 / wan=eth1**；GFC OEM 改为 **wan=首块 / lan=末块**，并同步 `GFC_WAN_IFACE`。  
+5. 固件工作 **不擅自改** nft/unbound/sing-box 架构契约。
 
 ---
 
 ## 3. 当前卡在哪
 
-| 项 | 状态 | 说明 |
-|----|------|------|
-| 含 **r11** 的镜像是否已在构建机编出并刷机 | ⚠️ **当前卡点** | 源码已 push；需 `git pull` + `rebuild-gfc-image.sh` + 刷最新 img.gz |
-| 旧镜像 E2E | ⚠️ | 现场可能仍是 r4–r6 或更早：SSH 22、无 hotplug、首启不全 |
-| Web 刷码 | ⚠️ 待 r6+ 镜像验证 | busybox wget POST 曾失败；已改 curl；需实机确认无 `flash request failed` |
-| 策略路由 | ⚠️ 待 r9 验证 | r8 曾因 `gfc-routing.sh` 无 +x → Permission denied；r9 已 chmod + `sh` 调用 |
-| SSH 212 | ⚠️ 待 r7 镜像验证 | 源码已修；旧盘需重刷或现场跑 `configure-dropbear-ssh.sh` |
-| P1 dist/vmdk 打包 | ❌ 未做 | 可选 |
-| 数据面改契约 | 🚫 | 不在本任务范围 |
+| 项 | 状态 |
+|----|------|
+| **r11 镜像重建 + 刷机完整 E2E** | ⚠️ **当前卡点**（源码已 push） |
+| 控制面 TID / 设备名修复 | ⚠️ 须单独部署 control-plane + web-ui（非固件） |
+| P1 dist/vmdk 发布打包 | ❌ 可选未做 |
 
-**一句话：** 构建逻辑与 OEM 源码缺口已修完；**卡在「用 r11 固件重建 + 刷机验收闭环」。**
+**一句话：** OEM 源码缺口本会话已收口到 r11；**下一会话优先：构建机编出 r11 → 刷机按 E2E 清单验收。**
 
 ---
 
-## 4. 下一步计划（严格顺序）
+## 4. 下一步（严格顺序）
 
-### P0 — 重建并刷含 r11 的镜像（必须）
+### P0 — 重建并刷 r11
 
-```bash
-export PATH=/usr/local/go/bin:$PATH
-export IMT_SRC=/opt/gfc/immortalwrt
-export GFC_REPO=/opt/gfc/sip-proxy/gfc-client
-export GOFLAGS=-buildvcs=false
+见 [`BUILD-FIRMWARE.md`](BUILD-FIRMWARE.md) §3–§5。期望 manifest：`gfc-client - 1.1.0-r11`。
 
-cd /opt/gfc/sip-proxy && git pull
-# 若曾用 root 编过：chown -R gfcbuild:gfcbuild /opt/gfc/sip-proxy /opt/gfc/immortalwrt
-
-su - gfcbuild
-bash "$GFC_REPO/deploy/immortalwrt/scripts/rebuild-gfc-image.sh"
-```
-
-**通过标准：**
-
-```bash
-grep gfc-client "$IMT_SRC/bin/targets/x86/64/"*.manifest
-# 期望类似: gfc-client - 1.1.0-r11
-test -f "$IMT_SRC/build_dir/target-x86_64_musl/root.orig-x86/etc/uci-defaults/99-gfc-firstboot"
-test -f "$IMT_SRC/build_dir/target-x86_64_musl/root.orig-x86/etc/hotplug.d/net/99-gfc-tun"
-ls -lt "$IMT_SRC/bin/targets/x86/64/"*ext4*combined*efi*.img.gz | head -3
-```
-
-刷机：用**最新时间戳**的 `immortalwrt-x86-64-generic-ext4-combined-efi.img.gz`（勿用旧未压缩 `.img`）。
-
-### P1 — 刷机 E2E 清单
+### P1 — E2E 清单（刷机后）
 
 | # | 检查 | 期望 |
 |---|------|------|
-| 1 | LAN PC DHCP | 拿到地址；DNS 为网关 |
-| 2 | `uci get dhcp.@dnsmasq[0].force` | `1` |
-| 3 | `nft list tables` | 有 `nat` / `gfc_dns_hijack`（首启后，未激活也可） |
-| 4 | Web 激活 | `http://<LAN>/gfc/activate.html` 无 `flash request failed` |
-| 5 | WAN | `udhcpc`/`ip a` 有 WAN 地址（否则 activate 卡住） |
-| 6 | 激活后 | `ip link show gfctun`；`ip rule` 含 `fwmark 0x2023 lookup 2022` |
-| 7 | SSH | **端口 212**（不是 22） |
-| 8 | | `verify-dataplane-dns.sh` |
+| 1 | `opkg list-installed \| grep gfc-client` | `1.1.0-r11` |
+| 2 | `uci get network.wan.device` | 首块（如 `eth0`） |
+| 3 | `br-lan` ports | 末块（如 `eth1`） |
+| 4 | LAN DHCP | 无需手动 restart dnsmasq |
+| 5 | `uci get dhcp.@dnsmasq[0].force` | `1` |
+| 6 | `nft list tables` | `nat` / `gfc_dns_hijack` / `gfc` |
+| 7 | Web 激活 | 无 `flash request failed` |
+| 8 | 激活后 | `gfctun` 存在；**仅一条** `fwmark 0x2023 lookup 2022` |
+| 9 | SSH | 端口 **212**；密码 **`Wgh@125434`** |
+| 10 | `command -v tc`；限速相关 | `tc` + `kmod-sched-core` / `kmod-ifb` |
 
-### P2 — 发布打包（可选）
+### P2 — 可选发布
 
-```bash
-mkdir -p /opt/gfc/dist/gfc-os-v1
-cp "$IMT_SRC/bin/targets/x86/64/"*ext4*combined*efi*.img.gz /opt/gfc/dist/gfc-os-v1/
-# gunzip + qemu-img convert → vmdk；sha256sum
-```
-
-### P3 — 日常 OTA（已有能力）
-
-- 应用层：`pack-runtime.sh` → `upgrade-runtime.sh`（不必重刷）
-- 大版本：新 `img.gz` → `sysupgrade -k`
+拷贝最新 `*ext4*combined*efi*.img.gz` → `/opt/gfc/dist/gfc-os-v1/`，可选 vmdk + sha256。
 
 ---
 
@@ -171,120 +119,114 @@ cp "$IMT_SRC/bin/targets/x86/64/"*ext4*combined*efi*.img.gz /opt/gfc/dist/gfc-os
 
 | 坑 | 正确做法 |
 |----|----------|
-| 在 **Windows** 编 ImmortalWrt | 必须 **Ubuntu 构建机** |
-| **root** 与 **gfcbuild** 混用 | 统一 **gfcbuild**；必要时 `chown -R` |
-| Go 用 apt 1.18 | 用 **`/usr/local/go` 1.22+** |
-| 无 `GOFLAGS=-buildvcs=false` | OpenWrt build_dir 无 `.git` 会炸 |
-| 构建机未 `git pull` | 跑的是旧脚本 → 重复踩已修的坑 |
+| Windows 编 ImmortalWrt | 必须 Ubuntu 构建机 |
+| root / gfcbuild 混用 | 统一 **gfcbuild**；`chown -R` |
+| apt golang 1.18 | `/usr/local/go` **1.22+** |
+| 无 `GOFLAGS=-buildvcs=false` | 必设 |
+| 构建机未 `git pull` | 先 pull 再 rebuild |
 
 ### 5.2 Feed / Kconfig / 选包
 
 | 坑 | 正确做法 |
 |----|----------|
-| legacy **`package/gfc/`** | 必须删；只用 **`package/feeds/gfc/`** |
-| `feeds update gfc` / `feeds install -a` | **`feeds update -i gfc`** + **`feeds install -f gfc-client luci-app-gfc`** |
-| `DEPENDS` 含未索引包（sing-box、sqlite3-cli…） | **整包从 Kconfig 消失**；`DEPENDS` **保持空** |
-| `CONFIG_PACKAGE_nftables=y` | 无此 Package；用 **`nftables-json`** + **`kmod-nft-core`** |
-| `CONFIG_PACKAGE_kmod-sched-htb=y` | **无此 Package**；HTB 在 **`kmod-sched-core`**（再加 `tc-tiny` + `kmod-ifb`） |
-| 合并 GFC 后跑 **`make defconfig` / `oldconfig`** | **禁止** — 会清掉 GFC 选包 |
-| 以为 packageinfo 有 = 进镜像 | 还要 `.config=y` + **装进 ORIG rootfs** |
+| legacy `package/gfc/` | 只用 `package/feeds/gfc/` |
+| `feeds update gfc` / `feeds install -a` | `feeds update -i gfc` + `feeds install -f …` |
+| 非空 `DEPENDS` | **必须空** |
+| `CONFIG_PACKAGE_nftables` | **`nftables-json`** + `kmod-nft-core` |
+| `CONFIG_PACKAGE_kmod-sched-htb` | **无此包**；用 **`kmod-sched-core`**（含 sch_htb）+ `tc-tiny` + `kmod-ifb` |
+| 合并后 `defconfig` / `oldconfig` | **禁止** |
 
-### 5.3 rootfs / 镜像 / manifest（最致命一类）
-
-| 坑 | 正确做法 |
-|----|----------|
-| 只查 **`root-x86`** | **`Image/Manifest` 读 `root.orig-x86`**；注入后必须同步 ORIG |
-| `gfc-client.default.install` 写文件列表 | **错误**；只能一行包名 **`gfc-client`** |
-| opkg arch 用 `x86` | 必须 **`x86_64`**（与 ipk 名一致） |
-| 以为 ipk 是 `ar` | 可能是 **gzip → GNU tar**；需健壮解包 |
-| **ipk 装 `/www/index.html`** | **禁止** — 与 **luci-base** clash；源文件放 `deploy/.../www/`，由 **firstboot** `cp -f` |
-| deploy `*.sh` 无执行位 | install 必须 `chmod 0755`；调用方优先 `sh script`（否则 Permission denied → 无 `ip rule`） |
-| PC 无 DHCP 直到手动 restart dnsmasq | `force=1` 不够；需 **lan ifup hotplug** + firstboot 延迟 restart |
-| 删 `root-*` 后只 `make target/install` | 须先 **`make package/install`** 再 **`target/linux/install`** |
-| `make package/feeds/.../install` | **叶子包无此目标**；用 compile + package/install 或 opkg 注入 |
-| 以 **ipk 存在** 当成功 | 唯一标准：**`grep gfc-client *.manifest`** |
-| 刷旧 `.img` / dist 拷贝 | 以 **`bin/targets` 最新 img.gz 时间戳** 为准 |
-
-### 5.4 首启 / 设备行为
+### 5.3 rootfs / 镜像 / 打包
 
 | 坑 | 正确做法 |
 |----|----------|
-| 指望 ipk **postinst** 在编镜像时跑 | `IPKG_INSTROOT` 下跳过 → 必须 **`99-gfc-firstboot`** |
-| DHCP「found already running… refusing」 | dnsmasq **`force=1`**（`configure-dnsmasq-dhcp.sh`） |
-| 刷码后立刻查 `ip rule` 为空就认定 bug | 无 **`gfctun`** 时延迟装规则是**设计**；查 activate/WAN/hotplug |
-| CGI `flash request failed` | busybox wget POST 不可靠 → CGI 用 **curl** |
-| 线路码 `invalid base32` | 请求体截断/损坏；确认 JSON 完整 |
-| SSH 仍 22 | 不是只改 `gfc.env`；要 **dropbear UCI Port=212**（r7） |
-| 未激活就等 30s `gfctun` | 拖死 firstboot；未激活应短等 / 跳过 TUN |
+| 只查 `root-x86` | 同步并验收 **`root.orig-x86`** |
+| ipk 装 `/www/index.html` | **禁止**（luci-base clash） |
+| deploy `*.sh` 0644 | install **`chmod 0755`**；调用用 **`sh script`** |
+| 以 ipk 当成功 | 唯一标准：**manifest 含 gfc-client** |
+| 删 root 后只 `target/install` | 先 **`package/install`** |
+| opkg arch `x86` | 必须 **`x86_64`** |
+
+### 5.4 首启 / 现场
+
+| 坑 | 正确做法 |
+|----|----------|
+| 指望 postinst 在编镜像时跑 | 必须 **uci-defaults** |
+| `chpasswd` 设密码失败 | OpenWrt 常无 chpasswd → 用 **`passwd`** |
+| 刷码后立刻无 `ip rule` | 查 **gfctun**、脚本 **+x**、hotplug 日志 |
+| `ip rule` 出现两条 2022 | r10 前 start 重复 add；应清光再加一条 |
+| stock lan=eth0 / wan=eth1 | r11 起首启纠正；查 `configure-network-ports` |
+| 只改 `GFC_SSH_PORT` | 改 **dropbear Port=212** |
 
 ### 5.5 架构边界
 
 | 坑 | 正确做法 |
 |----|----------|
-| 为「方便首启」改 nft 表名/mark/hook | **禁止**；读 `NFT_ARCHITECTURE.md` + 用户确认 |
-| 用 MosDNS / sing-box DNS 替代 unbound 服务 LAN | **禁止** |
-| kernel-split 开 `auto_route` | **禁止** |
-| 用 `docs/draft/*` 覆盖正式 `docs/*_ARCHITECTURE.md` | draft 非正式真相 |
+| 改 nft 表名/mark/hook「图方便」 | **禁止** |
+| MosDNS / sing-box DNS 替 unbound 服务 LAN | **禁止** |
+| kernel-split `auto_route` | **禁止** |
+| `docs/draft/*` 覆盖正式架构文档 | draft 非正式真相 |
 
 ---
 
-## 6. 关键 Git 提交（固件线，新→旧）
-
-```
-（本提交） fix: routing +x, DHCP hotplug, OEM password, device name→TID (r9)
-0837ab6  fix: omit /www/index.html from ipk (r8)
-b28f0f3  fix: policy route on gfctun hotplug; SSH dropbear :212 (r7)
-b5f770e  fix: OEM firstboot DHCP/NAT and web flash CGI (r6)
-7bb5583  feat: OEM 99-gfc-firstboot (r5)
-6199340  fix: sync gfc into root.orig-x86 for Image/Manifest
-514497a  fix: gzip+GNU-tar ipk unpack; opkg metadata fallback
-627efb9  fix: manifest needs opkg metadata for gfc-client
-998bc5b  fix: opkg inject x86_64; robust ipk unpack
-8408089  fix: nftables-json not nftables
-7084eb7  fix: empty DEPENDS + OEM package index
-e8ef7e6  fix: slim DEPENDS for Kconfig
-75476ef  fix: drop invalid per-package install; opkg/ipk inject
-ff1a259  fix: offline-root opkg inject
-2bea409  fix: package/install before target/linux/install
-3a5e656  fix: feed setup harden (→ 现 v4)
-5bed56a  fix: feeds path + opkg rootfs fallback
-54985d0  fix: rebuild-gfc-image.sh; no oldconfig in setup
-81947fd  fix: feed setup, GOFLAGS, gfc.env.example
-a6fb53e  docs: firmware handoff + Cursor rule
-```
-
----
-
-## 7. 构建机目录与命令速查
+## 6. 关键路径速查
 
 ```text
-/opt/gfc/sip-proxy/              # 本仓库
-/opt/gfc/immortalwrt/            # ImmortalWrt 源码树
-/opt/gfc/dist/gfc-os-v1/         # 发布目录（手动 cp）
-```
-
-```bash
-# 一键（推荐）
-bash /opt/gfc/sip-proxy/gfc-client/deploy/immortalwrt/scripts/rebuild-gfc-image.sh
-
-# 验收三板斧
-grep CONFIG_PACKAGE_gfc-client /opt/gfc/immortalwrt/.config
-grep 'Source-Makefile:.*gfc-client' /opt/gfc/immortalwrt/tmp/.packageinfo
-# 期望: package/feeds/gfc/gfc-client/Makefile
-grep -i gfc /opt/gfc/immortalwrt/bin/targets/x86/64/*.manifest
+gfc-client/deploy/immortalwrt/
+  BUILD-FIRMWARE.md                     # 操作手册
+  FIRMWARE-BUILD-HANDOFF.md             # 本文件（状态/卡点/踩坑）
+  scripts/rebuild-gfc-image.sh          # 一键编镜像
+  scripts/setup-immortalwrt-feed.sh     # feed v4
+  scripts/ensure-gfc-package-index.sh   # 包索引校验
+  config/gfc-packages.config            # 选包（勿 defconfig）
+  config/gfc-package-index.txt          # 索引清单
+  package/Makefile                      # PKG 1.1.0-r11；DEPENDS 空
+  package/files/etc/uci-defaults/
+    97-gfc-oem-root-password
+    98-gfc-network-ports
+    99-gfc-firstboot
+  package/files/etc/hotplug.d/
+    net/99-gfc-tun
+    iface/99-gfc-dnsmasq
+  configure-network-ports.sh            # WAN=首 / LAN=末
+  configure-dnsmasq-dhcp.sh
+  configure-dropbear-ssh.sh
+  gfc-routing.sh
+  www/…                                 # 激活门户（index 不进 ipk 的 /www）
 ```
 
 ---
 
-## 8. 现网临时救火（不持久，正式仍以重刷为准）
+## 7. 关键 Git 提交（固件线，新→旧）
+
+```
+70d9ddf  feat: WAN=first / LAN=last NIC (r11)
+6eb067a  fix: scrub stale kmod-sched-htb from .config
+fde1f00  fix: drop invalid kmod-sched-htb; HTB in kmod-sched-core
+1212375  fix: r10 ip-rule dedupe, root passwd, tc/htb; TID uses name
+98a5cd0  fix: r9 routing +x, DHCP hotplug, password, device name TID
+0837ab6  fix: omit /www/index.html from ipk (r8)
+b28f0f3  fix: policy route hotplug; SSH dropbear :212 (r7)
+b5f770e  fix: OEM firstboot DHCP/NAT and web flash CGI (r6)
+7bb5583  feat: OEM 99-gfc-firstboot (r5)
+…
+```
+
+---
+
+## 8. 现网临时救火（不持久）
 
 ```sh
+# 网卡口（≥2 NIC）
+sh /usr/lib/gfc-client/deploy/immortalwrt/configure-network-ports.sh
 # SSH 212
 sh /usr/lib/gfc-client/deploy/immortalwrt/configure-dropbear-ssh.sh
-# 有 gfctun 时补策略路由
-GFC_ROUTING_TUN_WAIT=5 /usr/lib/gfc-client/deploy/immortalwrt/gfc-routing.sh start
+# 密码
+printf '%s\n%s\n' 'Wgh@125434' 'Wgh@125434' | passwd root
+# 策略路由（须先有 gfctun；脚本用 sh）
+GFC_ROUTING_TUN_WAIT=5 sh /usr/lib/gfc-client/deploy/immortalwrt/gfc-routing.sh start
 ```
 
 ---
 
-*固件构建不修改 nft/unbound/sing-box 数据面契约；若改底层先读 `docs/*_ARCHITECTURE.md` 并出差异表，等用户「确认修改」。*
+*固件构建不修改 nft/unbound/sing-box 数据面契约；改底层先读 `docs/*_ARCHITECTURE.md` 并出差异表，等用户「确认修改」。*
