@@ -121,11 +121,7 @@ ensure_gfc_client_pkginfo() {
   local pkginfo="$STAGING_PKGINFO/gfc-client.default.install"
   cd "$IMT_SRC"
   if [[ ! -f "$pkginfo" ]]; then
-    log "gfc-client.default.install missing — run package install target"
-    make "package/feeds/gfc/gfc-client/install" -j1 V=s "GFC_CLIENT_SRC=$GFC_REPO" || true
-  fi
-  if [[ ! -f "$pkginfo" ]]; then
-    log "synthesize gfc-client.default.install from ipk (package/install needs this for manifest)"
+    log "gfc-client.default.install missing — synthesize from ipk (no leaf install target on ImmortalWrt)"
     synthesize_gfc_client_default_install "$(find_gfc_ipk)"
   fi
   [[ -f "$pkginfo" ]] || die "gfc-client.default.install still missing — manifest will not list gfc-client"
@@ -190,8 +186,11 @@ synthesize_gfc_client_default_install() {
   prepared="$(prepare_ipk_for_opkg "$ipk")"
   [[ "$prepared" != "$ipk" ]] && cleanup=1
   ipkg_unpack_members "$prepared" "$tmp"
+  shopt -s nullglob
+  local members=( "$tmp"/data.tar.* "$tmp"/*/data.tar.* )
+  shopt -u nullglob
   : >"$out"
-  for data in "$tmp"/data.tar.*; do
+  for data in "${members[@]}"; do
     [[ -f "$data" ]] || continue
     case "$data" in
       *.tar.gz|*.tgz) tar tzf "$data" >>"$out" ;;
@@ -303,13 +302,22 @@ opkg_install_ipk_into_rootfs() {
   return "$rc"
 }
 
+ipkg_is_tar_archive() {
+  file -b "$1" | grep -qiE 'tar archive|POSIX tar'
+}
+
 ipkg_unpack_members() {
   local ipk=$1 tmp=$2
   if head -c 8 "$ipk" | grep -q '^!<arch>'; then
     ( cd "$tmp" && ar x "$ipk" )
     return 0
   fi
-  if tar tf "$ipk" debian-binary >/dev/null 2>&1; then
+  # ImmortalWrt ipk: gzip outer -> GNU tar(debian-binary, control.tar.*, data.tar.*)
+  if ipkg_is_tar_archive "$ipk"; then
+    tar xf "$ipk" -C "$tmp"
+    return 0
+  fi
+  if tar tf "$ipk" 2>/dev/null | grep -qE '(^|/)debian-binary$'; then
     tar xf "$ipk" -C "$tmp"
     return 0
   fi
@@ -334,6 +342,78 @@ ipkg_extract_data_into_rootfs() {
   esac
 }
 
+ipkg_list_data_files() {
+  local data=$1
+  case "$data" in
+    *.tar.gz|*.tgz) tar tzf "$data" ;;
+    *.tar.zst|*.tzst)
+      if command -v zstd >/dev/null 2>&1; then
+        zstd -dc "$data" | tar tf -
+      else
+        "$IMT_SRC/staging_dir/host/bin/zstd" -dc "$data" | tar tf -
+      fi
+      ;;
+    *.tar.xz|*.txz) tar tJf "$data" ;;
+    *) die "unsupported data member for list: $data" ;;
+  esac
+}
+
+register_opkg_metadata_from_ipk() {
+  local ipk=$1 root=$2
+  local tmp prepared ctrl_tmp cleanup=0
+  local pkg ver arch depends info_dir
+  tmp="$(mktemp -d)"
+  prepared="$(prepare_ipk_for_opkg "$ipk")"
+  [[ "$prepared" != "$ipk" ]] && cleanup=1
+  ipkg_unpack_members "$prepared" "$tmp"
+  shopt -s nullglob
+  local controls=( "$tmp"/control.tar.* "$tmp"/*/control.tar.* )
+  local data_members=( "$tmp"/data.tar.* "$tmp"/*/data.tar.* )
+  shopt -u nullglob
+  ((${#controls[@]})) || die "no control.tar.* in $ipk"
+  ctrl_tmp="$(mktemp -d)"
+  case "${controls[0]}" in
+    *.tar.gz|*.tgz) tar xzf "${controls[0]}" -C "$ctrl_tmp" ;;
+    *.tar.zst|*.tzst)
+      if command -v zstd >/dev/null 2>&1; then
+        zstd -dc "${controls[0]}" | tar xf - -C "$ctrl_tmp"
+      else
+        "$IMT_SRC/staging_dir/host/bin/zstd" -dc "${controls[0]}" | tar xf - -C "$ctrl_tmp"
+      fi
+      ;;
+    *.tar.xz|*.txz) tar xJf "${controls[0]}" -C "$ctrl_tmp" ;;
+    *) die "unsupported control member: ${controls[0]}" ;;
+  esac
+  [[ -f "$ctrl_tmp/control" ]] || die "control file missing in $ipk"
+  pkg="$(awk -F': ' '/^Package:/{print $2; exit}' "$ctrl_tmp/control")"
+  ver="$(awk -F': ' '/^Version:/{print $2; exit}' "$ctrl_tmp/control")"
+  arch="$(awk -F': ' '/^Architecture:/{print $2; exit}' "$ctrl_tmp/control")"
+  depends="$(awk -F': ' '/^Depends:/{print $2; exit}' "$ctrl_tmp/control")"
+  [[ -n "$pkg" && -n "$ver" ]] || die "invalid control in $ipk"
+  info_dir="$root/usr/lib/opkg/info"
+  mkdir -p "$info_dir"
+  cp "$ctrl_tmp/control" "$info_dir/${pkg}.control"
+  : >"$info_dir/${pkg}.list"
+  for data in "${data_members[@]}"; do
+    [[ -f "$data" ]] || continue
+    ipkg_list_data_files "$data" >>"$info_dir/${pkg}.list"
+  done
+  if ! grep -q "^Package: ${pkg}$" "$root/usr/lib/opkg/status" 2>/dev/null; then
+    {
+      echo "Package: $pkg"
+      echo "Version: $ver"
+      echo "Depends: ${depends:-}"
+      echo "Status: install user installed"
+      echo "Architecture: ${arch:-$(detect_opkg_arch)}"
+      echo "Installed-Time: $(date +%s)"
+      echo
+    } >>"$root/usr/lib/opkg/status"
+  fi
+  rm -rf "$ctrl_tmp" "$tmp"
+  (( cleanup )) && rm -f "$prepared"
+  log "opkg metadata registered from ipk: $pkg $ver"
+}
+
 ipkg_extract_into_rootfs() {
   local ipk="$1" root="$2"
   local tmp prepared data cleanup=0
@@ -341,7 +421,10 @@ ipkg_extract_into_rootfs() {
   prepared="$(prepare_ipk_for_opkg "$ipk")"
   [[ "$prepared" != "$ipk" ]] && cleanup=1
   ipkg_unpack_members "$prepared" "$tmp"
-  for data in "$tmp"/data.tar.*; do
+  shopt -s nullglob
+  local members=( "$tmp"/data.tar.* "$tmp"/*/data.tar.* )
+  shopt -u nullglob
+  for data in "${members[@]}"; do
     [[ -f "$data" ]] || continue
     ipkg_extract_data_into_rootfs "$data" "$root"
     rm -rf "$tmp"
@@ -369,11 +452,16 @@ ensure_gfc_in_rootfs() {
 
   log "register gfc-client via opkg (required for manifest; arch=$(detect_opkg_arch))"
   if ! opkg_install_ipk_into_rootfs "$root" "$ipk"; then
-    log "opkg failed — try make install then tar extract (manifest may still fail)"
-    make "package/feeds/gfc/gfc-client/install" -j1 V=s "GFC_CLIENT_SRC=$GFC_REPO" || true
+    log "opkg failed on prepared ipk — try original .ipk path"
+    opkg_install_ipk_into_rootfs "$root" "$ipk" || true
+  fi
+  if ! rootfs_has_gfc_opkg "$root"; then
     if [[ ! -x "$root/usr/bin/gfc-api" ]]; then
+      log "extract gfc-client payload from ipk"
       ipkg_extract_into_rootfs "$ipk" "$root"
     fi
+    log "write gfc-client opkg metadata from ipk control (host opkg could not install tar ipk)"
+    register_opkg_metadata_from_ipk "$ipk" "$root"
   fi
 
   if [[ -n "$lipk" ]] && ! grep -q '^Package: luci-app-gfc$' "$root/usr/lib/opkg/status" 2>/dev/null; then
