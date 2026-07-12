@@ -304,8 +304,12 @@ export function LinesPage() {
               ]}
             />
           </Form.Item>
-          <Form.Item name="name" label="线路名称（可选，留空自动生成 TID）">
-            <Input placeholder="客户业务名" />
+          <Form.Item
+            name="name"
+            label="线路名称（可选）"
+            extra="填写则 TID=TID-日期-名称；留空则自动生成 TID-日期-随机串"
+          >
+            <Input placeholder="例如 hk-us / shop-a" maxLength={48} allowClear />
           </Form.Item>
           <Form.Item noStyle shouldUpdate={(p, c) => p.lineType !== c.lineType}>
             {({ getFieldValue }) =>

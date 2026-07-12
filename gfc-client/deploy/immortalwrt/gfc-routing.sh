@@ -85,7 +85,7 @@ CN_LIST="${GFC_CN_IP_LIST:-$GFC_ROOT/share/easymosdns/rules/china_ip_list.txt}"
 [ -f "$CN_LIST" ] || CN_LIST="$GFC_ROOT/share/easymosdns/rules/china_ip_list.txt"
 
 stop_proxy_only() {
-	ip -4 rule del fwmark "$MARK" table "$TABLE" 2>/dev/null || true
+	_clear_fwmark_rules
 	ip -4 route flush table "$TABLE" 2>/dev/null || true
 	nft delete table inet gfc 2>/dev/null || true
 	nft delete table inet gfc_client_mangle 2>/dev/null || true
@@ -104,13 +104,33 @@ start_direct() {
 }
 
 stop_rules() {
-	ip -4 rule del fwmark "$MARK" table "$TABLE" 2>/dev/null || true
+	_clear_fwmark_rules
 	ip -4 route flush table "$TABLE" 2>/dev/null || true
 	nft delete table inet gfc 2>/dev/null || true
 	nft delete table inet gfc_client_mangle 2>/dev/null || true
 	nft delete table inet gfc_dns_hijack 2>/dev/null || true
 	nft delete table inet nat 2>/dev/null || true
 	[ -x "$GFC_ROOT/deploy/apply-tc-htb.sh" ] && sh "$GFC_ROOT/deploy/apply-tc-htb.sh" remove 2>/dev/null || true
+}
+
+# Remove every fwmark→table rule (hotplug + sing-box post-start can leave duplicates).
+_clear_fwmark_rules() {
+	local i=0
+	while [ "$i" -lt 16 ]; do
+		if ip -4 rule del pref 100 fwmark "$MARK" lookup "$TABLE" 2>/dev/null; then
+			i=$((i + 1))
+			continue
+		fi
+		if ip -4 rule del fwmark "$MARK" lookup "$TABLE" 2>/dev/null; then
+			i=$((i + 1))
+			continue
+		fi
+		if ip -4 rule del fwmark "$MARK" table "$TABLE" 2>/dev/null; then
+			i=$((i + 1))
+			continue
+		fi
+		break
+	done
 }
 
 apply_wan_nat() {
@@ -474,8 +494,8 @@ start_rules() {
 		echo "WARN: $TUN_IFACE not up; DNS hijack and CN policy set applied, policy route deferred (hotplug 99-gfc-tun will apply when TUN appears)" >&2
 		exit 0
 	}
-	ip -4 rule add pref 100 fwmark "$MARK" lookup "$TABLE" 2>/dev/null || \
-		ip -4 rule add fwmark "$MARK" table "$TABLE" 2>/dev/null || true
+	_clear_fwmark_rules
+	ip -4 rule add pref 100 fwmark "$MARK" lookup "$TABLE"
 	ip -4 route replace default dev "$TUN_IFACE" table "$TABLE"
 	if [ -x "$GFC_ROOT/deploy/apply-tc-htb.sh" ]; then
 		sh "$GFC_ROOT/deploy/apply-tc-htb.sh" apply 2>/dev/null || true

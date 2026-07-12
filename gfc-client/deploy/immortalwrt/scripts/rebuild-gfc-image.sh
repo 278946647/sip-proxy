@@ -284,7 +284,7 @@ sync_gfc_into_orig() {
   [[ -d "$root/etc/gfc-client" ]] && rm -rf "$orig/etc/gfc-client" && cp -a "$root/etc/gfc-client" "$orig/etc/"
   if [[ -d "$root/etc/uci-defaults" ]]; then
     mkdir -p "$orig/etc/uci-defaults"
-    for f in "$root/etc/uci-defaults"/99-gfc-*; do
+    for f in "$root/etc/uci-defaults"/9*-gfc-*; do
       [[ -f "$f" ]] && cp -a "$f" "$orig/etc/uci-defaults/"
     done
   fi
@@ -582,6 +582,12 @@ build_image() {
       "$ROOTFS_ORIG_DIR/etc/uci-defaults/99-gfc-firstboot"
     chmod +x "$ROOTFS_ORIG_DIR/etc/uci-defaults/99-gfc-firstboot"
     log "injected 99-gfc-firstboot into ORIG"
+  fi
+  if [[ -f "$GFC_DEPLOY/image/files/etc/uci-defaults/97-gfc-oem-root-password" ]]; then
+    mkdir -p "$ROOTFS_ORIG_DIR/etc/uci-defaults"
+    cp -a "$GFC_DEPLOY/image/files/etc/uci-defaults/97-gfc-oem-root-password" \
+      "$ROOTFS_ORIG_DIR/etc/uci-defaults/97-gfc-oem-root-password"
+    chmod +x "$ROOTFS_ORIG_DIR/etc/uci-defaults/97-gfc-oem-root-password"
   fi
   build_target_images
 }

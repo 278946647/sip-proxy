@@ -10,6 +10,7 @@ INDEX="${GFC_PACKAGE_INDEX:-$ROOT/config/gfc-package-index.txt}"
 BASE_TREE_PACKAGES=(
   ca-bundle ip-full dnsmasq-full kmod-tun kmod-nft-core
   nftables-json nftables-nojson
+  tc-tiny kmod-sched-core kmod-sched-htb kmod-ifb
 )
 
 # GFC src-link feed

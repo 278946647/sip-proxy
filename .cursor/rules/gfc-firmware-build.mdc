@@ -23,17 +23,17 @@ alwaysApply: false
 3. 根目录 `HANDOFF.md` — 产品背景（细节以 1 为准）
 4. `docs/NFT_ARCHITECTURE.md` / `UNBOUND_ARCHITECTURE.md` / `SINGBOX_ARCHITECTURE.md` — 数据面（改 deploy 脚本时不得违反）
 
-## 当前状态摘要（2026-07-12 / `PKG_RELEASE:=9`）
+## 当前状态摘要（2026-07-12 / `PKG_RELEASE:=10`）
 
-- **已完成：** tools/toolchain；feed-only；manifest 含 gfc；ORIG；firstboot；DHCP force；CGI curl；SSH 212；hotplug；r8 无 index clash；**r9** deploy 脚本 +x / lan DHCP hotplug / 默认密码 / 设备名 TID
-- **当前卡点：** 用 **r9** 镜像重建 + 刷机 E2E；控制面需部署以修 `(none)`→TID
+- **已完成：** … r9 脚本 +x / DHCP / 密码脚本；**r10** 去重 ip rule、passwd 设 root、tc/htb 进镜像、控制面 TID 含用户名
+- **当前卡点：** 用 **r10** 镜像重建 + 刷机；控制面需部署修 TID
 - **构建机：** Ubuntu 22.04，`/opt/gfc/{sip-proxy,immortalwrt}`，用户 **gfcbuild**，Go **1.22+** `/usr/local/go`
 - **产品契约：** 未激活也要 DHCP+NAT+DNS hijack；策略路由等 `gfctun`；SSH 管理口 **212**
 
 ## 新会话第一步
 
 1. 读 `FIRMWARE-BUILD-HANDOFF.md` §0–§5
-2. 构建机：`git pull` → `rebuild-gfc-image.sh` → 确认 manifest **`1.1.0-r9`**（或更新）
+2. 构建机：`git pull` → `rebuild-gfc-image.sh` → 确认 manifest **`1.1.0-r10`**（或更新）
 3. 刷最新 `*ext4*combined*efi*.img.gz`，按 HANDOFF §4 P1 验收
 
 ## 修改前必须做的事

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import json
+import re
 import secrets
 import string
 import uuid
@@ -102,10 +103,35 @@ from .vyos_template import render_vyos_openvpn_server
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(get_current_user)])
 
 
-def _gen_tid() -> str:
-    day = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d")
+def _sanitize_tid_label(raw: str) -> str:
+    """Keep TID-safe characters from user-provided line name."""
+    s = (raw or "").strip()
+    s = re.sub(r"\s+", "-", s)
+    s = re.sub(r"[^A-Za-z0-9._-]+", "", s)
+    s = s.strip("-._")
+    return s[:48]
+
+
+def _gen_tid(name: str | None = None) -> str:
+    """TID-{YYYYMMDD}-{label}. Label from name when provided, else random."""
+    day = dt.datetime.now(dt.timezone(dt.timedelta(hours=8))).strftime("%Y%m%d")
+    label = _sanitize_tid_label(name or "")
+    if label:
+        return f"TID-{day}-{label}"
     suffix = "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(6))
     return f"TID-{day}-{suffix}"
+
+
+async def _unique_tid(session: AsyncSession, base: str) -> str:
+    tid = base
+    for _ in range(12):
+        exists = (
+            await session.execute(select(Line.id).where(Line.tid == tid).limit(1))
+        ).scalar_one_or_none()
+        if exists is None:
+            return tid
+        tid = f"{base}-{secrets.token_hex(2)}"
+    return f"{base}-{secrets.token_hex(3)}"
 
 
 def _line_code_response(line: Line, code: str) -> dict[str, str]:
@@ -780,8 +806,8 @@ async def create_line(
     if line_type == "forward" and body.socks_profile_id is None:
         raise HTTPException(400, "forward line requires socks profile")
 
-    tid = _gen_tid()
-    name = body.name or tid
+    tid = await _unique_tid(session, _gen_tid(body.name))
+    name = (body.name or "").strip() or tid
     client_uuid = str(uuid.uuid4()) if line_type == "client" else None
 
     if line_type == "client" and not node.reality_config_json:
