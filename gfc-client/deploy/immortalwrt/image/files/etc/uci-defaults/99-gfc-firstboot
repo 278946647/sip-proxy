@@ -54,6 +54,11 @@ if [ -f "$DEPLOY/disable-immortalwrt-fw4.sh" ]; then
 	sh "$DEPLOY/disable-immortalwrt-fw4.sh" || echo "WARN: disable fw4 failed"
 fi
 
+# WAN=first NIC, LAN(br-lan)=last NIC (override ImmortalWrt x86 stock lan=eth0/wan=eth1).
+if [ -f "$DEPLOY/configure-network-ports.sh" ]; then
+	sh "$DEPLOY/configure-network-ports.sh" || echo "WARN: configure-network-ports failed"
+fi
+
 # dnsmasq DHCP-only + force=1; advertise LAN gateway as DNS (option 6).
 if [ -f "$DEPLOY/configure-dnsmasq-dhcp.sh" ]; then
 	sh "$DEPLOY/configure-dnsmasq-dhcp.sh" || echo "WARN: configure dnsmasq failed"

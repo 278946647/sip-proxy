@@ -1,7 +1,7 @@
 # GFC x86 固件构建 — 会话交接（FIRMWARE BUILD HANDOFF）
 
 > 写给**完全没有本对话上下文**的新会话。  
-> 最后更新：**2026-07-12**（r10：去重 ip rule；passwd 设 root；tc/htb；控制面 TID=日期+名称）
+> 最后更新：**2026-07-12**（r11：首启探测网卡 WAN=首块 / LAN=末块）
 > 仓库：`sip-proxy` / `gfc-client/deploy/immortalwrt/`  
 > 构建机：`/opt/gfc/{sip-proxy,immortalwrt}`（Ubuntu 22.04，用户 `gfcbuild`）  
 > Cursor 规则：[`gfc-firmware-build.mdc`](../../../.cursor/rules/gfc-firmware-build.mdc)
@@ -13,7 +13,7 @@
 
 ## 0. 新会话开场白（直接粘贴）
 
-> 我们在做 **GFC x86 ImmortalWrt OEM 固件**。构建管线已能产出 **manifest 含 `gfc-client`** 的镜像；首启/刷码/SSH/策略路由源码已修到 `PKG_RELEASE:=10`。**当前卡在：用含 r10 的镜像重建并刷机做 E2E 验收**（DHCP、NAT、Web 激活、SSH 212、`ip rule`、root 密码、tc/htb）。请先读 `gfc-client/deploy/immortalwrt/FIRMWARE-BUILD-HANDOFF.md`，严格按 `.cursor/rules/gfc-firmware-build.mdc`。构建机 `git pull` 后跑 `rebuild-gfc-image.sh`，刷最新 `*ext4*combined*efi*.img.gz`。
+> 我们在做 **GFC x86 ImmortalWrt OEM 固件**。构建管线已能产出 **manifest 含 `gfc-client`** 的镜像；首启/刷码/SSH/策略路由源码已修到 `PKG_RELEASE:=11`。**当前卡在：用含 r11 的镜像重建并刷机做 E2E 验收**（含 WAN=首块/LAN=末块网卡）。请先读 `gfc-client/deploy/immortalwrt/FIRMWARE-BUILD-HANDOFF.md`，严格按 `.cursor/rules/gfc-firmware-build.mdc`。构建机 `git pull` 后跑 `rebuild-gfc-image.sh`，刷最新 `*ext4*combined*efi*.img.gz`。
 
 ---
 
@@ -60,7 +60,8 @@
 | `7bb5583` | r5 | `99-gfc-firstboot`（`image/files` + package） |
 | `b5f770e` | r6 | DHCP **`force=1`**；CGI 优先 **curl**；未激活缩短 TUN 等待；www 进 ipk |
 | `b28f0f3` | r7 | **dropbear Port 212**；**`99-gfc-tun` hotplug**；sing-box 后轮询再跑 routing |
-| （本提交） | **r10** | 去重 fwmark rule；`passwd` 设 OEM 密码；`tc-tiny`+`kmod-sched-core`(含 HTB)+`kmod-ifb`；控制面 TID=TID-日期-名称 |
+| （本提交） | **r11** | 首启 `configure-network-ports`：WAN=首块物理网卡、LAN(br-lan)=末块；同步 `GFC_WAN_IFACE` |
+| （r10 提交） | r10 | 去重 fwmark rule；`passwd` 设 OEM 密码；`tc-tiny`+`kmod-sched-core`(含 HTB)+`kmod-ifb`；控制面 TID=TID-日期-名称 |
 | （r9 提交） | r9 | deploy `*.sh` 强制 +x；`sh` 调 routing；lan ifup 重启 dnsmasq；默认 root 密码；占位主机名→线路 TID |
 
 ### 2.4 设计结论（勿再争论）
@@ -95,7 +96,7 @@ gfc-client/deploy/immortalwrt/
 
 | 项 | 状态 | 说明 |
 |----|------|------|
-| 含 **r10** 的镜像是否已在构建机编出并刷机 | ⚠️ **当前卡点** | 源码已 push；需 `git pull` + `rebuild-gfc-image.sh` + 刷最新 img.gz |
+| 含 **r11** 的镜像是否已在构建机编出并刷机 | ⚠️ **当前卡点** | 源码已 push；需 `git pull` + `rebuild-gfc-image.sh` + 刷最新 img.gz |
 | 旧镜像 E2E | ⚠️ | 现场可能仍是 r4–r6 或更早：SSH 22、无 hotplug、首启不全 |
 | Web 刷码 | ⚠️ 待 r6+ 镜像验证 | busybox wget POST 曾失败；已改 curl；需实机确认无 `flash request failed` |
 | 策略路由 | ⚠️ 待 r9 验证 | r8 曾因 `gfc-routing.sh` 无 +x → Permission denied；r9 已 chmod + `sh` 调用 |
@@ -103,13 +104,13 @@ gfc-client/deploy/immortalwrt/
 | P1 dist/vmdk 打包 | ❌ 未做 | 可选 |
 | 数据面改契约 | 🚫 | 不在本任务范围 |
 
-**一句话：** 构建逻辑与 OEM 源码缺口已修完；**卡在「用 r10 固件重建 + 刷机验收闭环」。**
+**一句话：** 构建逻辑与 OEM 源码缺口已修完；**卡在「用 r11 固件重建 + 刷机验收闭环」。**
 
 ---
 
 ## 4. 下一步计划（严格顺序）
 
-### P0 — 重建并刷含 r10 的镜像（必须）
+### P0 — 重建并刷含 r11 的镜像（必须）
 
 ```bash
 export PATH=/usr/local/go/bin:$PATH
@@ -128,7 +129,7 @@ bash "$GFC_REPO/deploy/immortalwrt/scripts/rebuild-gfc-image.sh"
 
 ```bash
 grep gfc-client "$IMT_SRC/bin/targets/x86/64/"*.manifest
-# 期望类似: gfc-client - 1.1.0-r10
+# 期望类似: gfc-client - 1.1.0-r11
 test -f "$IMT_SRC/build_dir/target-x86_64_musl/root.orig-x86/etc/uci-defaults/99-gfc-firstboot"
 test -f "$IMT_SRC/build_dir/target-x86_64_musl/root.orig-x86/etc/hotplug.d/net/99-gfc-tun"
 ls -lt "$IMT_SRC/bin/targets/x86/64/"*ext4*combined*efi*.img.gz | head -3

@@ -591,6 +591,12 @@ build_image() {
       "$ROOTFS_ORIG_DIR/etc/uci-defaults/97-gfc-oem-root-password"
     chmod +x "$ROOTFS_ORIG_DIR/etc/uci-defaults/97-gfc-oem-root-password"
   fi
+  if [[ -f "$GFC_DEPLOY/image/files/etc/uci-defaults/98-gfc-network-ports" ]]; then
+    mkdir -p "$ROOTFS_ORIG_DIR/etc/uci-defaults"
+    cp -a "$GFC_DEPLOY/image/files/etc/uci-defaults/98-gfc-network-ports" \
+      "$ROOTFS_ORIG_DIR/etc/uci-defaults/98-gfc-network-ports"
+    chmod +x "$ROOTFS_ORIG_DIR/etc/uci-defaults/98-gfc-network-ports"
+  fi
   build_target_images
 }
 

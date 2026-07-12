@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=gfc-client
 PKG_VERSION:=1.1.0
-PKG_RELEASE:=10
+PKG_RELEASE:=11
 PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)
 PKG_BUILD_DEPENDS:=golang/host
 GFC_CLIENT_SRC ?= $(abspath $(CURDIR)/../../..)
@@ -61,6 +61,7 @@ define Package/gfc-client/install
 
 	$(INSTALL_DIR) $(1)/etc/uci-defaults
 	$(INSTALL_BIN) ./files/etc/uci-defaults/97-gfc-oem-root-password $(1)/etc/uci-defaults/97-gfc-oem-root-password
+	$(INSTALL_BIN) ./files/etc/uci-defaults/98-gfc-network-ports $(1)/etc/uci-defaults/98-gfc-network-ports
 	$(INSTALL_BIN) ./files/etc/uci-defaults/99-gfc-firstboot $(1)/etc/uci-defaults/99-gfc-firstboot
 
 	$(INSTALL_DIR) $(1)/etc/hotplug.d/net

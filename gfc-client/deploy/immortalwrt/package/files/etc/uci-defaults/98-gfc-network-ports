@@ -1,0 +1,15 @@
+#!/bin/sh
+# Run early (before 99-gfc-firstboot): WAN=first NIC, LAN=last NIC.
+set -eu
+
+DEPLOY="${GFC_ROOT:-/usr/lib/gfc-client}/deploy/immortalwrt"
+SCRIPT="$DEPLOY/configure-network-ports.sh"
+
+if [ -f "$SCRIPT" ]; then
+	sh "$SCRIPT" >>/tmp/gfc-network-ports.log 2>&1 \
+		|| echo "WARN: configure-network-ports failed (see /tmp/gfc-network-ports.log)" >&2
+else
+	echo "WARN: missing $SCRIPT" >&2
+fi
+
+exit 0
