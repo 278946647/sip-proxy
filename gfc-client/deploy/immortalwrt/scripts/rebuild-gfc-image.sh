@@ -70,6 +70,8 @@ merge_gfc_config() {
   done <"$merged"
   cat "$tmp" "$merged" >.config
   rm -f "$tmp" "$merged"
+  # Stale invalid symbols from older fragments (HTB is inside kmod-sched-core).
+  sed -i '/^CONFIG_PACKAGE_kmod-sched-htb=/d' .config
   grep -q '^CONFIG_PACKAGE_gfc-client=y$' .config || die "CONFIG_PACKAGE_gfc-client not in .config after merge"
 }
 
