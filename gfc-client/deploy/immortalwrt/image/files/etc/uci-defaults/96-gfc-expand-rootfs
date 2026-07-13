@@ -5,7 +5,7 @@
 # Image PARTSIZE stays small for fast flash; leftover space after dd is claimed here.
 # Failure must NOT block password / network / 99-gfc-firstboot → always exit 0.
 #
-# Requires packages: resize2fs (standalone; not e2fsprogs), parted, partx.
+# Requires packages: resize2fs (standalone; not e2fsprogs), parted, partx-utils (binary: partx).
 LOG="/tmp/gfc-expand-rootfs.log"
 
 exec >>"$LOG" 2>&1

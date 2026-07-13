@@ -11,8 +11,9 @@ BASE_TREE_PACKAGES=(
   ca-bundle ip-full dnsmasq-full kmod-tun kmod-nft-core
   nftables-json nftables-nojson
   tc-tiny kmod-sched-core kmod-ifb
-  # resize2fs is a separate OpenWrt package (not e2fsprogs)
-  resize2fs parted partx
+  # resize2fs is a separate OpenWrt package (not e2fsprogs);
+  # partx binary is in partx-utils
+  resize2fs parted partx-utils
 )
 
 # GFC src-link feed
@@ -42,6 +43,8 @@ resolve_package_candidates() {
     nftables) printf '%s\n' nftables-json nftables-nojson ;;
     # HTB qdisc is built into kmod-sched-core; no standalone kmod-sched-htb.
     kmod-sched-htb) printf '%s\n' kmod-sched-core ;;
+    # util-linux subpackage name is partx-utils (provides partx binary).
+    partx) printf '%s\n' partx-utils ;;
     *) printf '%s\n' "$name" ;;
   esac
 }

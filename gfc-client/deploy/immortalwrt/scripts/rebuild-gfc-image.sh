@@ -82,8 +82,12 @@ merge_gfc_config() {
   done <"$merged"
   cat "$tmp" "$merged" >.config
   rm -f "$tmp" "$merged"
-  # Stale invalid symbols from older fragments (HTB is inside kmod-sched-core).
-  sed -i '/^CONFIG_PACKAGE_kmod-sched-htb=/d;/^# CONFIG_PACKAGE_kmod-sched-htb is not set$/d' .config
+  # Stale invalid symbols from older fragments (HTB is inside kmod-sched-core;
+  # partx binary is in partx-utils — there is no Package: partx).
+  sed -i \
+    -e '/^CONFIG_PACKAGE_kmod-sched-htb=/d;/^# CONFIG_PACKAGE_kmod-sched-htb is not set$/d' \
+    -e '/^CONFIG_PACKAGE_partx=/d;/^# CONFIG_PACKAGE_partx is not set$/d' \
+    .config
   grep -q '^CONFIG_PACKAGE_gfc-client=y$' .config || die "CONFIG_PACKAGE_gfc-client not in .config after merge"
   log "merged gfc-packages.config (skipped=$skipped)"
 }
@@ -109,14 +113,14 @@ verify_dotconfig() {
   cd "$IMT_SRC"
   grep -q '^CONFIG_PACKAGE_gfc-client=y$' .config || die ".config missing CONFIG_PACKAGE_gfc-client=y"
   grep -q '^CONFIG_PACKAGE_luci-app-gfc=y$' .config || die ".config missing CONFIG_PACKAGE_luci-app-gfc=y"
-  for pkg in tc-tiny kmod-sched-core kmod-ifb resize2fs parted partx; do
+  for pkg in tc-tiny kmod-sched-core kmod-ifb resize2fs parted partx-utils; do
     grep -q "^CONFIG_PACKAGE_${pkg}=y$" .config || die ".config missing CONFIG_PACKAGE_${pkg}=y"
     # Must use if/then: under set -e, "grep -q && die" returns 1 when absent and aborts the script.
     if grep -qE "^# CONFIG_PACKAGE_${pkg} is not set$" .config; then
       die ".config still has '# CONFIG_PACKAGE_${pkg} is not set' alongside =y"
     fi
   done
-  log ".config OK: gfc + tc + resize2fs/parted/partx"
+  log ".config OK: gfc + tc + resize2fs/parted/partx-utils"
 }
 
 # tc-tiny installs binary at /usr/libexec/tc-tiny; /sbin/tc is ALTERNATIVES symlink.
@@ -171,19 +175,20 @@ build_packages() {
   find bin -name 'tc-tiny_*.ipk' -print | grep -q . \
     || die "tc-tiny ipk not produced — check CONFIG_PACKAGE_tc-tiny=y and iproute2 build"
   # Root expand: OpenWrt package is literally "resize2fs" (not e2fsprogs).
-  log "compile resize2fs / parted / partx (first-boot disk expand)"
+  # partx binary is in package partx-utils.
+  log "compile resize2fs / parted / partx-utils (first-boot disk expand)"
   make package/utils/e2fsprogs/compile -j"$JOBS" V=s \
     || die "e2fsprogs tree compile failed (needed for resize2fs ipk)"
   make package/utils/parted/compile -j"$JOBS" V=s \
     || die "parted compile failed"
   make package/utils/util-linux/compile -j"$JOBS" V=s \
-    || die "util-linux compile failed (needed for partx ipk)"
+    || die "util-linux compile failed (needed for partx-utils ipk)"
   find bin -name 'resize2fs_*.ipk' -print | grep -q . \
     || die "resize2fs ipk not produced — use CONFIG_PACKAGE_resize2fs=y (not e2fsprogs alone)"
   find bin -name 'parted_*.ipk' -print | grep -q . \
     || die "parted ipk not produced"
-  find bin -name 'partx_*.ipk' -print | grep -q . \
-    || die "partx ipk not produced"
+  find bin -name 'partx-utils_*.ipk' -print | grep -q . \
+    || die "partx-utils ipk not produced — use CONFIG_PACKAGE_partx-utils=y (not partx)"
 }
 
 ensure_gfc_client_pkginfo() {
@@ -675,19 +680,21 @@ verify_manifest() {
   grep -i gfc "$manifest" || true
   grep -i gfc-client "$manifest" >/dev/null || die "manifest has no gfc-client"
   grep -i luci-app-gfc "$manifest" >/dev/null || die "manifest has no luci-app-gfc"
-  for pkg in tc-tiny kmod-sched-core kmod-ifb resize2fs parted partx; do
+  for pkg in tc-tiny kmod-sched-core kmod-ifb resize2fs parted partx-utils; do
     grep -qE "^${pkg}( |$)" "$manifest" \
       || die "manifest missing ${pkg}"
   done
   log "manifest tc/htb lines:"
   grep -E '^(tc-tiny|kmod-sched-core|kmod-ifb) ' "$manifest" || true
   log "manifest expand lines:"
-  grep -E '^(resize2fs|parted|partx) ' "$manifest" || true
+  grep -E '^(resize2fs|parted|partx-utils) ' "$manifest" || true
   rootfs_has_tc "$orig" \
     || die "ORIG missing tc binary (/sbin/tc or /usr/libexec/tc-tiny) — package/install did not ship tc-tiny"
   log "ORIG tc: $(ls -la "$orig/sbin/tc" "$orig/usr/libexec/tc-tiny" 2>/dev/null || true)"
   [[ -x "$orig/usr/sbin/resize2fs" || -x "$orig/sbin/resize2fs" ]] \
     || die "ORIG missing resize2fs binary — select CONFIG_PACKAGE_resize2fs=y (not e2fsprogs alone)"
+  [[ -x "$orig/usr/sbin/partx" || -x "$orig/sbin/partx" ]] \
+    || die "ORIG missing partx binary — select CONFIG_PACKAGE_partx-utils=y (not partx)"
   [[ -f "$orig/etc/uci-defaults/96-gfc-expand-rootfs" ]] \
     || die "ORIG missing /etc/uci-defaults/96-gfc-expand-rootfs"
   [[ -f "$orig/etc/uci-defaults/99-gfc-firstboot" ]] \

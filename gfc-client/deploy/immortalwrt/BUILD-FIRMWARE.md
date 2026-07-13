@@ -77,8 +77,8 @@ grep -i gfc "$IMT_SRC/bin/targets/x86/64/"*.manifest
 #   gfc-client - 1.1.0-r13
 #   luci-app-gfc - ...
 
-# 2) 关键选包进镜像（r12：tc；r13：resize2fs/parted/partx）
-grep -E 'tc-tiny|kmod-sched-core|kmod-ifb|libcap-bin|nftables-json|resize2fs|parted|partx' \
+# 2) 关键选包进镜像（r12：tc；r13：resize2fs/parted/partx-utils）
+grep -E 'tc-tiny|kmod-sched-core|kmod-ifb|libcap-bin|nftables-json|resize2fs|parted|partx-utils' \
   "$IMT_SRC/bin/targets/x86/64/"*.manifest
 # ORIG 二进制（tc-tiny 本体在 libexec；/sbin/tc 为 ALTERNATIVES）
 ORIG="$IMT_SRC/build_dir/target-x86_64_musl/root.orig-x86"
@@ -144,7 +144,7 @@ ls -lt "$IMT_SRC/bin/targets/x86/64/"*ext4*combined*efi*.img.gz | head -3
 | `libcap-bin` | sing-box 非 root 能力（setcap） |
 | `ip-full` | 策略路由等 |
 | `tc-tiny` + `kmod-sched-core` + `kmod-ifb` | HTB 带宽限速（**无** `kmod-sched-htb`）；二进制在 `/usr/libexec/tc-tiny`，`/sbin/tc` 为 ALTERNATIVES |
-| `resize2fs` + `parted` + `partx` | 首启把剩余磁盘划入 root（**`resize2fs` 是独立包**，勿只选 `e2fsprogs`） |
+| `resize2fs` + `parted` + `partx-utils` | 首启把剩余磁盘划入 root（**`resize2fs` 独立包**；**`partx` 二进制在 `partx-utils`**，勿写 `CONFIG_PACKAGE_partx`） |
 | `ca-bundle`、`curl`、`wget-ssl`、`tcpdump`、`iftop`、`bmon`、`autossh` | 运维 / 远程 |
 | `luci-base` | Web 管理（拥有 `/www/index.html`） |
 
