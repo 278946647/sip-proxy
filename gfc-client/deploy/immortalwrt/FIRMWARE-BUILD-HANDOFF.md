@@ -157,6 +157,7 @@
 | 只验 gfc、不验 tc | **r12** manifest/ORIG 必须有 tc-tiny |
 | 只选 `e2fsprogs` 期望有 `resize2fs` | **错**；须 **`CONFIG_PACKAGE_resize2fs=y`**（独立包） |
 | `CONFIG_PACKAGE_partx=y` | **错**；包名是 **`partx-utils`** |
+| `make package/utils/parted/compile` | **错**；`parted` 在 **packages feed**：`package/feeds/packages/parted` |
 | `opkg install ip-full` 当 tc 回退 | **错**；ip-full 不含 tc |
 
 ### 5.3 rootfs / 镜像 / 打包

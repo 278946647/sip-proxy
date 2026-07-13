@@ -12,8 +12,8 @@ BASE_TREE_PACKAGES=(
   nftables-json nftables-nojson
   tc-tiny kmod-sched-core kmod-ifb
   # resize2fs is a separate OpenWrt package (not e2fsprogs);
-  # partx binary is in partx-utils
-  resize2fs parted partx-utils
+  # partx binary is in partx-utils (util-linux)
+  resize2fs partx-utils
 )
 
 # GFC src-link feed
@@ -23,6 +23,8 @@ GFC_FEED_PACKAGES=(gfc-client luci-app-gfc)
 FEED_PACKAGES=(
   sing-box unbound-daemon unbound-checkconf autossh libcap-bin luci-base
   curl wget-ssl tcpdump iftop bmon
+  # GNU parted lives in packages feed (not package/utils/parted)
+  parted
 )
 
 die() { echo "ERROR: $*" >&2; exit 1; }

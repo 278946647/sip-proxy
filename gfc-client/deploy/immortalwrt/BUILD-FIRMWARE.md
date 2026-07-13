@@ -144,7 +144,7 @@ ls -lt "$IMT_SRC/bin/targets/x86/64/"*ext4*combined*efi*.img.gz | head -3
 | `libcap-bin` | sing-box 非 root 能力（setcap） |
 | `ip-full` | 策略路由等 |
 | `tc-tiny` + `kmod-sched-core` + `kmod-ifb` | HTB 带宽限速（**无** `kmod-sched-htb`）；二进制在 `/usr/libexec/tc-tiny`，`/sbin/tc` 为 ALTERNATIVES |
-| `resize2fs` + `parted` + `partx-utils` | 首启把剩余磁盘划入 root（**`resize2fs` 独立包**；**`partx` 二进制在 `partx-utils`**，勿写 `CONFIG_PACKAGE_partx`） |
+| `resize2fs` + `parted` + `partx-utils` | 首启扩 root（`resize2fs`/`partx-utils`=base；**`parted`=packages feed**，勿用 `package/utils/parted`） |
 | `ca-bundle`、`curl`、`wget-ssl`、`tcpdump`、`iftop`、`bmon`、`autossh` | 运维 / 远程 |
 | `luci-base` | Web 管理（拥有 `/www/index.html`） |
 

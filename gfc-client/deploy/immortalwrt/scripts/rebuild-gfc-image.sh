@@ -70,10 +70,10 @@ merge_gfc_config() {
       skipped=$((skipped + 1))
     fi
   done <"$fragment"
-  # Required bandwidth packages must never be silently skipped.
-  for pkg in tc-tiny kmod-sched-core kmod-ifb; do
+  # Required bandwidth + expand packages must never be silently skipped.
+  for pkg in tc-tiny kmod-sched-core kmod-ifb resize2fs parted partx-utils; do
     grep -q "^CONFIG_PACKAGE_${pkg}=y$" "$merged" \
-      || die "merge skipped required CONFIG_PACKAGE_${pkg}=y (Kconfig missing?)"
+      || die "merge skipped required CONFIG_PACKAGE_${pkg}=y (Kconfig missing? feeds install parted?)"
   done
   while IFS= read -r line; do
     [[ "$line" =~ ^CONFIG_PACKAGE_ ]] || continue
@@ -174,19 +174,38 @@ build_packages() {
   make package/kernel/linux/compile -j"$JOBS" V=s 2>/dev/null || true
   find bin -name 'tc-tiny_*.ipk' -print | grep -q . \
     || die "tc-tiny ipk not produced — check CONFIG_PACKAGE_tc-tiny=y and iproute2 build"
-  # Root expand: OpenWrt package is literally "resize2fs" (not e2fsprogs).
-  # partx binary is in package partx-utils.
-  log "compile resize2fs / parted / partx-utils (first-boot disk expand)"
+  # Root expand tools:
+  # - resize2fs: package/utils/e2fsprogs (Package: resize2fs)
+  # - partx-utils: package/utils/util-linux
+  # - parted: packages feed → package/feeds/packages/parted (NOT package/utils/parted)
+  log "compile resize2fs / partx-utils / parted (first-boot disk expand)"
   make package/utils/e2fsprogs/compile -j"$JOBS" V=s \
     || die "e2fsprogs tree compile failed (needed for resize2fs ipk)"
-  make package/utils/parted/compile -j"$JOBS" V=s \
-    || die "parted compile failed"
   make package/utils/util-linux/compile -j"$JOBS" V=s \
     || die "util-linux compile failed (needed for partx-utils ipk)"
+  local parted_tgt=""
+  if [[ -d package/feeds/packages/parted ]]; then
+    parted_tgt=package/feeds/packages/parted
+  elif [[ -d package/feeds/packages/utils/parted ]]; then
+    parted_tgt=package/feeds/packages/utils/parted
+  else
+    log "parted feed path missing — feeds install -f parted"
+    ./scripts/feeds install -f parted \
+      || die "feeds install parted failed (packages feed required)"
+    if [[ -d package/feeds/packages/parted ]]; then
+      parted_tgt=package/feeds/packages/parted
+    elif [[ -d package/feeds/packages/utils/parted ]]; then
+      parted_tgt=package/feeds/packages/utils/parted
+    else
+      die "parted still missing under package/feeds/packages after feeds install"
+    fi
+  fi
+  make "${parted_tgt}/compile" -j"$JOBS" V=s \
+    || die "parted compile failed (target=${parted_tgt})"
   find bin -name 'resize2fs_*.ipk' -print | grep -q . \
     || die "resize2fs ipk not produced — use CONFIG_PACKAGE_resize2fs=y (not e2fsprogs alone)"
   find bin -name 'parted_*.ipk' -print | grep -q . \
-    || die "parted ipk not produced"
+    || die "parted ipk not produced — packages feed + CONFIG_PACKAGE_parted=y"
   find bin -name 'partx-utils_*.ipk' -print | grep -q . \
     || die "partx-utils ipk not produced — use CONFIG_PACKAGE_partx-utils=y (not partx)"
 }
