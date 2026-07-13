@@ -1,0 +1,92 @@
+#!/bin/sh
+# Phase 2: grow the root *filesystem* after 95-gfc-rootpt-resize + reboot.
+# Follows OpenWrt wiki expand_root (resize2fs; losetup when needed).
+#
+# Flags:
+#   /etc/gfc-client/rootpt-resized   — required from phase 1
+#   /etc/gfc-client/rootfs-resized   — filesystem done
+LOG="/etc/gfc-client/expand-rootfs.log"
+FLAG_PT="/etc/gfc-client/rootpt-resized"
+FLAG_FS="/etc/gfc-client/rootfs-resized"
+
+mkdir -p /etc/gfc-client
+exec >>"$LOG" 2>&1
+echo "=== GFC rootfs-resize $(date -Iseconds 2>/dev/null || date) ==="
+
+if [ -e "$FLAG_FS" ]; then
+	echo "OK: $FLAG_FS exists — filesystem phase done"
+	exit 0
+fi
+
+if [ ! -e "$FLAG_PT" ]; then
+	echo "WAIT: partition phase not done yet ($FLAG_PT missing)"
+	exit 1
+fi
+
+if ! command -v resize2fs >/dev/null 2>&1; then
+	echo "SKIP: resize2fs missing (package resize2fs) — retry next boot"
+	exit 1
+fi
+
+resolve_root_sys() {
+	local majmin sys
+	majmin="$(awk '$9 == "/dev/root" { print $3; exit }' /proc/self/mountinfo)"
+	[ -n "$majmin" ] || majmin="$(awk '$5 == "/" { print $3; exit }' /proc/self/mountinfo)"
+	[ -n "$majmin" ] || return 1
+	sys="$(readlink -f "/sys/dev/block/${majmin}" 2>/dev/null)" || return 1
+	printf '%s\n' "$sys"
+}
+
+ROOT_SYS="$(resolve_root_sys)" || {
+	echo "SKIP: cannot resolve root"
+	exit 1
+}
+ROOT_DEV="/dev/$(basename "$ROOT_SYS")"
+echo "root_dev=$ROOT_DEV"
+
+FS="$(awk '$2 == "/" { print $3; exit }' /proc/mounts)"
+case "$FS" in
+ext2|ext3|ext4) ;;
+*)
+	echo "SKIP: root fs '$FS' not ext*"
+	# Do not loop forever on unsupported layouts.
+	touch "$FLAG_FS"
+	exit 0
+	;;
+esac
+
+# Prefer direct online grow (pure ext4 root). Fall back to losetup (wiki / overlay cases).
+resize_ok=0
+if resize2fs -f "$ROOT_DEV" >>"$LOG" 2>&1; then
+	resize_ok=1
+	echo "OK: resize2fs $ROOT_DEV"
+else
+	echo "WARN: direct resize2fs failed — try losetup path"
+	if command -v losetup >/dev/null 2>&1; then
+		LOOP_DEV="$(awk '$5 == "/overlay" { print $9; exit }' /proc/self/mountinfo)"
+		if [ -z "$LOOP_DEV" ] || [ ! -b "$LOOP_DEV" ]; then
+			LOOP_DEV="$(losetup -f)"
+			losetup "$LOOP_DEV" "$ROOT_DEV" || {
+				echo "ERROR: losetup failed"
+				exit 1
+			}
+		fi
+		echo "resize2fs -f $LOOP_DEV"
+		if resize2fs -f "$LOOP_DEV" >>"$LOG" 2>&1; then
+			resize_ok=1
+			echo "OK: resize2fs via $LOOP_DEV"
+		fi
+	fi
+fi
+
+if [ "$resize_ok" != "1" ]; then
+	echo "ERROR: resize2fs failed"
+	exit 1
+fi
+
+df -h / || true
+touch "$FLAG_FS"
+sync
+echo "OK: filesystem grown — reboot once to settle"
+reboot
+exit 1

@@ -12,8 +12,8 @@ BASE_TREE_PACKAGES=(
   nftables-json nftables-nojson
   tc-tiny kmod-sched-core kmod-ifb
   # resize2fs is a separate OpenWrt package (not e2fsprogs);
-  # partx binary is in partx-utils (util-linux)
-  resize2fs partx-utils
+  # partx binary is in partx-utils (util-linux); losetup for wiki resize path
+  resize2fs partx-utils losetup
 )
 
 # GFC src-link feed

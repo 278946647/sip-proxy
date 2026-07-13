@@ -32,8 +32,9 @@ iftop
 bmon
 #
 # first-boot rootfs expand
-# - resize2fs, partx-utils: base tree (e2fsprogs / util-linux)
+# - resize2fs, partx-utils, losetup: base tree (e2fsprogs / util-linux)
 # - parted: packages feed (NOT package/utils/parted)
 resize2fs
 parted
 partx-utils
+losetup

@@ -1,0 +1,86 @@
+#!/bin/sh
+# Phase 1: grow the root *partition* to fill the disk, then reboot.
+# OpenWrt x86 needs a reboot before resize2fs sees the new size (wiki expand_root).
+#
+# Flags (persistent):
+#   /etc/gfc-client/rootpt-resized  — partition already grown
+#
+# Exit 1 → keep this uci-defaults script for retry / next boot.
+# Exit 0 → done (or nothing to do); OpenWrt deletes the script.
+LOG="/etc/gfc-client/expand-rootfs.log"
+FLAG_PT="/etc/gfc-client/rootpt-resized"
+MIN_FREE_SECTORS=16384
+
+mkdir -p /etc/gfc-client
+exec >>"$LOG" 2>&1
+echo "=== GFC rootpt-resize $(date -Iseconds 2>/dev/null || date) ==="
+
+if [ -e "$FLAG_PT" ]; then
+	echo "OK: $FLAG_PT exists — partition phase done"
+	exit 0
+fi
+
+if ! command -v parted >/dev/null 2>&1; then
+	echo "SKIP: parted missing — leave script for retry"
+	exit 1
+fi
+
+# OpenWrt mountinfo: device field is often /dev/root (wiki expand_root).
+resolve_root_sys() {
+	local majmin sys
+	majmin="$(awk '$9 == "/dev/root" { print $3; exit }' /proc/self/mountinfo)"
+	[ -n "$majmin" ] || majmin="$(awk '$5 == "/" { print $3; exit }' /proc/self/mountinfo)"
+	[ -n "$majmin" ] || return 1
+	sys="$(readlink -f "/sys/dev/block/${majmin}" 2>/dev/null)" || return 1
+	[ -n "$sys" ] || return 1
+	printf '%s\n' "$sys"
+}
+
+ROOT_SYS="$(resolve_root_sys)" || {
+	echo "SKIP: cannot resolve root sysfs node"
+	exit 1
+}
+ROOT_DISK="/dev/$(basename "$(dirname "$ROOT_SYS")")"
+ROOT_PART="$(basename "$ROOT_SYS")"
+# Partition number: strip leading non-digits (sda2 → 2, nvme0n1p3 → 3, mmcblk0p2 → 2)
+PART_NUM="$(echo "$ROOT_PART" | sed 's/.*[^0-9]//')"
+ROOT_DEV="/dev/${ROOT_PART}"
+
+if [ ! -b "$ROOT_DISK" ] || [ -z "$PART_NUM" ]; then
+	echo "SKIP: bad disk/part ROOT_SYS=$ROOT_SYS disk=$ROOT_DISK part=$PART_NUM"
+	exit 1
+fi
+
+START="$(cat "/sys/class/block/${ROOT_PART}/start" 2>/dev/null || echo 0)"
+SIZE="$(cat "/sys/class/block/${ROOT_PART}/size" 2>/dev/null || echo 0)"
+DISK_SIZE="$(cat "/sys/class/block/$(basename "$ROOT_DISK")/size" 2>/dev/null || echo 0)"
+FREE_END=$((DISK_SIZE - START - SIZE))
+
+echo "root_sys=$ROOT_SYS root_dev=$ROOT_DEV disk=$ROOT_DISK part_num=$PART_NUM"
+echo "start=$START size=$SIZE disk_size=$DISK_SIZE free_end=$FREE_END"
+
+if [ "$DISK_SIZE" -le 0 ] || [ "$SIZE" -le 0 ]; then
+	echo "SKIP: invalid sizes"
+	exit 1
+fi
+
+if [ "$FREE_END" -lt "$MIN_FREE_SECTORS" ]; then
+	echo "OK: little free space — mark partition phase complete"
+	touch "$FLAG_PT"
+	exit 0
+fi
+
+echo "parted -f -s $ROOT_DISK resizepart $PART_NUM 100%"
+if ! parted -f -s "$ROOT_DISK" resizepart "$PART_NUM" 100%; then
+	echo "ERROR: parted resizepart failed"
+	exit 1
+fi
+
+command -v partx >/dev/null 2>&1 && partx -u "$ROOT_DISK" 2>/dev/null || true
+command -v partprobe >/dev/null 2>&1 && partprobe "$ROOT_DISK" 2>/dev/null || true
+
+touch "$FLAG_PT"
+sync
+echo "OK: partition grown — rebooting for filesystem resize"
+reboot
+exit 1

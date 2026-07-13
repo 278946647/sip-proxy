@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=gfc-client
 PKG_VERSION:=1.1.0
-PKG_RELEASE:=13
+PKG_RELEASE:=14
 PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)
 PKG_BUILD_DEPENDS:=golang/host
 GFC_CLIENT_SRC ?= $(abspath $(CURDIR)/../../..)
@@ -58,9 +58,11 @@ define Package/gfc-client/install
 	$(INSTALL_BIN) ./files/etc/init.d/gfc-unbound $(1)/etc/init.d/gfc-unbound
 	$(INSTALL_BIN) ./files/etc/init.d/gfc-sing-box $(1)/etc/init.d/gfc-sing-box
 	$(INSTALL_BIN) ./files/etc/init.d/gfc-routing $(1)/etc/init.d/gfc-routing
+	$(INSTALL_BIN) ./files/etc/init.d/gfc-lan-dhcp $(1)/etc/init.d/gfc-lan-dhcp
 
 	$(INSTALL_DIR) $(1)/etc/uci-defaults
-	$(INSTALL_BIN) ./files/etc/uci-defaults/96-gfc-expand-rootfs $(1)/etc/uci-defaults/96-gfc-expand-rootfs
+	$(INSTALL_BIN) ./files/etc/uci-defaults/95-gfc-rootpt-resize $(1)/etc/uci-defaults/95-gfc-rootpt-resize
+	$(INSTALL_BIN) ./files/etc/uci-defaults/96-gfc-rootfs-resize $(1)/etc/uci-defaults/96-gfc-rootfs-resize
 	$(INSTALL_BIN) ./files/etc/uci-defaults/97-gfc-oem-root-password $(1)/etc/uci-defaults/97-gfc-oem-root-password
 	$(INSTALL_BIN) ./files/etc/uci-defaults/98-gfc-network-ports $(1)/etc/uci-defaults/98-gfc-network-ports
 	$(INSTALL_BIN) ./files/etc/uci-defaults/99-gfc-firstboot $(1)/etc/uci-defaults/99-gfc-firstboot
@@ -89,6 +91,7 @@ mkdir -p /etc/gfc-client /var/lib/gfc-client/state /var/lib/gfc-client/rules /va
 /etc/init.d/gfc-unbound enable
 /etc/init.d/gfc-sing-box enable
 /etc/init.d/gfc-routing enable
+/etc/init.d/gfc-lan-dhcp enable
 if [ -f /var/lib/gfc-client/state/config_bundle.json ]; then
 	gfc-bootstrap --reapply >/tmp/gfc-bootstrap.log 2>&1 || echo "gfc-bootstrap reapply failed; keeping existing config" >>/tmp/gfc-bootstrap.log
 else

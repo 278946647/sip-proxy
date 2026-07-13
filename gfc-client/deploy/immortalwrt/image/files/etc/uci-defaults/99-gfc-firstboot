@@ -94,7 +94,7 @@ else
 	echo "WARN: no chpasswd/passwd — root password unchanged"
 fi
 
-for svc in gfc-api gfc-agent gfc-unbound gfc-sing-box gfc-routing; do
+for svc in gfc-api gfc-agent gfc-unbound gfc-sing-box gfc-routing gfc-lan-dhcp; do
 	if [ -x "/etc/init.d/$svc" ]; then
 		"/etc/init.d/$svc" enable 2>/dev/null || true
 	fi
@@ -139,10 +139,21 @@ if [ -f /etc/gfc-client/sing-box.json ] && [ -x /etc/init.d/gfc-sing-box ]; then
 	GFC_ROUTING_TUN_WAIT=5 sh "$DEPLOY/gfc-routing.sh" start 2>/dev/null || true
 fi
 
-# br-lan may come up after the first dnsmasq restart — give DHCP a second chance.
+# Wait for br-lan IPv4 then restart dnsmasq (fixes first-client DHCP race).
 if [ -x /etc/init.d/dnsmasq ]; then
-	sleep 3
+	i=0
+	while [ "$i" -lt 30 ]; do
+		if ip -4 addr show br-lan 2>/dev/null | grep -q 'inet '; then
+			echo "br-lan is up — restarting dnsmasq"
+			break
+		fi
+		i=$((i + 1))
+		sleep 1
+	done
 	/etc/init.d/dnsmasq restart || echo "WARN: delayed dnsmasq restart failed"
+	# Second chance a few seconds later (netifd may still be settling ports).
+	sleep 5
+	/etc/init.d/dnsmasq restart || echo "WARN: final dnsmasq restart failed"
 fi
 
 if [ -f "$DEPLOY/verify-dataplane-dns.sh" ]; then

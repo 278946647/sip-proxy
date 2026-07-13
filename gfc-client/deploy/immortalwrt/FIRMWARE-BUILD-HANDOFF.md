@@ -1,7 +1,7 @@
 # GFC x86 固件构建 — 会话交接（FIRMWARE BUILD HANDOFF）
 
 > 写给**完全没有本对话上下文**的新会话。  
-> 最后更新：**2026-07-13**（r13：首启自动扩 root；`resize2fs` 独立包进镜像；源码 `PKG_RELEASE:=13`）  
+> 最后更新：**2026-07-13**（r14：两阶段磁盘扩容 + DHCP 竞态修复；源码 `PKG_RELEASE:=14`）  
 > 仓库：`sip-proxy` / `gfc-client/deploy/immortalwrt/`  
 > 构建机：`/opt/gfc/{sip-proxy,immortalwrt}`（Ubuntu 22.04，用户 `gfcbuild`）  
 > Cursor 规则：[`gfc-firmware-build.mdc`](../../../.cursor/rules/gfc-firmware-build.mdc)
@@ -13,7 +13,7 @@
 
 ## 0. 新会话开场白（直接粘贴）
 
-> 我们在做 **GFC x86 ImmortalWrt OEM 固件**。源码已到 **`PKG_RELEASE:=13`**（r12 tc + **r13 首启磁盘扩容**：`resize2fs`/`parted`/`partx-utils` + `96-gfc-expand-rootfs`）。**当前卡点：构建机编出 r13、刷大盘验收 `df -h /`**。请先读 `FIRMWARE-BUILD-HANDOFF.md` 与 `BUILD-FIRMWARE.md`。构建机 `git pull` 后跑 `rebuild-gfc-image.sh`，刷最新 `*ext4*combined*efi*.img.gz`。
+> 我们在做 **GFC x86 ImmortalWrt OEM 固件**。源码已到 **`PKG_RELEASE:=14`**（**两阶段扩盘** + **DHCP 首启竞态修复**）。**当前卡点：构建机编 r14 → 刷大盘，等自动重启结束后验 `df -h /` 与 LAN DHCP**。构建机 `git pull` 后跑 `rebuild-gfc-image.sh`。
 
 ---
 
@@ -21,8 +21,9 @@
 
 | # | 任务 | 结果 |
 |---|------|------|
-| 1 | 刷盘后剩余空间闲置 | **r13**：`96-gfc-expand-rootfs` 首启 `parted`+`resize2fs` 吃满磁盘 |
-| 2 | 误以为 `e2fsprogs` 含 `resize2fs` | **纠正**：须 **`CONFIG_PACKAGE_resize2fs=y`** + `parted` + **`partx-utils`**（不是 `partx`） |
+| 1 | 刷盘后仍约 512MB | **r14**：按 OpenWrt wiki **两阶段**（95 扩分区重启 → 96 `resize2fs` 再重启）；持久日志 `/etc/gfc-client/expand-rootfs.log` |
+| 2 | LAN 首次 DHCP 需手动 restart | **r14**：hotplug 覆盖 ifupdate；`gfc-lan-dhcp` START=99；firstboot 等 br-lan |
+| 3 | `partx` / `parted` 包路径错误 | **已修**：`partx-utils`；`package/feeds/packages/parted` |
 
 ### 历史（2026-07-12 及更早）
 
@@ -74,7 +75,8 @@
 | OEM root 密码 `Wgh@125434` | r10+（passwd） | |
 | tc/HTB/ifb 进镜像 | r10 选包；**r12 强制验收** | HTB ∈ `kmod-sched-core`；二进制 `/usr/libexec/tc-tiny` |
 | WAN=首块 / LAN=末块 | r11+ | `configure-network-ports.sh` |
-| 首启自动扩 root | **r13** | `96-gfc-expand-rootfs`；包 **`resize2fs`** + `parted` + **`partx-utils`**（二进制 `partx`） |
+| 首启自动扩 root | **r14** | `95` 扩分区重启 → `96` resize2fs；日志 `/etc/gfc-client/expand-rootfs.log` |
+| LAN 首次 DHCP | **r14** | `gfc-lan-dhcp` + 强化 hotplug/firstboot |
 
 ### 2.3 设计结论（勿再争论）
 
@@ -93,8 +95,7 @@
 
 | 项 | 状态 |
 |----|------|
-| **r13 镜像重建 + 大盘刷机验收扩容** | ⚠️ **当前卡点** |
-| **r12 镜像重建 + 刷机完整 E2E（含 tc）** | ⚠️ 并入 r13 一起验 |
+| **r14 镜像重建 + 大盘扩容 + 首次 DHCP** | ⚠️ **当前卡点** |
 | 控制面 TID / 设备名修复 | ⚠️ 须单独部署 control-plane + web-ui（非固件） |
 | P1 dist/vmdk 发布打包 | ❌ 可选未做 |
 
@@ -104,15 +105,17 @@
 
 ## 4. 下一步（严格顺序）
 
-### P0 — 重建并刷 r13
+### P0 — 重建并刷 r14
 
-见 [`BUILD-FIRMWARE.md`](BUILD-FIRMWARE.md) §3–§5。期望 manifest：`gfc-client - 1.1.0-r13`，且含 `tc-tiny`、`resize2fs`、`parted`、`partx-utils`。
+见 [`BUILD-FIRMWARE.md`](BUILD-FIRMWARE.md) §3–§5。期望 manifest：`gfc-client - 1.1.0-r14`。刷大盘后允许自动重启 1～2 次再查 `df -h /`。
 
 ### P1 — E2E 清单（刷机后）
 
 | # | 检查 | 期望 |
 |---|------|------|
-| 1 | `opkg list-installed \| grep gfc-client` | `1.1.0-r13` |
+| 1 | `opkg list-installed \| grep gfc-client` | `1.1.0-r14` |
+| 11 | 扩容 | 等自动重启结束；`df -h /` ≈ 盘；`cat /etc/gfc-client/expand-rootfs.log`；存在 `rootpt-resized`+`rootfs-resized` |
+| 12 | DHCP | PC 插 LAN 应自动拿 IP；`cat /tmp/gfc-dnsmasq-hotplug.log` |
 | 2 | `uci get network.wan.device` | 首块（如 `eth0`） |
 | 3 | `br-lan` ports | 末块（如 `eth1`） |
 | 4 | LAN DHCP | 无需手动 restart dnsmasq |
@@ -207,10 +210,14 @@ gfc-client/deploy/immortalwrt/
   config/gfc-package-index.txt          # 索引清单
   package/Makefile                      # PKG 1.1.0-r12；DEPENDS 空
   package/files/etc/uci-defaults/
-    96-gfc-expand-rootfs
+    95-gfc-rootpt-resize
+    96-gfc-rootfs-resize
     97-gfc-oem-root-password
     98-gfc-network-ports
     99-gfc-firstboot
+  package/files/etc/init.d/
+    gfc-lan-dhcp
+    …
   package/files/etc/hotplug.d/
     net/99-gfc-tun
     iface/99-gfc-dnsmasq

@@ -2,7 +2,7 @@
 
 > **状态 / 卡点 / 踩坑：** [`FIRMWARE-BUILD-HANDOFF.md`](FIRMWARE-BUILD-HANDOFF.md)  
 > **Cursor 规则：** [`.cursor/rules/gfc-firmware-build.mdc`](../../../.cursor/rules/gfc-firmware-build.mdc)  
-> **包版本（源码）：** `gfc-client` **`1.1.0-r13`**（以 `package/Makefile` 的 `PKG_RELEASE` 与构建机 manifest 为准）  
+> **包版本（源码）：** `gfc-client` **`1.1.0-r14`**（以 `package/Makefile` 的 `PKG_RELEASE` 与构建机 manifest 为准）  
 > **最后更新：** 2026-07-13
 
 本手册面向**构建机操作人员**：按目录、命令、模块、验收步骤操作即可产出可刷盘镜像。
@@ -86,12 +86,13 @@ ls -la "$ORIG/sbin/tc" "$ORIG/usr/libexec/tc-tiny" 2>/dev/null || true
 ls -la "$ORIG/usr/sbin/resize2fs" "$ORIG/sbin/resize2fs" 2>/dev/null || true
 
 # 3) ORIG 首启/热插拔
-test -f "$ORIG/etc/uci-defaults/96-gfc-expand-rootfs"
+test -f "$ORIG/etc/uci-defaults/95-gfc-rootpt-resize"
+test -f "$ORIG/etc/uci-defaults/96-gfc-rootfs-resize"
 test -f "$ORIG/etc/uci-defaults/99-gfc-firstboot"
 test -f "$ORIG/etc/uci-defaults/98-gfc-network-ports"
 test -f "$ORIG/etc/uci-defaults/97-gfc-oem-root-password"
-test -f "$ORIG/etc/hotplug.d/net/99-gfc-tun"
 test -f "$ORIG/etc/hotplug.d/iface/99-gfc-dnsmasq"
+test -x "$ORIG/etc/init.d/gfc-lan-dhcp"
 # expand 工具（resize2fs 是独立包，不在 e2fsprogs 内）
 test -x "$ORIG/usr/sbin/resize2fs" -o -x "$ORIG/sbin/resize2fs"
 
@@ -110,17 +111,17 @@ ls -lt "$IMT_SRC/bin/targets/x86/64/"*ext4*combined*efi*.img.gz | head -3
 
 | 检查 | 期望 |
 |------|------|
-| `opkg list-installed \| grep gfc-client` | `1.1.0-r13`（或当前 PKG） |
+| `opkg list-installed \| grep gfc-client` | `1.1.0-r14`（或当前 PKG） |
 | `uci get network.wan.device` | 首块物理网卡（如 eth0） |
 | br-lan `list ports` | 末块物理网卡（如 eth1） |
-| LAN PC DHCP | 无需手动 `dnsmasq restart` |
+| LAN PC DHCP | 无需手动 `dnsmasq restart`（hotplug + `gfc-lan-dhcp`） |
 | `uci get dhcp.@dnsmasq[0].force` | `1` |
 | `nft list tables` | `nat`、`gfc_dns_hijack`、`gfc` |
 | Web | `http://<LAN>/gfc/activate.html` |
 | 激活后 | `gfctun` 存在；**一条** `fwmark 0x2023 lookup 2022` |
 | SSH | 端口 **212**；密码 **`Wgh@125434`** |
 | 限速 | `opkg list-installed \| grep tc-tiny`；`ls /sbin/tc /usr/libexec/tc-tiny` |
-| 磁盘扩容 | `df -h /` 接近物理盘；`cat /tmp/gfc-expand-rootfs.log`；无 `/etc/uci-defaults/96-gfc-expand-rootfs` |
+| 磁盘扩容 | 首启会**自动重启 1～2 次**；之后 `df -h /` 接近物理盘；日志 `/etc/gfc-client/expand-rootfs.log` |
 
 ---
 
@@ -152,12 +153,14 @@ ls -lt "$IMT_SRC/bin/targets/x86/64/"*ext4*combined*efi*.img.gz | head -3
 
 | 路径 | 作用 |
 |------|------|
-| `/etc/uci-defaults/96-gfc-expand-rootfs` | 首启扩 root 分区 + `resize2fs`（失败不挡后续首启） |
+| `/etc/uci-defaults/95-gfc-rootpt-resize` | 扩 root **分区**后重启（OpenWrt 官方两阶段） |
+| `/etc/uci-defaults/96-gfc-rootfs-resize` | 扩 root **文件系统**后重启 |
 | `/etc/uci-defaults/97-gfc-oem-root-password` | 出厂 root 密码 |
 | `/etc/uci-defaults/98-gfc-network-ports` | WAN=首块 NIC，LAN=末块 |
 | `/etc/uci-defaults/99-gfc-firstboot` | 总首启：门户、DHCP、SSH 212、routing、服务 enable |
+| `/etc/init.d/gfc-lan-dhcp` | 开机晚启动：等 br-lan 后重启 dnsmasq（修首次 DHCP） |
+| `/etc/hotplug.d/iface/99-gfc-dnsmasq` | lan ifup/ifupdate 重启 dnsmasq |
 | `/etc/hotplug.d/net/99-gfc-tun` | `gfctun` 出现后装 `ip rule` |
-| `/etc/hotplug.d/iface/99-gfc-dnsmasq` | lan ifup 重启 dnsmasq |
 | `/usr/lib/gfc-client/deploy/immortalwrt/gfc-routing.sh` | NAT / DNS hijack / nft gfc / 策略路由 |
 | `/www/gfc/activate.html` + CGI | 线路码激活页 |
 

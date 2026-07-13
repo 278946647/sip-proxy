@@ -1,0 +1,28 @@
+#!/bin/sh /etc/rc.common
+# Late boot: ensure dnsmasq is bound after br-lan is up (first-boot DHCP race).
+# START after network (20) and dnsmasq (60).
+START=99
+STOP=10
+
+boot() {
+	[ -x /etc/init.d/dnsmasq ] || return 0
+	(
+		# Wait until lan has an IPv4 address, then restart DHCP once.
+		i=0
+		while [ "$i" -lt 45 ]; do
+			if ip -4 addr show br-lan 2>/dev/null | grep -q 'inet '; then
+				sleep 2
+				/etc/init.d/dnsmasq restart >/dev/null 2>&1 || true
+				echo "$(date -Iseconds 2>/dev/null || date) gfc-lan-dhcp: restarted dnsmasq (br-lan up)" \
+					>>/tmp/gfc-dnsmasq-hotplug.log
+				exit 0
+			fi
+			i=$((i + 1))
+			sleep 1
+		done
+		# Last resort even if br-lan check failed (odd device names).
+		/etc/init.d/dnsmasq restart >/dev/null 2>&1 || true
+		echo "$(date -Iseconds 2>/dev/null || date) gfc-lan-dhcp: fallback dnsmasq restart" \
+			>>/tmp/gfc-dnsmasq-hotplug.log
+	) &
+}

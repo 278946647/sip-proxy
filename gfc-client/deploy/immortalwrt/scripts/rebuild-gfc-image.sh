@@ -71,7 +71,7 @@ merge_gfc_config() {
     fi
   done <"$fragment"
   # Required bandwidth + expand packages must never be silently skipped.
-  for pkg in tc-tiny kmod-sched-core kmod-ifb resize2fs parted partx-utils; do
+  for pkg in tc-tiny kmod-sched-core kmod-ifb resize2fs parted partx-utils losetup; do
     grep -q "^CONFIG_PACKAGE_${pkg}=y$" "$merged" \
       || die "merge skipped required CONFIG_PACKAGE_${pkg}=y (Kconfig missing? feeds install parted?)"
   done
@@ -113,14 +113,14 @@ verify_dotconfig() {
   cd "$IMT_SRC"
   grep -q '^CONFIG_PACKAGE_gfc-client=y$' .config || die ".config missing CONFIG_PACKAGE_gfc-client=y"
   grep -q '^CONFIG_PACKAGE_luci-app-gfc=y$' .config || die ".config missing CONFIG_PACKAGE_luci-app-gfc=y"
-  for pkg in tc-tiny kmod-sched-core kmod-ifb resize2fs parted partx-utils; do
+  for pkg in tc-tiny kmod-sched-core kmod-ifb resize2fs parted partx-utils losetup; do
     grep -q "^CONFIG_PACKAGE_${pkg}=y$" .config || die ".config missing CONFIG_PACKAGE_${pkg}=y"
     # Must use if/then: under set -e, "grep -q && die" returns 1 when absent and aborts the script.
     if grep -qE "^# CONFIG_PACKAGE_${pkg} is not set$" .config; then
       die ".config still has '# CONFIG_PACKAGE_${pkg} is not set' alongside =y"
     fi
   done
-  log ".config OK: gfc + tc + resize2fs/parted/partx-utils"
+  log ".config OK: gfc + tc + expand tools (resize2fs/parted/partx-utils/losetup)"
 }
 
 # tc-tiny installs binary at /usr/libexec/tc-tiny; /sbin/tc is ALTERNATIVES symlink.
@@ -142,7 +142,8 @@ link_image_files_overlay() {
   local src="$GFC_DEPLOY/image/files"
   local dst="$IMT_SRC/files"
   [[ -d "$src/etc/uci-defaults" ]] || die "missing image overlay: $src"
-  [[ -f "$src/etc/uci-defaults/96-gfc-expand-rootfs" ]] || die "missing 96-gfc-expand-rootfs in $src"
+  [[ -f "$src/etc/uci-defaults/95-gfc-rootpt-resize" ]] || die "missing 95-gfc-rootpt-resize in $src"
+  [[ -f "$src/etc/uci-defaults/96-gfc-rootfs-resize" ]] || die "missing 96-gfc-rootfs-resize in $src"
   [[ -f "$src/etc/uci-defaults/99-gfc-firstboot" ]] || die "missing 99-gfc-firstboot in $src"
   if [[ -L "$dst" || -e "$dst" ]]; then
     rm -rf "$dst"
@@ -208,6 +209,8 @@ build_packages() {
     || die "parted ipk not produced — packages feed + CONFIG_PACKAGE_parted=y"
   find bin -name 'partx-utils_*.ipk' -print | grep -q . \
     || die "partx-utils ipk not produced — use CONFIG_PACKAGE_partx-utils=y (not partx)"
+  find bin -name 'losetup_*.ipk' -print | grep -q . \
+    || die "losetup ipk not produced — use CONFIG_PACKAGE_losetup=y"
 }
 
 ensure_gfc_client_pkginfo() {
@@ -660,12 +663,20 @@ build_image() {
     chmod +x "$ROOTFS_ORIG_DIR/etc/uci-defaults/99-gfc-firstboot"
     log "injected 99-gfc-firstboot into ORIG"
   fi
-  if [[ -f "$GFC_DEPLOY/image/files/etc/uci-defaults/96-gfc-expand-rootfs" ]]; then
+  if [[ -f "$GFC_DEPLOY/image/files/etc/uci-defaults/95-gfc-rootpt-resize" ]]; then
     mkdir -p "$ROOTFS_ORIG_DIR/etc/uci-defaults"
-    cp -a "$GFC_DEPLOY/image/files/etc/uci-defaults/96-gfc-expand-rootfs" \
-      "$ROOTFS_ORIG_DIR/etc/uci-defaults/96-gfc-expand-rootfs"
-    chmod +x "$ROOTFS_ORIG_DIR/etc/uci-defaults/96-gfc-expand-rootfs"
+    cp -a "$GFC_DEPLOY/image/files/etc/uci-defaults/95-gfc-rootpt-resize" \
+      "$ROOTFS_ORIG_DIR/etc/uci-defaults/95-gfc-rootpt-resize"
+    chmod +x "$ROOTFS_ORIG_DIR/etc/uci-defaults/95-gfc-rootpt-resize"
   fi
+  if [[ -f "$GFC_DEPLOY/image/files/etc/uci-defaults/96-gfc-rootfs-resize" ]]; then
+    mkdir -p "$ROOTFS_ORIG_DIR/etc/uci-defaults"
+    cp -a "$GFC_DEPLOY/image/files/etc/uci-defaults/96-gfc-rootfs-resize" \
+      "$ROOTFS_ORIG_DIR/etc/uci-defaults/96-gfc-rootfs-resize"
+    chmod +x "$ROOTFS_ORIG_DIR/etc/uci-defaults/96-gfc-rootfs-resize"
+  fi
+  # Remove obsolete single-phase expand script if present from older trees.
+  rm -f "$ROOTFS_ORIG_DIR/etc/uci-defaults/96-gfc-expand-rootfs"
   if [[ -f "$GFC_DEPLOY/image/files/etc/uci-defaults/97-gfc-oem-root-password" ]]; then
     mkdir -p "$ROOTFS_ORIG_DIR/etc/uci-defaults"
     cp -a "$GFC_DEPLOY/image/files/etc/uci-defaults/97-gfc-oem-root-password" \
@@ -699,14 +710,14 @@ verify_manifest() {
   grep -i gfc "$manifest" || true
   grep -i gfc-client "$manifest" >/dev/null || die "manifest has no gfc-client"
   grep -i luci-app-gfc "$manifest" >/dev/null || die "manifest has no luci-app-gfc"
-  for pkg in tc-tiny kmod-sched-core kmod-ifb resize2fs parted partx-utils; do
+  for pkg in tc-tiny kmod-sched-core kmod-ifb resize2fs parted partx-utils losetup; do
     grep -qE "^${pkg}( |$)" "$manifest" \
       || die "manifest missing ${pkg}"
   done
   log "manifest tc/htb lines:"
   grep -E '^(tc-tiny|kmod-sched-core|kmod-ifb) ' "$manifest" || true
   log "manifest expand lines:"
-  grep -E '^(resize2fs|parted|partx-utils) ' "$manifest" || true
+  grep -E '^(resize2fs|parted|partx-utils|losetup) ' "$manifest" || true
   rootfs_has_tc "$orig" \
     || die "ORIG missing tc binary (/sbin/tc or /usr/libexec/tc-tiny) — package/install did not ship tc-tiny"
   log "ORIG tc: $(ls -la "$orig/sbin/tc" "$orig/usr/libexec/tc-tiny" 2>/dev/null || true)"
@@ -714,8 +725,12 @@ verify_manifest() {
     || die "ORIG missing resize2fs binary — select CONFIG_PACKAGE_resize2fs=y (not e2fsprogs alone)"
   [[ -x "$orig/usr/sbin/partx" || -x "$orig/sbin/partx" ]] \
     || die "ORIG missing partx binary — select CONFIG_PACKAGE_partx-utils=y (not partx)"
-  [[ -f "$orig/etc/uci-defaults/96-gfc-expand-rootfs" ]] \
-    || die "ORIG missing /etc/uci-defaults/96-gfc-expand-rootfs"
+  [[ -f "$orig/etc/uci-defaults/95-gfc-rootpt-resize" ]] \
+    || die "ORIG missing /etc/uci-defaults/95-gfc-rootpt-resize"
+  [[ -f "$orig/etc/uci-defaults/96-gfc-rootfs-resize" ]] \
+    || die "ORIG missing /etc/uci-defaults/96-gfc-rootfs-resize"
+  [[ -x "$orig/etc/init.d/gfc-lan-dhcp" ]] \
+    || die "ORIG missing /etc/init.d/gfc-lan-dhcp"
   [[ -f "$orig/etc/uci-defaults/99-gfc-firstboot" ]] \
     || die "ORIG missing /etc/uci-defaults/99-gfc-firstboot"
   ls -lh bin/targets/x86/64/*ext4*combined*efi*.img.gz

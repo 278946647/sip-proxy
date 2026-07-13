@@ -62,3 +62,8 @@ case " $got " in
 	exit 1
 	;;
 esac
+
+# Apply immediately when running on a live device (not image build).
+if [ -z "${IPKG_INSTROOT:-}" ] && [ -x /etc/init.d/dnsmasq ]; then
+	/etc/init.d/dnsmasq restart 2>/dev/null || true
+fi
