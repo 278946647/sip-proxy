@@ -1,7 +1,7 @@
 # GFC x86 固件构建 — 会话交接（FIRMWARE BUILD HANDOFF）
 
 > 写给**完全没有本对话上下文**的新会话。  
-> 最后更新：**2026-07-12**（r12：tc 强制进镜像 + ALTERNATIVES 路径；源码 `PKG_RELEASE:=12`）  
+> 最后更新：**2026-07-13**（r13：首启自动扩 root；`resize2fs` 独立包进镜像；源码 `PKG_RELEASE:=13`）  
 > 仓库：`sip-proxy` / `gfc-client/deploy/immortalwrt/`  
 > 构建机：`/opt/gfc/{sip-proxy,immortalwrt}`（Ubuntu 22.04，用户 `gfcbuild`）  
 > Cursor 规则：[`gfc-firmware-build.mdc`](../../../.cursor/rules/gfc-firmware-build.mdc)
@@ -13,11 +13,18 @@
 
 ## 0. 新会话开场白（直接粘贴）
 
-> 我们在做 **GFC x86 ImmortalWrt OEM 固件**。源码已到 **`PKG_RELEASE:=12`**（r11 口序 + r12 强制 tc-tiny 进镜像）。**当前卡点：构建机编出 r12、刷机 E2E，验收 `tc`/`tc-tiny`**。请先读 `FIRMWARE-BUILD-HANDOFF.md` 与 `BUILD-FIRMWARE.md`，严格按 `.cursor/rules/gfc-firmware-build.mdc`。构建机 `git pull` 后跑 `rebuild-gfc-image.sh`，刷最新 `*ext4*combined*efi*.img.gz`。
+> 我们在做 **GFC x86 ImmortalWrt OEM 固件**。源码已到 **`PKG_RELEASE:=13`**（r12 tc + **r13 首启磁盘扩容**：`resize2fs`/`parted`/`partx` + `96-gfc-expand-rootfs`）。**当前卡点：构建机编出 r13、刷大盘验收 `df -h /`**。请先读 `FIRMWARE-BUILD-HANDOFF.md` 与 `BUILD-FIRMWARE.md`。构建机 `git pull` 后跑 `rebuild-gfc-image.sh`，刷最新 `*ext4*combined*efi*.img.gz`。
 
 ---
 
-## 1. 本会话做了什么任务（2026-07-12）
+## 1. 本会话做了什么任务（2026-07-13）
+
+| # | 任务 | 结果 |
+|---|------|------|
+| 1 | 刷盘后剩余空间闲置 | **r13**：`96-gfc-expand-rootfs` 首启 `parted`+`resize2fs` 吃满磁盘 |
+| 2 | 误以为 `e2fsprogs` 含 `resize2fs` | **纠正**：OpenWrt 须选 **`CONFIG_PACKAGE_resize2fs=y`**（独立包）+ `parted` + `partx` |
+
+### 历史（2026-07-12 及更早）
 
 | # | 任务 | 结果 |
 |---|------|------|
@@ -51,6 +58,7 @@
 | ORIG `root.orig-x86` 同步 | ✅ |
 | 一键 `rebuild-gfc-image.sh` | ✅ |
 | manifest / ORIG **强制**含 `tc-tiny` | ✅ **r12**（缺则 build fail） |
+| manifest / ORIG **强制**含 `resize2fs` + expand 脚本 | ✅ **r13**（缺则 build fail） |
 
 ### 2.2 OEM 产品能力（源码侧，须刷对应 rN 镜像验证）
 
@@ -66,6 +74,7 @@
 | OEM root 密码 `Wgh@125434` | r10+（passwd） | |
 | tc/HTB/ifb 进镜像 | r10 选包；**r12 强制验收** | HTB ∈ `kmod-sched-core`；二进制 `/usr/libexec/tc-tiny` |
 | WAN=首块 / LAN=末块 | r11+ | `configure-network-ports.sh` |
+| 首启自动扩 root | **r13** | `96-gfc-expand-rootfs`；包 **`resize2fs`**（非 e2fsprogs）+ `parted` + `partx` |
 
 ### 2.3 设计结论（勿再争论）
 
@@ -74,7 +83,8 @@
 3. `GFC_SSH_PORT` ≠ dropbear 端口；必须改 dropbear UCI。  
 4. ImmortalWrt stock 常 **lan=eth0 / wan=eth1**；GFC OEM 改为 **wan=首块 / lan=末块**，并同步 `GFC_WAN_IFACE`。  
 5. 固件工作 **不擅自改** nft/unbound/sing-box 架构契约。  
-6. **OpenWrt `tc-tiny` 不把 `tc` 直接装进 PATH 文件树**：只装 `/usr/libexec/tc-tiny`，`/sbin/tc` 靠 **ALTERNATIVES**。验收要查 `tc-tiny` 包 **或** `/usr/libexec/tc-tiny`，不能只看 `which tc` 失败就断定「没编进镜像」——但 r12 起构建必须两者之一在 ORIG。
+6. **OpenWrt `tc-tiny` 不把 `tc` 直接装进 PATH 文件树**：只装 `/usr/libexec/tc-tiny`，`/sbin/tc` 靠 **ALTERNATIVES**。验收要查 `tc-tiny` 包 **或** `/usr/libexec/tc-tiny`，不能只看 `which tc` 失败就断定「没编进镜像」——但 r12 起构建必须两者之一在 ORIG。  
+7. **`resize2fs` 是独立 OpenWrt 包**（现场 `opkg install resize2fs`），**不在** `e2fsprogs` 内；镜像须 `CONFIG_PACKAGE_resize2fs=y`。
 
 ---
 
@@ -82,25 +92,26 @@
 
 | 项 | 状态 |
 |----|------|
-| **r12 镜像重建 + 刷机完整 E2E（含 tc）** | ⚠️ **当前卡点** |
+| **r13 镜像重建 + 大盘刷机验收扩容** | ⚠️ **当前卡点** |
+| **r12 镜像重建 + 刷机完整 E2E（含 tc）** | ⚠️ 并入 r13 一起验 |
 | 控制面 TID / 设备名修复 | ⚠️ 须单独部署 control-plane + web-ui（非固件） |
 | P1 dist/vmdk 发布打包 | ❌ 可选未做 |
 
-**一句话：** 源码已到 r12（强制 tc）；**下一优先：构建机编出 r12 → 刷机按 E2E 清单验收（尤其 tc）。**
+**一句话：** 源码已到 r13（强制 tc + 首启扩盘）；**下一优先：构建机编出 r13 → 刷大于镜像的盘，验收 `df -h /` 与 tc。**
 
 ---
 
 ## 4. 下一步（严格顺序）
 
-### P0 — 重建并刷 r12
+### P0 — 重建并刷 r13
 
-见 [`BUILD-FIRMWARE.md`](BUILD-FIRMWARE.md) §3–§5。期望 manifest：`gfc-client - 1.1.0-r12`，且含 `tc-tiny`。
+见 [`BUILD-FIRMWARE.md`](BUILD-FIRMWARE.md) §3–§5。期望 manifest：`gfc-client - 1.1.0-r13`，且含 `tc-tiny`、`resize2fs`、`parted`、`partx`。
 
 ### P1 — E2E 清单（刷机后）
 
 | # | 检查 | 期望 |
 |---|------|------|
-| 1 | `opkg list-installed \| grep gfc-client` | `1.1.0-r12` |
+| 1 | `opkg list-installed \| grep gfc-client` | `1.1.0-r13` |
 | 2 | `uci get network.wan.device` | 首块（如 `eth0`） |
 | 3 | `br-lan` ports | 末块（如 `eth1`） |
 | 4 | LAN DHCP | 无需手动 restart dnsmasq |
@@ -110,6 +121,7 @@
 | 8 | 激活后 | `gfctun` 存在；**仅一条** `fwmark 0x2023 lookup 2022` |
 | 9 | SSH | 端口 **212**；密码 **`Wgh@125434`** |
 | 10 | tc | `opkg list-installed \| grep tc-tiny`；`ls -l /sbin/tc /usr/libexec/tc-tiny`；`command -v tc` 或直接跑 libexec |
+| 11 | 扩容 | `df -h /` ≈ 物理盘；`cat /tmp/gfc-expand-rootfs.log`；`opkg list-installed \| grep -E 'resize2fs|parted|partx'` |
 
 ### P2 — 可选发布
 
@@ -142,6 +154,7 @@
 | merge 只删 `CONFIG_*=` 留 `# … is not set` | **r12** 同时 scrub；verify 硬失败 |
 | `verify_dotconfig` 用 `grep -q && die` | **`set -e` 下未匹配会静默退出**；必须用 `if grep; then die; fi` |
 | 只验 gfc、不验 tc | **r12** manifest/ORIG 必须有 tc-tiny |
+| 只选 `e2fsprogs` 期望有 `resize2fs` | **错**；须 **`CONFIG_PACKAGE_resize2fs=y`**（独立包） |
 | `opkg install ip-full` 当 tc 回退 | **错**；ip-full 不含 tc |
 
 ### 5.3 rootfs / 镜像 / 打包
@@ -191,6 +204,7 @@ gfc-client/deploy/immortalwrt/
   config/gfc-package-index.txt          # 索引清单
   package/Makefile                      # PKG 1.1.0-r12；DEPENDS 空
   package/files/etc/uci-defaults/
+    96-gfc-expand-rootfs
     97-gfc-oem-root-password
     98-gfc-network-ports
     99-gfc-firstboot

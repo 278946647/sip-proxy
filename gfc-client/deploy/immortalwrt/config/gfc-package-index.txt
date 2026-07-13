@@ -30,3 +30,8 @@ wget-ssl
 tcpdump
 iftop
 bmon
+#
+# first-boot rootfs expand (base tree — resize2fs is NOT part of e2fsprogs)
+resize2fs
+parted
+partx

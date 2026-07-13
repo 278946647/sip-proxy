@@ -11,6 +11,8 @@ BASE_TREE_PACKAGES=(
   ca-bundle ip-full dnsmasq-full kmod-tun kmod-nft-core
   nftables-json nftables-nojson
   tc-tiny kmod-sched-core kmod-ifb
+  # resize2fs is a separate OpenWrt package (not e2fsprogs)
+  resize2fs parted partx
 )
 
 # GFC src-link feed

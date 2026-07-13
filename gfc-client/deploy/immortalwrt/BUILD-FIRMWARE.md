@@ -2,8 +2,8 @@
 
 > **状态 / 卡点 / 踩坑：** [`FIRMWARE-BUILD-HANDOFF.md`](FIRMWARE-BUILD-HANDOFF.md)  
 > **Cursor 规则：** [`.cursor/rules/gfc-firmware-build.mdc`](../../../.cursor/rules/gfc-firmware-build.mdc)  
-> **包版本（源码）：** `gfc-client` **`1.1.0-r12`**（以 `package/Makefile` 的 `PKG_RELEASE` 与构建机 manifest 为准）  
-> **最后更新：** 2026-07-12
+> **包版本（源码）：** `gfc-client` **`1.1.0-r13`**（以 `package/Makefile` 的 `PKG_RELEASE` 与构建机 manifest 为准）  
+> **最后更新：** 2026-07-13
 
 本手册面向**构建机操作人员**：按目录、命令、模块、验收步骤操作即可产出可刷盘镜像。
 
@@ -74,28 +74,32 @@ bash "$GFC_REPO/deploy/immortalwrt/scripts/rebuild-gfc-image.sh"
 # 1) manifest 含 GFC（唯一进镜像成功标准）
 grep -i gfc "$IMT_SRC/bin/targets/x86/64/"*.manifest
 # 期望类似:
-#   gfc-client - 1.1.0-r12
+#   gfc-client - 1.1.0-r13
 #   luci-app-gfc - ...
 
-# 2) 关键选包进镜像（r12：缺 tc-tiny 则 rebuild 应已失败）
-grep -E 'tc-tiny|kmod-sched-core|kmod-ifb|libcap-bin|nftables-json' \
+# 2) 关键选包进镜像（r12：tc；r13：resize2fs/parted/partx）
+grep -E 'tc-tiny|kmod-sched-core|kmod-ifb|libcap-bin|nftables-json|resize2fs|parted|partx' \
   "$IMT_SRC/bin/targets/x86/64/"*.manifest
 # ORIG 二进制（tc-tiny 本体在 libexec；/sbin/tc 为 ALTERNATIVES）
 ORIG="$IMT_SRC/build_dir/target-x86_64_musl/root.orig-x86"
 ls -la "$ORIG/sbin/tc" "$ORIG/usr/libexec/tc-tiny" 2>/dev/null || true
+ls -la "$ORIG/usr/sbin/resize2fs" "$ORIG/sbin/resize2fs" 2>/dev/null || true
 
 # 3) ORIG 首启/热插拔
+test -f "$ORIG/etc/uci-defaults/96-gfc-expand-rootfs"
 test -f "$ORIG/etc/uci-defaults/99-gfc-firstboot"
 test -f "$ORIG/etc/uci-defaults/98-gfc-network-ports"
 test -f "$ORIG/etc/uci-defaults/97-gfc-oem-root-password"
 test -f "$ORIG/etc/hotplug.d/net/99-gfc-tun"
 test -f "$ORIG/etc/hotplug.d/iface/99-gfc-dnsmasq"
+# expand 工具（resize2fs 是独立包，不在 e2fsprogs 内）
+test -x "$ORIG/usr/sbin/resize2fs" -o -x "$ORIG/sbin/resize2fs"
 
 # 4) 最新镜像
 ls -lt "$IMT_SRC/bin/targets/x86/64/"*ext4*combined*efi*.img.gz | head -3
 ```
 
-**禁止：** 只看到 ipk 就宣布成功；只查 `root-x86` 不查 `root.orig-x86`；只 `command -v tc` 不查 `/usr/libexec/tc-tiny`。
+**禁止：** 只看到 ipk 就宣布成功；只查 `root-x86` 不查 `root.orig-x86`；只 `command -v tc` 不查 `/usr/libexec/tc-tiny`；只选 `e2fsprogs` 期望有 `resize2fs`。
 
 ---
 
@@ -106,7 +110,7 @@ ls -lt "$IMT_SRC/bin/targets/x86/64/"*ext4*combined*efi*.img.gz | head -3
 
 | 检查 | 期望 |
 |------|------|
-| `opkg list-installed \| grep gfc-client` | `1.1.0-r12`（或当前 PKG） |
+| `opkg list-installed \| grep gfc-client` | `1.1.0-r13`（或当前 PKG） |
 | `uci get network.wan.device` | 首块物理网卡（如 eth0） |
 | br-lan `list ports` | 末块物理网卡（如 eth1） |
 | LAN PC DHCP | 无需手动 `dnsmasq restart` |
@@ -116,6 +120,7 @@ ls -lt "$IMT_SRC/bin/targets/x86/64/"*ext4*combined*efi*.img.gz | head -3
 | 激活后 | `gfctun` 存在；**一条** `fwmark 0x2023 lookup 2022` |
 | SSH | 端口 **212**；密码 **`Wgh@125434`** |
 | 限速 | `opkg list-installed \| grep tc-tiny`；`ls /sbin/tc /usr/libexec/tc-tiny` |
+| 磁盘扩容 | `df -h /` 接近物理盘；`cat /tmp/gfc-expand-rootfs.log`；无 `/etc/uci-defaults/96-gfc-expand-rootfs` |
 
 ---
 
@@ -139,6 +144,7 @@ ls -lt "$IMT_SRC/bin/targets/x86/64/"*ext4*combined*efi*.img.gz | head -3
 | `libcap-bin` | sing-box 非 root 能力（setcap） |
 | `ip-full` | 策略路由等 |
 | `tc-tiny` + `kmod-sched-core` + `kmod-ifb` | HTB 带宽限速（**无** `kmod-sched-htb`）；二进制在 `/usr/libexec/tc-tiny`，`/sbin/tc` 为 ALTERNATIVES |
+| `resize2fs` + `parted` + `partx` | 首启把剩余磁盘划入 root（**`resize2fs` 是独立包**，勿只选 `e2fsprogs`） |
 | `ca-bundle`、`curl`、`wget-ssl`、`tcpdump`、`iftop`、`bmon`、`autossh` | 运维 / 远程 |
 | `luci-base` | Web 管理（拥有 `/www/index.html`） |
 
@@ -146,6 +152,7 @@ ls -lt "$IMT_SRC/bin/targets/x86/64/"*ext4*combined*efi*.img.gz | head -3
 
 | 路径 | 作用 |
 |------|------|
+| `/etc/uci-defaults/96-gfc-expand-rootfs` | 首启扩 root 分区 + `resize2fs`（失败不挡后续首启） |
 | `/etc/uci-defaults/97-gfc-oem-root-password` | 出厂 root 密码 |
 | `/etc/uci-defaults/98-gfc-network-ports` | WAN=首块 NIC，LAN=末块 |
 | `/etc/uci-defaults/99-gfc-firstboot` | 总首启：门户、DHCP、SSH 212、routing、服务 enable |

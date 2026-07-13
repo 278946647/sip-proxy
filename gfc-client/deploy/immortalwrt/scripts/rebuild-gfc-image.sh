@@ -109,14 +109,14 @@ verify_dotconfig() {
   cd "$IMT_SRC"
   grep -q '^CONFIG_PACKAGE_gfc-client=y$' .config || die ".config missing CONFIG_PACKAGE_gfc-client=y"
   grep -q '^CONFIG_PACKAGE_luci-app-gfc=y$' .config || die ".config missing CONFIG_PACKAGE_luci-app-gfc=y"
-  for pkg in tc-tiny kmod-sched-core kmod-ifb; do
+  for pkg in tc-tiny kmod-sched-core kmod-ifb resize2fs parted partx; do
     grep -q "^CONFIG_PACKAGE_${pkg}=y$" .config || die ".config missing CONFIG_PACKAGE_${pkg}=y"
     # Must use if/then: under set -e, "grep -q && die" returns 1 when absent and aborts the script.
     if grep -qE "^# CONFIG_PACKAGE_${pkg} is not set$" .config; then
       die ".config still has '# CONFIG_PACKAGE_${pkg} is not set' alongside =y"
     fi
   done
-  log ".config OK: gfc + tc-tiny + kmod-sched-core + kmod-ifb"
+  log ".config OK: gfc + tc + resize2fs/parted/partx"
 }
 
 # tc-tiny installs binary at /usr/libexec/tc-tiny; /sbin/tc is ALTERNATIVES symlink.
@@ -138,6 +138,7 @@ link_image_files_overlay() {
   local src="$GFC_DEPLOY/image/files"
   local dst="$IMT_SRC/files"
   [[ -d "$src/etc/uci-defaults" ]] || die "missing image overlay: $src"
+  [[ -f "$src/etc/uci-defaults/96-gfc-expand-rootfs" ]] || die "missing 96-gfc-expand-rootfs in $src"
   [[ -f "$src/etc/uci-defaults/99-gfc-firstboot" ]] || die "missing 99-gfc-firstboot in $src"
   if [[ -L "$dst" || -e "$dst" ]]; then
     rm -rf "$dst"
@@ -169,6 +170,20 @@ build_packages() {
   make package/kernel/linux/compile -j"$JOBS" V=s 2>/dev/null || true
   find bin -name 'tc-tiny_*.ipk' -print | grep -q . \
     || die "tc-tiny ipk not produced — check CONFIG_PACKAGE_tc-tiny=y and iproute2 build"
+  # Root expand: OpenWrt package is literally "resize2fs" (not e2fsprogs).
+  log "compile resize2fs / parted / partx (first-boot disk expand)"
+  make package/utils/e2fsprogs/compile -j"$JOBS" V=s \
+    || die "e2fsprogs tree compile failed (needed for resize2fs ipk)"
+  make package/utils/parted/compile -j"$JOBS" V=s \
+    || die "parted compile failed"
+  make package/utils/util-linux/compile -j"$JOBS" V=s \
+    || die "util-linux compile failed (needed for partx ipk)"
+  find bin -name 'resize2fs_*.ipk' -print | grep -q . \
+    || die "resize2fs ipk not produced — use CONFIG_PACKAGE_resize2fs=y (not e2fsprogs alone)"
+  find bin -name 'parted_*.ipk' -print | grep -q . \
+    || die "parted ipk not produced"
+  find bin -name 'partx_*.ipk' -print | grep -q . \
+    || die "partx ipk not produced"
 }
 
 ensure_gfc_client_pkginfo() {
@@ -621,6 +636,12 @@ build_image() {
     chmod +x "$ROOTFS_ORIG_DIR/etc/uci-defaults/99-gfc-firstboot"
     log "injected 99-gfc-firstboot into ORIG"
   fi
+  if [[ -f "$GFC_DEPLOY/image/files/etc/uci-defaults/96-gfc-expand-rootfs" ]]; then
+    mkdir -p "$ROOTFS_ORIG_DIR/etc/uci-defaults"
+    cp -a "$GFC_DEPLOY/image/files/etc/uci-defaults/96-gfc-expand-rootfs" \
+      "$ROOTFS_ORIG_DIR/etc/uci-defaults/96-gfc-expand-rootfs"
+    chmod +x "$ROOTFS_ORIG_DIR/etc/uci-defaults/96-gfc-expand-rootfs"
+  fi
   if [[ -f "$GFC_DEPLOY/image/files/etc/uci-defaults/97-gfc-oem-root-password" ]]; then
     mkdir -p "$ROOTFS_ORIG_DIR/etc/uci-defaults"
     cp -a "$GFC_DEPLOY/image/files/etc/uci-defaults/97-gfc-oem-root-password" \
@@ -654,15 +675,21 @@ verify_manifest() {
   grep -i gfc "$manifest" || true
   grep -i gfc-client "$manifest" >/dev/null || die "manifest has no gfc-client"
   grep -i luci-app-gfc "$manifest" >/dev/null || die "manifest has no luci-app-gfc"
-  for pkg in tc-tiny kmod-sched-core kmod-ifb; do
+  for pkg in tc-tiny kmod-sched-core kmod-ifb resize2fs parted partx; do
     grep -qE "^${pkg}( |$)" "$manifest" \
-      || die "manifest missing ${pkg} (bandwidth shaping will fail on device)"
+      || die "manifest missing ${pkg}"
   done
   log "manifest tc/htb lines:"
   grep -E '^(tc-tiny|kmod-sched-core|kmod-ifb) ' "$manifest" || true
+  log "manifest expand lines:"
+  grep -E '^(resize2fs|parted|partx) ' "$manifest" || true
   rootfs_has_tc "$orig" \
     || die "ORIG missing tc binary (/sbin/tc or /usr/libexec/tc-tiny) — package/install did not ship tc-tiny"
   log "ORIG tc: $(ls -la "$orig/sbin/tc" "$orig/usr/libexec/tc-tiny" 2>/dev/null || true)"
+  [[ -x "$orig/usr/sbin/resize2fs" || -x "$orig/sbin/resize2fs" ]] \
+    || die "ORIG missing resize2fs binary — select CONFIG_PACKAGE_resize2fs=y (not e2fsprogs alone)"
+  [[ -f "$orig/etc/uci-defaults/96-gfc-expand-rootfs" ]] \
+    || die "ORIG missing /etc/uci-defaults/96-gfc-expand-rootfs"
   [[ -f "$orig/etc/uci-defaults/99-gfc-firstboot" ]] \
     || die "ORIG missing /etc/uci-defaults/99-gfc-firstboot"
   ls -lh bin/targets/x86/64/*ext4*combined*efi*.img.gz
