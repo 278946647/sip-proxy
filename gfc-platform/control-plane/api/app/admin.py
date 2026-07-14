@@ -31,6 +31,7 @@ from .platform_secrets import (
 )
 from .client_config import encode_platform_bootstrap_code, line_code_fingerprint, refresh_line_code
 from .models import AlertEvent, ClientDevice, FlowStat, Line, Node, OperationLog, PlatformUser, SocksProfile
+from .reality_util import default_reality_config
 from .reverse_ssh import (
     ensure_device_reverse_ports,
     parse_session_targets,
