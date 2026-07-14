@@ -47,5 +47,5 @@ systemctl status gfc-api --no-pager -l | head -3
 systemctl status gfc-web --no-pager -l | head -3
 systemctl status gfc-node --no-pager -l | head -3
 echo ""
-echo "API:  http://<IP>:8080/healthz"
+echo "API:  http://<IP>:8181/healthz"
 echo "Web:  http://<IP>:5173"

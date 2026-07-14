@@ -10,7 +10,7 @@
 管理员浏览器
     │  Web UI :5173（弹窗）
     ▼
-控制面 API :8080
+控制面 API :8181
     │  POST /admin/client-devices/{id}/reverse-ssh/session
     │  WebSocket /admin/ws/webssh/{id}
     │  HTTP    /remote/{id}/cgi-bin/luci/...

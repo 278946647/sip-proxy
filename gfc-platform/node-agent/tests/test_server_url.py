@@ -11,13 +11,13 @@ class ServerUrlTests(unittest.TestCase):
     def test_domain(self) -> None:
         self.assertEqual(
             normalize_server_url("api.example.com"),
-            "http://api.example.com:8080",
+            "http://api.example.com:8181",
         )
 
     def test_ipv4(self) -> None:
         self.assertEqual(
             normalize_server_url("192.168.1.10"),
-            "http://192.168.1.10:8080",
+            "http://192.168.1.10:8181",
         )
 
     def test_full_url(self) -> None:
@@ -28,12 +28,12 @@ class ServerUrlTests(unittest.TestCase):
 
     def test_primary_and_fallback(self) -> None:
         urls = parse_server_url_list(
-            "http://api.example.com:8080",
+            "http://api.example.com:8181",
             "192.168.1.10",
         )
         self.assertEqual(
             urls,
-            ["http://api.example.com:8080", "http://192.168.1.10:8080"],
+            ["http://api.example.com:8181", "http://192.168.1.10:8181"],
         )
 
     def test_env_resolution(self) -> None:
@@ -44,8 +44,8 @@ class ServerUrlTests(unittest.TestCase):
         finally:
             os.environ.pop("SERVER_URL", None)
             os.environ.pop("SERVER_URL_FALLBACK", None)
-        self.assertEqual(urls[0], "http://api.example.com:8080")
-        self.assertEqual(urls[1], "http://10.0.0.5:8080")
+        self.assertEqual(urls[0], "http://api.example.com:8181")
+        self.assertEqual(urls[1], "http://10.0.0.5:8181")
 
 
 if __name__ == "__main__":

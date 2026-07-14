@@ -2,7 +2,7 @@
 # End-to-end smoke test against a running control plane API.
 set -euo pipefail
 
-API="${API:-http://127.0.0.1:8080}"
+API="${API:-http://127.0.0.1:8181}"
 BOOTSTRAP="${BOOTSTRAP:-demo-bootstrap}"
 
 echo "== healthz =="

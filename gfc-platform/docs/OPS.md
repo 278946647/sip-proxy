@@ -9,7 +9,7 @@
 ```
                     ┌─────────────────────────────────┐
                     │     控制平台 (Control Plane)      │
-                    │  Web UI :5173  +  API :8080      │
+                    │  Web UI :5173  +  API :8181      │
                     │  SQLite (gfc.db)                 │
                     │  节点注册 / 配置下发 / 告警 / SOCKS 探测 │
                     └───────────────┬─────────────────┘
@@ -106,7 +106,7 @@ sudo systemctl restart gfc-node-agent gfc-sing-box
 
 ### 2.3 Docker Compose
 
-`web` 服务为 **Vite 生产构建 + nginx**（对外仍映射 `5173` → 容器 `80`），`/api` 由 nginx 反代到 `api:8080`。
+`web` 服务为 **Vite 生产构建 + nginx**（对外仍映射 `5173` → 容器 `80`），`/api` 由 nginx 反代到 `api:8181`。
 
 `docker-compose.yml` 中 `api` / `web` 使用 `json-file` 驱动：
 
@@ -136,7 +136,7 @@ sudo gfc-logs all-fn                # 转发节点全部文件日志
 
 | 检查项 | 命令 / 位置 |
 |--------|-------------|
-| 控制面 API | `curl -fsS http://<CP>:8080/healthz` |
+| 控制面 API | `curl -fsS http://<CP>:8181/healthz` |
 | 仪表盘 | 节点在线数、SOCKS 在线数、告警数 |
 | 转发节点服务 | `systemctl is-active gfc-node-agent gfc-sing-box` |
 | OpenVPN（如启用） | `systemctl is-active openvpn@gfc-backbone` |
@@ -168,7 +168,7 @@ flowchart TD
 # 转发节点
 systemctl status gfc-node-agent --no-pager
 gfc-logs agent -n 100
-curl -fsS http://<控制面IP>:8080/healthz
+curl -fsS http://<控制面IP>:8181/healthz
 
 # 控制面
 gfc-logs api -n 100 | tail -50

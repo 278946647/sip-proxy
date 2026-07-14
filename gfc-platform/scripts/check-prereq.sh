@@ -4,7 +4,7 @@ sed -i 's/\r$//' "$0" 2>/dev/null || true
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-API="${API:-${SERVER_URL:-http://127.0.0.1:8080}}"
+API="${API:-${SERVER_URL:-http://127.0.0.1:8181}}"
 BOOTSTRAP="${BOOTSTRAP:-${BOOTSTRAP_TOKEN:-demo-bootstrap}}"
 
 echo "==> GFC prerequisite check"

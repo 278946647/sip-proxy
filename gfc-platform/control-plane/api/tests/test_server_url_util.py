@@ -16,24 +16,24 @@ class ServerUrlUtilTests(unittest.TestCase):
     def test_line_code_payload_urls(self) -> None:
         urls = urls_from_activation_payload(
             {
-                "server": "http://api.example.com:8080",
-                "serverFallback": "http://192.168.1.10:8080",
+                "server": "http://api.example.com:8181",
+                "serverFallback": "http://192.168.1.10:8181",
             }
         )
         self.assertEqual(len(urls), 2)
 
     def test_public_urls_from_ip_fallback(self) -> None:
         urls = public_server_urls_from_settings(
-            "http://api.example.com:8080",
+            "http://api.example.com:8181",
             fallback_ip="192.168.1.10",
         )
-        self.assertEqual(urls[1], "http://192.168.1.10:8080")
+        self.assertEqual(urls[1], "http://192.168.1.10:8181")
 
     def test_csv_list(self) -> None:
         urls = parse_server_url_list("api.example.com, 10.0.0.1")
         self.assertEqual(
             urls,
-            ["http://api.example.com:8080", "http://10.0.0.1:8080"],
+            ["http://api.example.com:8181", "http://10.0.0.1:8181"],
         )
 
 

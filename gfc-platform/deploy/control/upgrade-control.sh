@@ -37,10 +37,16 @@ echo "==> build api + web"
 echo "==> safe replace all containers (gfc_compose_safe_up)"
 gfc_compose_safe_up "$ROOT" 0
 install -m 755 "$ROOT/deploy/control/gfc-compose.sh" /usr/local/bin/gfc-compose 2>/dev/null || true
-gfc_compose_wait_api 8080 30 || true
+# Prefer .env port if present (default API port is 8181)
+if [[ -f "$ROOT/.env" ]]; then
+  # shellcheck disable=SC1091
+  set -a && source "$ROOT/.env" && set +a
+fi
+API_WAIT_PORT="${GFC_PUBLIC_PORT:-${API_PORT:-8181}}"
+gfc_compose_wait_api "$API_WAIT_PORT" 30 || true
 
 echo ""
 "${COMPOSE[@]}" ps
 echo ""
 echo "Web: http://$(hostname -I | awk '{print $1}'):5173"
-echo "Verify: curl -fsS http://127.0.0.1:8080/healthz"
+echo "Verify: curl -fsS http://127.0.0.1:${API_WAIT_PORT}/healthz"

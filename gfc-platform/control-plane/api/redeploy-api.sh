@@ -18,9 +18,9 @@ bash "$COMPOSE_WRAPPER" up -d api
 
 echo "==> Wait for API"
 for i in $(seq 1 20); do
-  if curl -fsS --connect-timeout 2 http://127.0.0.1:8080/health >/dev/null 2>&1; then
+  if curl -fsS --connect-timeout 2 http://127.0.0.1:8181/health >/dev/null 2>&1; then
     echo "    OK /health"
-    curl -s http://127.0.0.1:8080/health
+    curl -s http://127.0.0.1:8181/health
     echo ""
     exit 0
   fi

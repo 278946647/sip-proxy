@@ -13,7 +13,7 @@ from .server_url_util import public_server_urls
 
 def public_server_url() -> str:
     urls = public_server_urls()
-    return urls[0] if urls else "http://127.0.0.1:8080"
+    return urls[0] if urls else "http://127.0.0.1:8181"
 
 
 def build_line_code_payload(line: Line, node: Node) -> dict[str, Any]:

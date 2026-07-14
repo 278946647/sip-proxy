@@ -56,12 +56,12 @@ sudo bash deploy/node/install.sh
 
 ```bash
 cd control-plane/api && python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt && uvicorn app.main:app --reload --port 8080
+pip install -r requirements.txt && uvicorn app.main:app --reload --port 8181
 
 cd web-ui && npm install && npm run dev
 
 cd node-agent && pip install -r requirements.txt
-python -m node_agent --server http://localhost:8080 \
+python -m node_agent --server http://localhost:8181 \
   --bootstrap-token demo-bootstrap --node-name demo --region ap-southeast-1
 ```
 

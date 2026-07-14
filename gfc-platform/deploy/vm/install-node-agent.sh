@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SERVER_URL="${SERVER_URL:-http://control-plane:8080}"
+SERVER_URL="${SERVER_URL:-http://control-plane:8181}"
 BOOTSTRAP_TOKEN="${BOOTSTRAP_TOKEN:-demo-bootstrap}"
 NODE_NAME="${NODE_NAME:-$(hostname)}"
 REGION="${REGION:-unknown}"

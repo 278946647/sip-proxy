@@ -17,7 +17,7 @@ spec:
           image: gfc/node-agent:0.1.0
           env:
             - name: SERVER_URL
-              value: "http://gfc-control-plane-api:8080"
+              value: "http://gfc-control-plane-api:8181"
             - name: BOOTSTRAP_TOKEN
               value: "demo-bootstrap"
             - name: NODE_NAME

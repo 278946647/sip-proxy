@@ -8,7 +8,7 @@
 | 控制平台默认路径 | `/opt/gfc` |
 | 转发节点仓库路径 | `/var/socks`（安装后 Agent 在 `/opt/gfc-node`） |
 | Web 端口 | `5173` |
-| API 端口 | `8080` |
+| API 端口 | `8181` |
 | 日常跟踪分支 | **`main`**（勿长期 `git checkout` 停在 tag 上升级） |
 
 ---
@@ -97,7 +97,7 @@ sudo bash deploy/control/install-docker.sh --config deploy/control/install.env -
 
 ```bash
 cd /opt/gfc
-curl -fsS http://127.0.0.1:8080/healthz
+curl -fsS http://127.0.0.1:8181/healthz
 docker-compose ps
 docker-compose logs api 2>&1 | grep "GFC] Security"   # 首次安装可见自动生成的密钥提示
 ```

@@ -9,7 +9,7 @@ if [[ -f "${ROOT}/gfc.env" ]]; then
   set +a
 fi
 
-SERVER_URL="${SERVER_URL:-http://127.0.0.1:8080}"
+SERVER_URL="${SERVER_URL:-http://127.0.0.1:8181}"
 BOOTSTRAP_TOKEN="${BOOTSTRAP_TOKEN:-demo-bootstrap}"
 NODE_NAME="${NODE_NAME:-$(hostname)}"
 REGION="${REGION:-unknown}"

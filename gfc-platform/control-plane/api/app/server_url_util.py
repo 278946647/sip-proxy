@@ -7,7 +7,7 @@ import re
 from typing import Any
 from urllib.parse import urlparse
 
-DEFAULT_API_PORT = 8080
+DEFAULT_API_PORT = 8181
 DEFAULT_SCHEME = "http"
 
 

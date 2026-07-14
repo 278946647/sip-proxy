@@ -20,7 +20,7 @@ set -euo pipefail
 _SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 GFC_ROOT="${GFC_ROOT:-/opt/gfc-node}"
 REPO_SRC="${REPO_SRC:-$(cd "$_SCRIPT_DIR/../.." && pwd)}"
-SERVER_URL="${SERVER_URL:-http://127.0.0.1:8080}"
+SERVER_URL="${SERVER_URL:-http://127.0.0.1:8181}"
 SERVER_URL_FALLBACK="${SERVER_URL_FALLBACK:-}"
 BOOTSTRAP_TOKEN="${BOOTSTRAP_TOKEN:-demo-bootstrap}"
 NODE_NAME="${NODE_NAME:-$(hostname -s)}"
@@ -30,7 +30,7 @@ POLL_SECONDS="${POLL_SECONDS:-10}"
 
 # Allow install.sh to pre-write /etc/gfc-node/gfc.env; load if env not exported.
 if [[ -f /etc/gfc-node/gfc.env && -z "${SERVER_URL_SET:-}" ]]; then
-  if [[ "$SERVER_URL" == "http://127.0.0.1:8080" ]]; then
+  if [[ "$SERVER_URL" == "http://127.0.0.1:8181" ]]; then
     set -a
     # shellcheck disable=SC1091
     source /etc/gfc-node/gfc.env

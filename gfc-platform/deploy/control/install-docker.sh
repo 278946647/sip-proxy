@@ -105,7 +105,7 @@ elif [[ -f deploy/control/install.env && $NON_INTERACTIVE -eq 0 && -t 0 ]]; then
   fi
 elif [[ -n "${GFC_PUBLIC_URL:-}" || -n "${CONTROL_PLANE_HOST:-}" ]]; then
   if [[ -z "${GFC_PUBLIC_URL:-}" && -n "${CONTROL_PLANE_HOST:-}" ]]; then
-    GFC_PUBLIC_URL=$(gfc_cp_normalize_url "$CONTROL_PLANE_HOST" "${API_PORT:-8080}")
+    GFC_PUBLIC_URL=$(gfc_cp_normalize_url "$CONTROL_PLANE_HOST" "${API_PORT:-8181}")
     export GFC_PUBLIC_URL
   fi
 else
@@ -137,7 +137,7 @@ install -m 755 "$REPO_ROOT/deploy/control/gfc-compose.sh" /usr/local/bin/gfc-com
 cd "$REPO_ROOT"
 echo "==> Building and starting control plane (gfc-compose safe up)..."
 gfc_compose_safe_up "$REPO_ROOT" 1
-gfc_compose_wait_api "${GFC_PUBLIC_PORT:-8080}" 30 || true
+gfc_compose_wait_api "${GFC_PUBLIC_PORT:-8181}" 30 || true
 
 echo ""
 echo "==> Done"
@@ -146,11 +146,11 @@ gfc_compose_cmd
 echo ""
 local_ip=$(gfc_cp_default_ip)
 echo "API:  ${GFC_PUBLIC_URL}/healthz"
-echo "      http://${local_ip}:${GFC_PUBLIC_PORT:-8080}/healthz （本机）"
+echo "      http://${local_ip}:${GFC_PUBLIC_PORT:-8181}/healthz （本机）"
 echo "Web:  http://${local_ip}:5173"
 echo ""
 echo "Verify:"
-echo "  curl -fsS http://127.0.0.1:${GFC_PUBLIC_PORT:-8080}/healthz"
+echo "  curl -fsS http://127.0.0.1:${GFC_PUBLIC_PORT:-8181}/healthz"
 echo ""
 echo "==> 初始管理员账号（首次安装）"
 echo "  用户名: admin"

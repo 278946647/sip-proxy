@@ -7,7 +7,7 @@ gfc_cp_default_ip() {
 
 gfc_cp_normalize_url() {
   local input=${1:-}
-  local port=${2:-8080}
+  local port=${2:-8181}
   local scheme=${3:-http}
   input=$(echo "$input" | tr -d '[:space:]')
   [[ -n "$input" ]] || return 1
@@ -56,7 +56,7 @@ gfc_cp_collect_install_config_interactive() {
 
   local host port host_fb scheme use_https
   gfc_cp_prompt_default host "控制平台对外地址（IP 或域名）" "$default_ip"
-  gfc_cp_prompt_default port "API 端口" "8080"
+  gfc_cp_prompt_default port "API 端口" "8181"
   read -r -p "备用对外地址（IP 或域名，可留空）: " host_fb
   read -r -p "对外 API 使用 HTTPS？[y/N]: " use_https
   if [[ "$use_https" =~ ^[Yy]$ ]]; then
@@ -96,14 +96,14 @@ gfc_cp_load_install_env_file() {
   source "$file"
   set +a
   if [[ -z "${GFC_PUBLIC_URL:-}" && -n "${CONTROL_PLANE_HOST:-}" ]]; then
-    GFC_PUBLIC_URL=$(gfc_cp_normalize_url "$CONTROL_PLANE_HOST" "${API_PORT:-8080}" "${GFC_PUBLIC_SCHEME:-http}")
+    GFC_PUBLIC_URL=$(gfc_cp_normalize_url "$CONTROL_PLANE_HOST" "${API_PORT:-8181}" "${GFC_PUBLIC_SCHEME:-http}")
     export GFC_PUBLIC_URL
   fi
   if [[ -z "${GFC_PUBLIC_URL_FALLBACK:-}" && -n "${CONTROL_PLANE_HOST_FALLBACK:-}" ]]; then
-    GFC_PUBLIC_URL_FALLBACK=$(gfc_cp_normalize_url "$CONTROL_PLANE_HOST_FALLBACK" "${API_PORT:-8080}" "${GFC_PUBLIC_SCHEME:-http}")
+    GFC_PUBLIC_URL_FALLBACK=$(gfc_cp_normalize_url "$CONTROL_PLANE_HOST_FALLBACK" "${API_PORT:-8181}" "${GFC_PUBLIC_SCHEME:-http}")
     export GFC_PUBLIC_URL_FALLBACK
   fi
-  export GFC_PUBLIC_PORT="${GFC_PUBLIC_PORT:-8080}"
+  export GFC_PUBLIC_PORT="${GFC_PUBLIC_PORT:-8181}"
   return 0
 }
 
@@ -115,10 +115,10 @@ gfc_cp_validate_install_config() {
   fi
   if command -v curl &>/dev/null; then
     echo "==> 检查本机 API（安装后再次验证）"
-    if curl -fsS --connect-timeout 3 "http://127.0.0.1:${API_PORT:-8080}/healthz" >/dev/null 2>&1; then
+    if curl -fsS --connect-timeout 3 "http://127.0.0.1:${API_PORT:-8181}/healthz" >/dev/null 2>&1; then
       echo "    OK 本机 API 已在运行"
     else
-      echo "    （首次安装：构建启动后将监听 ${API_PORT:-8080}）"
+      echo "    （首次安装：构建启动后将监听 ${API_PORT:-8181}）"
     fi
   fi
   return "$err"
@@ -135,7 +135,7 @@ gfc_cp_write_env_file() {
 GFC_PUBLIC_URL=${GFC_PUBLIC_URL}
 GFC_PUBLIC_URL_FALLBACK=${GFC_PUBLIC_URL_FALLBACK:-}
 GFC_PUBLIC_IP=${GFC_PUBLIC_IP:-}
-GFC_PUBLIC_PORT=${GFC_PUBLIC_PORT:-8080}
+GFC_PUBLIC_PORT=${GFC_PUBLIC_PORT:-8181}
 EOF
   chmod 600 "$env_file"
 
@@ -143,11 +143,11 @@ EOF
 # GFC control plane install parameters backup
 CONTROL_PLANE_HOST=${CONTROL_PLANE_HOST:-}
 CONTROL_PLANE_HOST_FALLBACK=${CONTROL_PLANE_HOST_FALLBACK:-}
-API_PORT=${API_PORT:-8080}
+API_PORT=${API_PORT:-8181}
 GFC_PUBLIC_URL=${GFC_PUBLIC_URL}
 GFC_PUBLIC_URL_FALLBACK=${GFC_PUBLIC_URL_FALLBACK:-}
 GFC_PUBLIC_IP=${GFC_PUBLIC_IP:-}
-GFC_PUBLIC_PORT=${GFC_PUBLIC_PORT:-8080}
+GFC_PUBLIC_PORT=${GFC_PUBLIC_PORT:-8181}
 EOF
   chmod 600 "$install_env"
   echo "==> 已写入 $env_file"

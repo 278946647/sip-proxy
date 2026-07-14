@@ -7,7 +7,7 @@
 节点 Agent 已上线但管理页 500，多为 **API 读取 SQLite 时间字段**（`last_seen_at` naive vs UTC）导致。请把最新 `control-plane/api` 同步到控制平面主机并 **重启 API**：
 
 ```bash
-curl -fsS http://127.0.0.1:8080/admin/nodes | head
+curl -fsS http://127.0.0.1:8181/admin/nodes | head
 # 应返回 JSON 数组，而不是 Internal Server Error
 ```
 
@@ -27,7 +27,7 @@ curl -fsS http://127.0.0.1:8080/admin/nodes | head
 
 ```bash
 chmod +x /var/socks/scripts/verify-loop.sh
-API=http://127.0.0.1:8080 /var/socks/scripts/verify-loop.sh
+API=http://127.0.0.1:8181 /var/socks/scripts/verify-loop.sh
 ```
 
 ## 3. 部署 NodeAgent（转发节点）

@@ -8,7 +8,7 @@ Type=simple
 User=root
 WorkingDirectory=/var/socks/control-plane/api
 Environment=PATH=/var/socks/control-plane/api/.venv/bin
-ExecStart=/var/socks/control-plane/api/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8080
+ExecStart=/var/socks/control-plane/api/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8181
 Restart=always
 RestartSec=3
 StandardOutput=append:/var/socks/logs/gfc-api.log

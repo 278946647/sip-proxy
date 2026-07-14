@@ -107,7 +107,7 @@ gfc_compose_safe_up() {
 }
 
 gfc_compose_wait_api() {
-  local port=${1:-8080}
+  local port=${1:-8181}
   local tries=${2:-30}
   echo "==> 等待 API healthz"
   for _ in $(seq 1 "$tries"); do

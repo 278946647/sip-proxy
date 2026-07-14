@@ -173,7 +173,7 @@ def singbox_check() -> bool:
 
 def verify_node() -> None:
     env = load_env()
-    api = env.get("SERVER_URL") or env.get("API") or "http://127.0.0.1:8080"
+    api = env.get("SERVER_URL") or env.get("API") or "http://127.0.0.1:8181"
     node_name = env.get("NODE_NAME", "")
 
     print("==> Verify forward node")

@@ -58,13 +58,13 @@ sudo bash deploy/node/reconfigure-node.sh --force-reapply
 
 ```bash
 ./scripts/check-prereq.sh
-API=http://<控制平台IP>:8080 ./scripts/verify-loop.sh
+API=http://<控制平台IP>:8181 ./scripts/verify-loop.sh
 ```
 
 ## 兼容：环境变量
 
 ```bash
-sudo SERVER_URL=http://<IP>:8080 NODE_NAME=MY-Node-01 GFC_TPROXY_IFACE=ens224 \
+sudo SERVER_URL=http://<IP>:8181 NODE_NAME=MY-Node-01 GFC_TPROXY_IFACE=ens224 \
   bash deploy/node/install.sh --yes
 ```
 

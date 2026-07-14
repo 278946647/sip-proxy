@@ -8,7 +8,7 @@
 #   sudo bash deploy/node/install.sh --config deploy/node/install.env
 #
 # 环境变量方式（兼容旧用法）:
-#   sudo SERVER_URL=http://1.2.3.4:8080 GFC_TPROXY_IFACE=ens224 bash deploy/node/install.sh --yes
+#   sudo SERVER_URL=http://1.2.3.4:8181 GFC_TPROXY_IFACE=ens224 bash deploy/node/install.sh --yes
 #
 # Windows 拷贝后若报 $'\r' 错误，先: sudo python3 deploy/node/fix-node-crlf.py
 _self="${BASH_SOURCE[0]:-$0}"

@@ -23,7 +23,7 @@ gfc_iface_exists() {
 # Build http(s)://host:port from bare IP, domain, host:port, or full URL.
 gfc_normalize_control_plane_url() {
   local input=${1:-}
-  local port=${2:-8080}
+  local port=${2:-8181}
   local scheme=${3:-http}
   input=$(echo "$input" | tr -d '[:space:]')
   [[ -n "$input" ]] || return 1
@@ -48,12 +48,12 @@ gfc_normalize_control_plane_url() {
 
 gfc_build_server_url() {
   if [[ -n "${SERVER_URL:-}" ]]; then
-    SERVER_URL=$(gfc_normalize_control_plane_url "$SERVER_URL" "${API_PORT:-8080}" || echo "$SERVER_URL")
+    SERVER_URL=$(gfc_normalize_control_plane_url "$SERVER_URL" "${API_PORT:-8181}" || echo "$SERVER_URL")
     export SERVER_URL
     return 0
   fi
   local host=${CONTROL_PLANE_HOST:-${CONTROL_PLANE_IP:-}}
-  local port=${API_PORT:-8080}
+  local port=${API_PORT:-8181}
   [[ -n "$host" ]] || return 1
   SERVER_URL=$(gfc_normalize_control_plane_url "$host" "$port")
   export SERVER_URL
@@ -61,12 +61,12 @@ gfc_build_server_url() {
 
 gfc_build_server_url_fallback() {
   if [[ -n "${SERVER_URL_FALLBACK:-}" ]]; then
-    SERVER_URL_FALLBACK=$(gfc_normalize_control_plane_url "$SERVER_URL_FALLBACK" "${API_PORT:-8080}" || echo "$SERVER_URL_FALLBACK")
+    SERVER_URL_FALLBACK=$(gfc_normalize_control_plane_url "$SERVER_URL_FALLBACK" "${API_PORT:-8181}" || echo "$SERVER_URL_FALLBACK")
     export SERVER_URL_FALLBACK
     return 0
   fi
   local host=${CONTROL_PLANE_HOST_FALLBACK:-${CONTROL_PLANE_IP_FALLBACK:-}}
-  local port=${API_PORT:-8080}
+  local port=${API_PORT:-8181}
   [[ -n "$host" ]] || return 0
   SERVER_URL_FALLBACK=$(gfc_normalize_control_plane_url "$host" "$port")
   export SERVER_URL_FALLBACK
@@ -112,14 +112,14 @@ gfc_collect_install_config_interactive() {
   echo ""
   echo "==> 转发节点安装参数（直接回车采用默认值）"
   echo "    控制平台地址支持 IP 或域名，例如 192.168.1.10 / api.example.com"
-  echo "    也可填写完整 URL，例如 https://api.example.com:8080"
+  echo "    也可填写完整 URL，例如 https://api.example.com:8181"
   echo "    说明: 以太网模式用「TPROXY 入向网卡」；日后改 OpenVPN 时控制台会下发 tun0，"
   echo "          自动覆盖网卡设置，开局填的物理网卡不会影响 VPN 模式切换。"
   echo ""
 
   local host port host_fb token name region iface
   gfc_prompt_default host "控制平台地址（IP 或域名）" "127.0.0.1"
-  gfc_prompt_default port "控制平台 API 端口" "8080"
+  gfc_prompt_default port "控制平台 API 端口" "8181"
   read -r -p "备用控制平台地址（IP 或域名，可留空）: " host_fb
   echo "    Bootstrap Token 默认 demo-bootstrap（控制平台未自定义时直接回车）"
   gfc_prompt_default token "Bootstrap Token" "demo-bootstrap"
@@ -232,7 +232,7 @@ CONTROL_PLANE_HOST=${CONTROL_PLANE_HOST:-${CONTROL_PLANE_IP:-}}
 CONTROL_PLANE_HOST_FALLBACK=${CONTROL_PLANE_HOST_FALLBACK:-${CONTROL_PLANE_IP_FALLBACK:-}}
 CONTROL_PLANE_IP=${CONTROL_PLANE_IP:-}
 CONTROL_PLANE_IP_FALLBACK=${CONTROL_PLANE_IP_FALLBACK:-}
-API_PORT=${API_PORT:-8080}
+API_PORT=${API_PORT:-8181}
 BOOTSTRAP_TOKEN=${BOOTSTRAP_TOKEN}
 NODE_NAME=${NODE_NAME}
 REGION=${REGION}

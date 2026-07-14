@@ -23,7 +23,7 @@ if [[ -f /etc/gfc-node/gfc.env ]]; then
   source /etc/gfc-node/gfc.env
   set +a
 fi
-API="${API:-${SERVER_URL:-http://127.0.0.1:8080}}"
+API="${API:-${SERVER_URL:-http://127.0.0.1:8181}}"
 NODE_NAME="${NODE_NAME:-}"
 STATE_FILE="${STATE_FILE:-$GFC_ROOT/node-agent/state/node_state.json}"
 BUNDLE="${CONFIG_DIR:-$GFC_ROOT/node-agent/state/dataplane}/config_bundle.json"
