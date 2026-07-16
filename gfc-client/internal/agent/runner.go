@@ -21,6 +21,7 @@ import (
 	"github.com/278946647/sip-proxy/gfc-client/internal/stats"
 	"github.com/278946647/sip-proxy/gfc-client/internal/store"
 	"github.com/278946647/sip-proxy/gfc-client/internal/traffic"
+	"github.com/278946647/sip-proxy/gfc-client/internal/upgrade"
 )
 
 type Runner struct {
@@ -436,6 +437,39 @@ func (r *Runner) applyDeviceCommand(cmd *controlplane.DeviceCommand) map[string]
 			"request_id": cmd.RequestID,
 			"status":     "ok",
 			"action":     cmd.Action,
+		}
+	case "runtime_upgrade":
+		url := strings.TrimSpace(cmd.DownloadURL)
+		if url == "" && cmd.DownloadPath != "" {
+			base := ""
+			if st, err := r.activation.LoadClientState(); err == nil && st != nil {
+				_ = st
+			}
+			servers := r.envServers()
+			if len(servers) > 0 {
+				base = strings.TrimRight(servers[0], "/")
+			}
+			url = base + cmd.DownloadPath
+		}
+		token := ""
+		if st, err := r.activation.LoadClientState(); err == nil && st != nil {
+			token = st.ClientToken
+		}
+		fmt.Printf("runtime upgrade: downloading %s version=%s\n", url, cmd.Version)
+		msg, err := upgrade.DownloadAndApply(url, token, cmd.SHA256, cmd.Filename)
+		status := "ok"
+		if err != nil {
+			status = "failed"
+			msg = err.Error() + " " + msg
+			fmt.Printf("runtime upgrade failed: %s\n", msg)
+		} else {
+			fmt.Printf("runtime upgrade ok: %s\n", msg)
+		}
+		return map[string]any{
+			"request_id": cmd.RequestID,
+			"status":     status,
+			"action":     cmd.Action,
+			"message":    msg,
 		}
 	default:
 		fmt.Printf("unknown device command: %s\n", cmd.Action)

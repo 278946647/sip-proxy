@@ -134,6 +134,9 @@ def _migrate_sync(sync_conn: Connection) -> None:
         "pending_device_command_json": (
             "ALTER TABLE client_devices ADD COLUMN pending_device_command_json TEXT"
         ),
+        "last_upgrade_json": (
+            "ALTER TABLE client_devices ADD COLUMN last_upgrade_json TEXT"
+        ),
     }
     if _table_exists(sync_conn, "client_devices"):
         existing = _cols(sync_conn, "client_devices")
@@ -170,6 +173,7 @@ def _migrate_sync(sync_conn: Connection) -> None:
                     binding_revoked_at DATETIME,
                     code_cleared_at DATETIME,
                     pending_device_command_json TEXT,
+                    last_upgrade_json TEXT,
                     agent_version VARCHAR(32),
                     last_seen_at DATETIME,
                     last_metrics_json TEXT,
@@ -260,6 +264,28 @@ def _migrate_sync(sync_conn: Connection) -> None:
                     retired_by VARCHAR(64),
                     reclaimed_at DATETIME,
                     UNIQUE (device_key)
+                )
+                """
+            )
+        )
+
+    if not _table_exists(sync_conn, "runtime_artifacts"):
+        sync_conn.execute(
+            text(
+                """
+                CREATE TABLE runtime_artifacts (
+                    id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                    version VARCHAR(64) NOT NULL,
+                    arch VARCHAR(32) NOT NULL,
+                    filename VARCHAR(255) NOT NULL,
+                    sha256 VARCHAR(64) NOT NULL,
+                    size_bytes INTEGER DEFAULT 0,
+                    storage_name VARCHAR(255) NOT NULL,
+                    notes TEXT,
+                    is_enabled BOOLEAN DEFAULT 1,
+                    created_by VARCHAR(64) DEFAULT 'admin',
+                    created_at DATETIME,
+                    UNIQUE (version, arch)
                 )
                 """
             )

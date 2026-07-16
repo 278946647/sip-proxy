@@ -55,6 +55,9 @@ class Settings(BaseSettings):
     client_ports_per_device: int = 2
     reverse_ssh_port_release_cooldown_seconds: int = 3600
 
+    # Runtime OTA artifacts (uploaded tar.gz for client upgrades)
+    artifacts_dir: str = "/data/artifacts"
+
 
 settings = Settings()
 

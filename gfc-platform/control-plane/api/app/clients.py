@@ -7,7 +7,7 @@ import logging
 import secrets
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,7 +20,8 @@ from .client_config import (
 )
 from .line_code import decode_line_code as _decode_line_code
 from .db import get_session
-from .models import ClientDevice, ClientDeviceTombstone, ClientToken, ConfigBundle, FlowStat, Line
+from .artifacts import artifacts_root, _artifact_to_out
+from .models import ClientDevice, ClientDeviceTombstone, ClientToken, ConfigBundle, FlowStat, Line, RuntimeArtifact
 from .schemas import (
     ClientActivateIn,
     ClientActivateResponse,
@@ -32,6 +33,7 @@ from .schemas import (
     DeviceCommandOut,
     ReverseSSHCommandOut,
     ReverseSSHPortsOut,
+    RuntimeArtifactOut,
 )
 from .reverse_ssh import (
     build_reverse_ssh_command,
@@ -361,8 +363,24 @@ async def client_heartbeat(
                 pending = None
         if pending and ack_id and ack_id == str(pending.get("requestId") or pending.get("request_id") or ""):
             device.pending_device_command_json = None
+            ack_status = str(body.device_command_ack.get("status") or "ok")
+            ack_message = str(body.device_command_ack.get("message") or "")
             if pending.get("action") == "factory_reset_soft":
                 device.code_cleared_at = utc_now()
+            if pending.get("action") == "runtime_upgrade":
+                device.last_upgrade_json = json.dumps(
+                    {
+                        "status": ack_status,
+                        "version": pending.get("version"),
+                        "artifact_id": pending.get("artifactId"),
+                        "request_id": ack_id,
+                        "message": ack_message,
+                        "at": utc_now().isoformat(),
+                    },
+                    ensure_ascii=False,
+                )
+                if ack_status in ("ok", "applied", "success") and pending.get("version"):
+                    device.agent_version = str(pending.get("version"))
 
     if body.metrics is not None:
         device.last_metrics_json = json.dumps(body.metrics, ensure_ascii=False)
@@ -392,7 +410,17 @@ async def client_heartbeat(
             action = str(pending.get("action") or "")
             req_id = str(pending.get("requestId") or pending.get("request_id") or "")
             if action and req_id:
-                device_command = DeviceCommandOut(action=action, request_id=req_id)
+                device_command = DeviceCommandOut(
+                    action=action,
+                    request_id=req_id,
+                    artifact_id=pending.get("artifactId"),
+                    version=pending.get("version"),
+                    arch=pending.get("arch"),
+                    sha256=pending.get("sha256"),
+                    filename=pending.get("filename"),
+                    download_path=pending.get("downloadPath"),
+                    download_url=pending.get("downloadUrl"),
+                )
         except json.JSONDecodeError:
             pass
 
@@ -402,6 +430,42 @@ async def client_heartbeat(
         webssh_authorized_key=webssh_public_key_line(),
         device_command=device_command,
     )
+
+
+@router.get("/artifacts", response_model=list[RuntimeArtifactOut])
+async def list_client_artifacts(
+    session: AsyncSession = Depends(get_session),
+    authorization: str | None = Header(default=None),
+    arch: str | None = Query(None),
+) -> list[RuntimeArtifactOut]:
+    await _auth_client(session, authorization)
+    stmt = (
+        select(RuntimeArtifact)
+        .where(RuntimeArtifact.is_enabled.is_(True))
+        .order_by(RuntimeArtifact.id.desc())
+    )
+    if arch:
+        stmt = stmt.where(RuntimeArtifact.arch == arch.strip().lower())
+    rows = (await session.execute(stmt)).scalars().all()
+    return [_artifact_to_out(r) for r in rows]
+
+
+@router.get("/artifacts/{artifact_id}/download")
+async def download_client_artifact(
+    artifact_id: int,
+    session: AsyncSession = Depends(get_session),
+    authorization: str | None = Header(default=None),
+):
+    from fastapi.responses import FileResponse
+
+    await _auth_client(session, authorization)
+    row = await session.get(RuntimeArtifact, artifact_id)
+    if not row or not row.is_enabled:
+        raise HTTPException(404, "artifact not found")
+    path = artifacts_root() / row.storage_name
+    if not path.is_file():
+        raise HTTPException(404, "artifact file missing on disk")
+    return FileResponse(path, filename=row.filename, media_type="application/gzip")
 
 
 @router.patch("/me/runtime")

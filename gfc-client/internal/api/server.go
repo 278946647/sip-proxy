@@ -92,6 +92,8 @@ func (s *Server) Router() *gin.Engine {
 
 		v1.GET("/upgrade/status", s.getUpgradeStatus)
 		v1.POST("/upgrade/check", s.checkUpgrade)
+		v1.POST("/upgrade/apply-local", s.applyLocalUpgrade)
+		v1.POST("/upgrade/apply-file", s.applyUploadedUpgrade)
 
 		v1.GET("/dns/lists", s.dnsLists)
 		v1.GET("/dns/lists/:name", s.dnsExport)
@@ -755,6 +757,48 @@ func (s *Server) checkUpgrade(c *gin.Context) {
 	}
 	_ = c.BindJSON(&body)
 	s.ok(c, upgrade.Check(body.ManifestURL))
+}
+
+func (s *Server) applyLocalUpgrade(c *gin.Context) {
+	var body struct {
+		Path string `json:"path"`
+	}
+	if err := c.BindJSON(&body); err != nil {
+		s.fail(c, 400, err.Error())
+		return
+	}
+	msg, err := upgrade.ApplyLocalPackage(body.Path)
+	if err != nil {
+		s.fail(c, 500, err.Error())
+		return
+	}
+	s.ok(c, map[string]any{"applied": true, "message": msg, "current": upgrade.LocalVersion()})
+}
+
+func (s *Server) applyUploadedUpgrade(c *gin.Context) {
+	fh, err := c.FormFile("file")
+	if err != nil {
+		s.fail(c, 400, "file required")
+		return
+	}
+	tmp, err := os.CreateTemp("", "gfc-upload-*.tar.gz")
+	if err != nil {
+		s.fail(c, 500, err.Error())
+		return
+	}
+	path := tmp.Name()
+	tmp.Close()
+	defer os.Remove(path)
+	if err := c.SaveUploadedFile(fh, path); err != nil {
+		s.fail(c, 500, err.Error())
+		return
+	}
+	msg, err := upgrade.ApplyLocalPackage(path)
+	if err != nil {
+		s.fail(c, 500, err.Error())
+		return
+	}
+	s.ok(c, map[string]any{"applied": true, "message": msg, "current": upgrade.LocalVersion()})
 }
 
 func (s *Server) putSettings(c *gin.Context) {

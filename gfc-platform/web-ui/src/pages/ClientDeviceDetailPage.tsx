@@ -99,6 +99,9 @@ export function ClientDeviceDetailPage() {
   const [lineDraft, setLineDraft] = useState<number | undefined>();
   const [savingName, setSavingName] = useState(false);
   const [savingRouting, setSavingRouting] = useState(false);
+  const [artifacts, setArtifacts] = useState<{ id: number; version: string; arch: string; is_enabled: boolean }[]>([]);
+  const [upgradeArtifactId, setUpgradeArtifactId] = useState<number | undefined>();
+  const [upgrading, setUpgrading] = useState(false);
   const perms = permissionsFromUser(getUser());
   const writable = canWrite(getUser());
 
@@ -115,6 +118,13 @@ export function ClientDeviceDetailPage() {
       "/admin/lines?page_size=200"
     );
     setLines(lineRes.items.map(mapLineItem));
+  };
+
+  const loadArtifacts = async () => {
+    const rows = await apiGet<{ id: number; version: string; arch: string; is_enabled: boolean }[]>(
+      "/admin/artifacts?enabled_only=true"
+    );
+    setArtifacts(rows);
   };
 
   const removeDevice = async () => {
@@ -141,9 +151,27 @@ export function ClientDeviceDetailPage() {
     }
   };
 
+  const queueUpgrade = async () => {
+    if (!id || !upgradeArtifactId) {
+      message.warning("请选择目标制品版本");
+      return;
+    }
+    setUpgrading(true);
+    try {
+      await apiPost(`/admin/client-devices/${id}/upgrade`, { artifact_id: upgradeArtifactId });
+      message.success("已排队升级，将在设备下次心跳时下载安装");
+      await load();
+    } catch (e) {
+      message.error(String(e));
+    } finally {
+      setUpgrading(false);
+    }
+  };
+
   useEffect(() => {
     void load().catch((e) => message.error(String(e)));
     void loadLines().catch(() => undefined);
+    void loadArtifacts().catch(() => undefined);
     const timer = window.setInterval(() => void load().catch(() => undefined), 15000);
     return () => window.clearInterval(timer);
   }, [id]);
@@ -488,6 +516,42 @@ export function ClientDeviceDetailPage() {
                 </Card>
               </Col>
             </Row>
+          </Card>
+        </Col>
+
+        <Col xs={24}>
+          <Card title="软件版本 / 升级">
+            <Descriptions column={{ xs: 1, sm: 2 }} size="small" style={{ marginBottom: 12 }}>
+              <Descriptions.Item label="Agent 版本">{device.agentVersion || "—"}</Descriptions.Item>
+              <Descriptions.Item label="最近升级">
+                {device.lastUpgrade
+                  ? `${String(device.lastUpgrade.status || "")} · ${String(device.lastUpgrade.version || "")} · ${String(device.lastUpgrade.message || "")}`
+                  : "—"}
+              </Descriptions.Item>
+            </Descriptions>
+            {writable ? (
+              <Space wrap>
+                <Select
+                  style={{ minWidth: 280 }}
+                  placeholder="选择制品版本"
+                  value={upgradeArtifactId}
+                  onChange={setUpgradeArtifactId}
+                  options={artifacts.map((a) => ({
+                    value: a.id,
+                    label: `${a.version} (${a.arch})`,
+                  }))}
+                />
+                <Button type="primary" loading={upgrading} onClick={() => void queueUpgrade()}>
+                  下发升级
+                </Button>
+                <Typography.Link onClick={() => window.open("/settings/artifacts", "_blank")}>
+                  管理制品
+                </Typography.Link>
+              </Space>
+            ) : null}
+            <Typography.Paragraph type="secondary" style={{ marginTop: 12, marginBottom: 0 }}>
+              一期仅支持单设备下发。设备需已安装含 OTA 能力的 Agent；老设备请先人工 install.sh 打底。
+            </Typography.Paragraph>
           </Card>
         </Col>
 

@@ -173,6 +173,8 @@ class ClientDevice(Base):
     )
     # Pending command delivered via heartbeat, e.g. {"action":"factory_reset_soft","requestId":"..."}
     pending_device_command_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Last runtime upgrade result: {status, version, artifact_id, message, at}
+    last_upgrade_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     agent_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
     last_seen_at: Mapped[dt.datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
@@ -206,6 +208,29 @@ class ClientDeviceTombstone(Base):
     retired_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     reclaimed_at: Mapped[dt.datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+
+
+class RuntimeArtifact(Base):
+    """Uploaded GFC client runtime packages for OTA."""
+
+    __tablename__ = "runtime_artifacts"
+    __table_args__ = (
+        UniqueConstraint("version", "arch", name="uq_runtime_artifact_version_arch"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    version: Mapped[str] = mapped_column(String(64), index=True)
+    arch: Mapped[str] = mapped_column(String(32), index=True)  # amd64 | arm64
+    filename: Mapped[str] = mapped_column(String(255))
+    sha256: Mapped[str] = mapped_column(String(64))
+    size_bytes: Mapped[int] = mapped_column(Integer, default=0)
+    storage_name: Mapped[str] = mapped_column(String(255))  # file under artifacts_dir
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_by: Mapped[str] = mapped_column(String(64), default="admin")
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: dt.datetime.now(dt.timezone.utc)
     )
 
 

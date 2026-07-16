@@ -20,6 +20,9 @@ import { HelpPage } from "./pages/HelpPage";
 import { InitialPasswordPage } from "./pages/InitialPasswordPage";
 import { LoginPage } from "./pages/LoginPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { SettingsSecurityPage } from "./pages/SettingsSecurityPage";
+import { SettingsEmailPage } from "./pages/SettingsEmailPage";
+import { SettingsArtifactsPage } from "./pages/SettingsArtifactsPage";
 import { getToken } from "./api/auth";
 import "antd/dist/reset.css";
 import "./styles/global.css";
@@ -54,6 +57,9 @@ export function App() {
               <Route path="proxies" element={<ProxiesPage />} />
               <Route path="users" element={<UsersPage />} />
               <Route path="settings" element={<SettingsPage />} />
+              <Route path="settings/security" element={<SettingsSecurityPage />} />
+              <Route path="settings/email" element={<SettingsEmailPage />} />
+              <Route path="settings/artifacts" element={<SettingsArtifactsPage />} />
               <Route path="logs" element={<LogsPage />} />
               <Route path="help" element={<HelpPage />} />
               <Route path="*" element={<Navigate to="/lines" replace />} />

@@ -84,6 +84,7 @@ export type ClientDeviceListItem = {
   routingScheme: DeviceRoutingScheme;
   nameSource: "auto" | "admin";
   codeCleared: boolean;
+  lastUpgrade: Record<string, unknown> | null;
   online: boolean;
   managementState: "online" | "offline";
   serviceState: "active" | "suspended" | "unbound" | "degraded" | "unknown";
@@ -351,6 +352,7 @@ export function mapClientDevice(raw: Record<string, unknown>): ClientDeviceListI
     routingScheme: ((raw.routing_scheme as string) || "split") as DeviceRoutingScheme,
     nameSource: ((raw.name_source as string) || "auto") === "admin" ? "admin" : "auto",
     codeCleared: Boolean(raw.code_cleared),
+    lastUpgrade: (raw.last_upgrade as Record<string, unknown> | null) ?? null,
     online: raw.online as boolean,
     managementState: (raw.management_state as ClientDeviceListItem["managementState"]) || (raw.online ? "online" : "offline"),
     serviceState: (raw.service_state as ClientDeviceListItem["serviceState"]) || "unknown",

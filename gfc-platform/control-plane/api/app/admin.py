@@ -30,6 +30,7 @@ from .platform_secrets import (
     security_to_public,
 )
 from .client_config import encode_platform_bootstrap_code, line_code_fingerprint, refresh_line_code
+from .artifacts import queue_device_upgrade
 from .models import (
     AlertEvent,
     ClientDevice,
@@ -39,6 +40,7 @@ from .models import (
     Node,
     OperationLog,
     PlatformUser,
+    RuntimeArtifact,
     SocksProfile,
 )
 from .reality_util import default_reality_config
@@ -83,6 +85,7 @@ from .schemas import (
     ClientDeviceReclaimIn,
     ClientDeviceTombstoneOut,
     ClientDeviceUpdateIn,
+    ClientDeviceUpgradeIn,
     PaginatedLines,
     PaginatedClientDevices,
     ReverseSSHPortsOut,
@@ -1466,6 +1469,12 @@ def _reverse_session_out(device: ClientDevice) -> ReverseSSHSessionOut:
 def _client_device_list_item(device: ClientDevice) -> ClientDeviceListItem:
     line = device.line
     management_state, service_state, service_reason, line_enabled = _derive_client_device_states(device)
+    last_upgrade = None
+    if device.last_upgrade_json:
+        try:
+            last_upgrade = json.loads(device.last_upgrade_json)
+        except json.JSONDecodeError:
+            last_upgrade = None
     return ClientDeviceListItem(
         id=device.id,
         name=device.name,
@@ -1482,6 +1491,7 @@ def _client_device_list_item(device: ClientDevice) -> ClientDeviceListItem:
         routing_scheme=device.routing_scheme or "split",
         name_source=(device.name_source or "auto"),
         code_cleared=device.code_cleared_at is not None,
+        last_upgrade=last_upgrade,
         online=_client_device_online(device),
         management_state=management_state,
         service_state=service_state,
@@ -1703,6 +1713,36 @@ async def update_client_device(
         setattr(device, k, v)
     session.add(device)
     await _log_op(session, operator.username, "update_client_device", device.device_key)
+    await session.commit()
+    return await get_client_device(device_id, session)
+
+
+@router.post(
+    "/client-devices/{device_id}/upgrade",
+    response_model=ClientDeviceDetailOut,
+    dependencies=[Depends(require_action("write_safe"))],
+)
+async def upgrade_client_device(
+    device_id: int,
+    body: ClientDeviceUpgradeIn,
+    session: AsyncSession = Depends(get_session),
+    operator: PlatformUser = Depends(get_current_user),
+) -> ClientDeviceDetailOut:
+    """Queue a single-device runtime OTA (delivered on next heartbeat)."""
+    device = await session.get(ClientDevice, device_id)
+    if not device:
+        raise HTTPException(404, "client device not found")
+    artifact = await session.get(RuntimeArtifact, body.artifact_id)
+    if not artifact:
+        raise HTTPException(404, "artifact not found")
+    await queue_device_upgrade(session, device, artifact, operator.username)
+    await _log_op(
+        session,
+        operator.username,
+        "queue_runtime_upgrade",
+        device.device_key,
+        f"artifact={artifact.id} version={artifact.version}",
+    )
     await session.commit()
     return await get_client_device(device_id, session)
 

@@ -467,6 +467,13 @@ class ReverseSSHCommandOut(BaseModel):
 class DeviceCommandOut(BaseModel):
     action: str
     request_id: str
+    artifact_id: int | None = None
+    version: str | None = None
+    arch: str | None = None
+    sha256: str | None = None
+    filename: str | None = None
+    download_path: str | None = None
+    download_url: str | None = None
 
 
 class ClientHeartbeatResponse(BaseModel):
@@ -508,6 +515,7 @@ class ClientDeviceListItem(BaseModel):
     routing_scheme: str = "split"
     name_source: str = "auto"
     code_cleared: bool = False
+    last_upgrade: dict[str, Any] | None = None
     online: bool
     management_state: str = "offline"
     service_state: str = "unknown"
@@ -557,6 +565,28 @@ class ClientDeviceTombstoneOut(BaseModel):
 class ClientDeviceReclaimIn(BaseModel):
     device_key: str = Field(min_length=1, max_length=64)
     name: str | None = Field(default=None, max_length=128)
+
+
+class RuntimeArtifactOut(BaseModel):
+    id: int
+    version: str
+    arch: str
+    filename: str
+    sha256: str
+    size_bytes: int
+    notes: str | None = None
+    is_enabled: bool = True
+    created_by: str = "admin"
+    created_at: dt.datetime
+
+
+class RuntimeArtifactUpdateIn(BaseModel):
+    notes: str | None = None
+    is_enabled: bool | None = None
+
+
+class ClientDeviceUpgradeIn(BaseModel):
+    artifact_id: int
 
 
 class PaginatedClientDevices(BaseModel):

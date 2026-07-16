@@ -91,8 +91,15 @@ type HeartbeatResult struct {
 }
 
 type DeviceCommand struct {
-	Action    string `json:"action"`
-	RequestID string `json:"request_id"`
+	Action       string `json:"action"`
+	RequestID    string `json:"request_id"`
+	ArtifactID   int    `json:"artifact_id"`
+	Version      string `json:"version"`
+	Arch         string `json:"arch"`
+	SHA256       string `json:"sha256"`
+	Filename     string `json:"filename"`
+	DownloadPath string `json:"download_path"`
+	DownloadURL  string `json:"download_url"`
 }
 
 func (c *Client) Heartbeat(

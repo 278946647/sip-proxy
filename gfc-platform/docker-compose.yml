@@ -17,6 +17,7 @@ services:
       GFC_PUBLIC_PORT: ${GFC_PUBLIC_PORT:-8181}
       GFC_REVERSE_SSH_CLIENT_SHELL_PASSWORD: ${GFC_REVERSE_SSH_CLIENT_SHELL_PASSWORD:-}
       GFC_REVERSE_SSH_CLIENT_SHELL_IDENTITY_PATH: ${GFC_REVERSE_SSH_CLIENT_SHELL_IDENTITY_PATH:-}
+      GFC_ARTIFACTS_DIR: /data/artifacts
     volumes:
       - gfc-data:/data
       - /var/lib/gfc/reverse-ssh:/data/reverse-ssh

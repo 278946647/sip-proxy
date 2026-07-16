@@ -110,6 +110,14 @@
       "path": "gfc/dataplane"
     }
   },
+  "admin/gfc/ops/upgrade": {
+    "title": "系统版本升级",
+    "order": 20,
+    "action": {
+      "type": "view",
+      "path": "gfc/upgrade"
+    }
+  },
   "admin/gfc/diag": {
     "title": "故障诊断",
     "order": 40,

@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .admin import router as admin_router
+from .artifacts import admin_router as artifacts_admin_router
 from .clients import router as clients_router
 from .auth_routes import router as auth_router
 from .remote_proxy import root_shim_router, router as remote_router
@@ -105,6 +106,7 @@ app.add_middleware(
 
 app.include_router(auth_router)
 app.include_router(admin_router)
+app.include_router(artifacts_admin_router)
 app.include_router(clients_router)
 app.include_router(remote_router)
 app.include_router(root_shim_router)
