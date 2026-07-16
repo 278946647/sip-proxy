@@ -111,7 +111,7 @@ ls -lt "$IMT_SRC/bin/targets/x86/64/"*ext4*combined*efi*.img.gz | head -3
 
 | 检查 | 期望 |
 |------|------|
-| `opkg list-installed \| grep gfc-client` | `1.1.0-r14`（或当前 PKG） |
+| `opkg list-installed \| grep gfc-client` | `1.1.0-r15`（或当前 PKG） |
 | `uci get network.wan.device` | 首块物理网卡（如 eth0） |
 | br-lan `list ports` | 末块物理网卡（如 eth1） |
 | LAN PC DHCP | 无需手动 `dnsmasq restart`（hotplug + `gfc-lan-dhcp`） |
