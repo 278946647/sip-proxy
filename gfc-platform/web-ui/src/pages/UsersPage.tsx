@@ -140,16 +140,22 @@ export function UsersPage() {
         title="添加用户"
         open={open}
         onOk={async () => {
-          const v = await form.validateFields();
-          await apiPost("/admin/users", {
-            username: v.username,
-            password: v.password,
-            role: v.role,
-          });
-          message.success("已创建");
-          setOpen(false);
-          form.resetFields();
-          await load();
+          try {
+            const v = await form.validateFields();
+            await apiPost("/admin/users", {
+              username: v.username,
+              password: v.password,
+              role: v.role,
+            });
+            message.success("已创建");
+            setOpen(false);
+            form.resetFields();
+            await load();
+          } catch (e) {
+            if (e && typeof e === "object" && "errorFields" in e) throw e;
+            message.error(String(e));
+            throw e;
+          }
         }}
         onCancel={() => setOpen(false)}
         destroyOnClose

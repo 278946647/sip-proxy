@@ -33,7 +33,7 @@ export function LoginPage() {
     >
       <Card style={{ width: 440 }}>
         <Typography.Title level={3} style={{ marginTop: 0, textAlign: "center" }}>
-          应用加速平台
+          GFC管理平台
         </Typography.Title>
         <Typography.Paragraph type="secondary" style={{ textAlign: "center" }}>
           请使用控制台账号登录

@@ -63,7 +63,7 @@ export function MainLayout() {
       <Sider width={220} theme="dark">
         <div className="gfc-logo">
           <GlobalOutlined style={{ marginRight: 8 }} />
-          应用加速平台
+          GFC管理平台
         </div>
         <Menu
           theme="dark"

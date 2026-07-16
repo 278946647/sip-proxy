@@ -1312,7 +1312,7 @@ async def create_user(
         )
     ).scalar_one_or_none()
     if exists:
-        raise HTTPException(400, "username already exists")
+        raise HTTPException(400, "用户名已存在")
     u = PlatformUser(
         username=body.username.strip(),
         role=body.role,
