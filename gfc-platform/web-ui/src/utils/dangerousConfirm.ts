@@ -179,3 +179,14 @@ export function confirmResetUserPassword(
     onCancel,
   });
 }
+
+export function confirmDeleteUser(username: string, onConfirm: () => Promise<void>) {
+  Modal.confirm({
+    title: `删除用户「${username}」？`,
+    content: "删除后该账号无法登录，操作不可恢复。超级管理员不可删除，只能禁用。",
+    okText: "确认删除",
+    okButtonProps: { danger: true },
+    cancelText: "取消",
+    onOk: onConfirm,
+  });
+}

@@ -1337,7 +1337,7 @@ async def update_user(
         raise HTTPException(404, "user not found")
     data = body.model_dump(exclude_unset=True)
 
-    # Users are never deleted; only is_active can disable (including admin).
+    # Admin accounts may be disabled but never deleted (see delete_user).
     if data.get("is_active") is False:
         if u.id == operator.id:
             raise HTTPException(400, "不能禁用当前登录账号")
@@ -1365,6 +1365,27 @@ async def update_user(
     await session.commit()
     await session.refresh(u)
     return user_out(u)
+
+
+@router.delete("/users/{user_id}", dependencies=[Depends(require_admin)])
+async def delete_user(
+    user_id: int,
+    session: AsyncSession = Depends(get_session),
+    operator: PlatformUser = Depends(get_current_user),
+) -> dict[str, bool]:
+    """Delete non-admin users only. Super-admin accounts can only be disabled."""
+    u = await session.get(PlatformUser, user_id)
+    if not u:
+        raise HTTPException(404, "user not found")
+    if u.id == operator.id:
+        raise HTTPException(400, "不能删除当前登录账号")
+    if u.role == "admin":
+        raise HTTPException(400, "超级管理员不能删除，只能禁用")
+    label = u.username
+    await session.delete(u)
+    await _log_op(session, operator.username, "delete_user", label, f"id={user_id}")
+    await session.commit()
+    return {"ok": True}
 
 
 @router.get("/operation-logs", response_model=list[OperationLogOut])

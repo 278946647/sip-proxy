@@ -3,8 +3,8 @@ import { PlusOutlined } from "@ant-design/icons";
 import { useEffect, useState } from "react";
 import { formatApiTime } from "../utils/datetime";
 import { getUser } from "../api/auth";
-import { apiGet, apiPatch, apiPost } from "../api/client";
-import { confirmResetUserPassword } from "../utils/dangerousConfirm";
+import { apiDelete, apiGet, apiPatch, apiPost } from "../api/client";
+import { confirmDeleteUser, confirmResetUserPassword } from "../utils/dangerousConfirm";
 import { roleLabel } from "../utils/permissions";
 import type { PlatformUser } from "../types";
 
@@ -47,6 +47,18 @@ export function UsersPage() {
     } catch (e) {
       message.error(String(e));
     }
+  };
+
+  const removeUser = (row: PlatformUser) => {
+    if (row.role === "admin") {
+      message.warning("超级管理员不能删除，只能禁用");
+      return;
+    }
+    confirmDeleteUser(row.username, async () => {
+      await apiDelete(`/admin/users/${row.id}`);
+      message.success("已删除");
+      await load();
+    });
   };
 
   return (
@@ -112,6 +124,11 @@ export function UsersPage() {
                       >
                         {r.isActive ? "禁用" : "启用"}
                       </Button>
+                      {r.role !== "admin" && (
+                        <Button type="link" danger onClick={() => removeUser(r)}>
+                          删除
+                        </Button>
+                      )}
                     </Space>
                   ),
                 },
