@@ -132,7 +132,14 @@ gfc_cp_write_env_file "$REPO_ROOT/.env" "$REPO_ROOT/deploy/control/install.env"
 echo "==> Reverse SSH host prerequisites (gfc-reverse + authorized_keys)"
 bash "$REPO_ROOT/deploy/control/setup-reverse-ssh.sh"
 
-install -m 755 "$REPO_ROOT/deploy/control/gfc-compose.sh" /usr/local/bin/gfc-compose
+install -m 755 "$REPO_ROOT/deploy/control/gfc-compose.sh" /usr/local/bin/gfc-compose.real
+cat >/usr/local/bin/gfc-compose <<EOF
+#!/usr/bin/env bash
+# Thin wrapper so /usr/local/bin/gfc-compose can find compose-util.sh in the repo.
+export GFC_ROOT="$REPO_ROOT"
+exec "$REPO_ROOT/deploy/control/gfc-compose.sh" "\$@"
+EOF
+chmod 755 /usr/local/bin/gfc-compose
 
 cd "$REPO_ROOT"
 echo "==> Building and starting control plane (gfc-compose safe up)..."

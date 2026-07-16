@@ -2,28 +2,40 @@
 # Official GFC control-plane compose wrapper.
 # Always removes old containers before "up" to avoid docker-compose 1.29 ContainerConfig bug.
 #
-# Usage (from gfc-platform repo root):
-#   gfc-compose up -d              # full stack
-#   gfc-compose up -d web          # web only (api untouched)
-#   gfc-compose build --no-cache web
-#   gfc-compose ps | logs api | down
+# Prefer running via /usr/local/bin/gfc-compose (wrapper sets GFC_ROOT), or:
+#   cd /opt/sip-proxy/gfc-platform && ./deploy/control/gfc-compose.sh up -d
 set -euo pipefail
 
 _SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="${GFC_ROOT:-$(cd "$_SCRIPT_DIR/../.." && pwd)}"
 
-# shellcheck source=deploy/control/compose-util.sh
-source "$_SCRIPT_DIR/compose-util.sh"
-
-gfc_compose_warn_raw_compose() {
-  if [[ "${GFC_COMPOSE_WRAPPER:-}" != "1" ]]; then
+gfc_compose_resolve_root() {
+  local candidate
+  if [[ -n "${GFC_ROOT:-}" ]]; then
+    candidate=$(cd "$GFC_ROOT" && pwd)
+    if [[ -f "$candidate/deploy/control/compose-util.sh" ]]; then
+      echo "$candidate"
+      return 0
+    fi
+  fi
+  # Running from repo: deploy/control/gfc-compose.sh → gfc-platform root
+  candidate=$(cd "$_SCRIPT_DIR/../.." && pwd)
+  if [[ -f "$candidate/deploy/control/compose-util.sh" ]]; then
+    echo "$candidate"
     return 0
   fi
-  cat >&2 <<'EOF'
-提示: 请使用 gfc-compose 代替 docker-compose，可避免 ContainerConfig 报错。
-  sudo bash deploy/control/install-docker.sh  # 会安装 /usr/local/bin/gfc-compose
-EOF
+  for candidate in /opt/sip-proxy/gfc-platform /opt/gfc /var/socks/gfc-platform; do
+    if [[ -f "$candidate/deploy/control/compose-util.sh" ]]; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+  echo "ERROR: 找不到 gfc-platform（compose-util.sh）。请设置 GFC_ROOT=/opt/sip-proxy/gfc-platform" >&2
+  return 1
 }
+
+ROOT="$(gfc_compose_resolve_root)"
+# shellcheck source=deploy/control/compose-util.sh
+source "$ROOT/deploy/control/compose-util.sh"
 
 gfc_compose_cmd_up() {
   local detach=0
