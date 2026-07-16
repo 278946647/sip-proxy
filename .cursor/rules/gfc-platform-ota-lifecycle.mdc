@@ -1,0 +1,55 @@
+---
+description: OTA / 设备生命周期 / VLESS 诊断 / 固件版本确认 — 2026-07 会话固化（新会话必读）
+globs:
+  - "**/gfc-platform/**"
+  - "**/gfc-client/internal/upgrade/**"
+  - "**/gfc-client/internal/api/**"
+  - "**/luci-app-gfc/**"
+  - "**/views/maintenance/upgrade/**"
+  - "**/deploy/immortalwrt/package/Makefile"
+  - "**/SESSION_HANDOFF*OTA*"
+alwaysApply: true
+---
+
+# GFC 平台 OTA · 生命周期 · 诊断协议（2026-07）
+
+## 权威文档
+
+1. `docs/SESSION_HANDOFF_2026-07_OTA_LIFECYCLE.md` — **本批任务完成态、验收、踩坑**
+2. `gfc-client/deploy/immortalwrt/FIRMWARE-BUILD-HANDOFF.md` + `BUILD-FIRMWARE.md` — 固件构建
+3. `docs/NFT_ARCHITECTURE.md` / `UNBOUND_ARCHITECTURE.md` / `SINGBOX_ARCHITECTURE.md` — 数据面（仍须批准）
+
+## 已完成（禁止当「未做」重开需求）
+
+- 线路绑定守卫；设备名 admin 权威；软重置 / 硬退役 + reclaim
+- Runtime OTA 一期：制品库、单设备下发、心跳 `runtime_upgrade`、LuCI/Vue 升级页（平台+本地上传+进度）
+- VLESS 出口检测：国内直联探测 + SOCKS/节点双期望比对
+- Auth Secret：保留密钥；**不宜**日常 UI 手填（后续可做一键轮换）
+
+## 固件版本如何确认（必读）
+
+- **`gfc-client` 版本 = `PKG_VERSION`-`rPKG_RELEASE`**（`deploy/immortalwrt/package/Makefile`）
+- **`luci-app-gfc …~<git哈希>` ≠ gfc-client 的 rN**；两者独立
+- 改客户端 Go/脚本并要进 OEM 镜像：**必须 bump `PKG_RELEASE`**，再 `rebuild-gfc-image.sh`
+- 验收：`grep gfc-client $IMT_SRC/bin/targets/x86/64/*.manifest` 与源码 `PKG_RELEASE` 一致
+- 功能探针（比 rN 更硬）：`/api/v1/upgrade/status`、`/api/v1/diagnostics/vless` 含 `expected_ip`/`socks_ip`
+
+## 绝对禁止（再踩即 bug）
+
+- 用境外 HTTPS 站测 WAN `direct_ip`（须 3322 / ip.plus 等国内站 + `--interface WAN`）
+- VLESS 检测在 SOCKS 线路上只比转发节点公网 IP
+- OTA 安装同步阻塞导致 LuCI 超时（须异步任务 + progress 轮询）
+- 未 bump `PKG_RELEASE` 却宣称「新固件版本号」
+- 未经批准改 nft / unbound / sing-box 架构
+- 用 MosDNS / sing-box DNS inbound 替代 unbound 服务 LAN
+- root 操作他人属主仓库却不设 `safe.directory` / 不切用户，导致无法 `git pull`
+
+## 修改前
+
+1. 读 `docs/SESSION_HANDOFF_2026-07_OTA_LIFECYCLE.md`
+2. 涉及数据面：走对应 no-change-without-approval，先差异表，等「确认修改」
+3. 涉及进固件：同步说明是否 bump `PKG_RELEASE` 与验收命令
+
+## 用户固定口令（建议）
+
+> 读 OTA/生命周期交接文档；固件以 manifest `gfc-client` rN + API 探针为准；数据面改前先 diff 等确认。

@@ -1,10 +1,11 @@
 # GFC x86 固件构建 — 会话交接（FIRMWARE BUILD HANDOFF）
 
 > 写给**完全没有本对话上下文**的新会话。  
-> 最后更新：**2026-07-13**（r14：两阶段磁盘扩容 + DHCP 竞态修复；源码 `PKG_RELEASE:=14`）  
+> 最后更新：**2026-07-17**（**r15**：Runtime OTA + VLESS SOCKS 感知诊断进包；此前 r14 扩盘/DHCP）  
 > 仓库：`sip-proxy` / `gfc-client/deploy/immortalwrt/`  
 > 构建机：`/opt/gfc/{sip-proxy,immortalwrt}`（Ubuntu 22.04，用户 `gfcbuild`）  
-> Cursor 规则：[`gfc-firmware-build.mdc`](../../../.cursor/rules/gfc-firmware-build.mdc)
+> Cursor 规则：[`gfc-firmware-build.mdc`](../../../.cursor/rules/gfc-firmware-build.mdc)、[`gfc-platform-ota-lifecycle.mdc`](../../../.cursor/rules/gfc-platform-ota-lifecycle.mdc)  
+> 平台/OTA 交接：[`docs/SESSION_HANDOFF_2026-07_OTA_LIFECYCLE.md`](../../../docs/SESSION_HANDOFF_2026-07_OTA_LIFECYCLE.md)
 
 **操作手册（命令/目录/模块）：** [`BUILD-FIRMWARE.md`](BUILD-FIRMWARE.md)  
 **产品背景（旧）：** 根目录 [`HANDOFF.md`](../../../HANDOFF.md)（细节以本文 + BUILD-FIRMWARE 为准）
@@ -13,7 +14,19 @@
 
 ## 0. 新会话开场白（直接粘贴）
 
-> 我们在做 **GFC x86 ImmortalWrt OEM 固件**。源码已到 **`PKG_RELEASE:=14`**（**两阶段扩盘** + **DHCP 首启竞态修复**）。**当前卡点：构建机编 r14 → 刷大盘，等自动重启结束后验 `df -h /` 与 LAN DHCP**。构建机 `git pull` 后跑 `rebuild-gfc-image.sh`。
+> 我们在做 **GFC x86 ImmortalWrt OEM 固件**。源码已到 **`PKG_RELEASE:=15`**（OTA 升级页 + VLESS 诊断修复进 `gfc-client`）。构建机 `git pull` 后跑 `rebuild-gfc-image.sh`，验收 manifest **`gfc-client - 1.1.0-r15`**，并用 `/api/v1/upgrade/status` 与 diagnostics/vless 探针确认功能。
+
+---
+
+## 0.1 版本号澄清（r14 vs luci ~43402db）
+
+| 信号 | 含义 |
+|------|------|
+| `luci-app-gfc - …~43402db` | LuCI 包编入了该 git 附近的前端/菜单 |
+| `gfc-client - 1.1.0-r14` | **OpenWrt 包发布号**仍是 14（旧 Makefile）；**不能**反推 Go 二进制一定旧或一定新 |
+| 正确做法 | bump `PKG_RELEASE` → 重建 → manifest 与 `opkg list-installed` 对齐；再用 API 探针验功能 |
+
+详见 `docs/SESSION_HANDOFF_2026-07_OTA_LIFECYCLE.md` §4。
 
 ---
 

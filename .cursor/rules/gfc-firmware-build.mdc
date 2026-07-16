@@ -30,18 +30,19 @@ alwaysApply: false
 3. 根目录 `HANDOFF.md` — 产品背景（细节以 1–2 为准）
 4. `docs/NFT_ARCHITECTURE.md` / `UNBOUND_ARCHITECTURE.md` / `SINGBOX_ARCHITECTURE.md` — 数据面（改 deploy 时不得违反）
 
-## 当前状态摘要（2026-07-12 / `PKG_RELEASE:=12`）
+## 当前状态摘要（2026-07-17 / `PKG_RELEASE:=15`）
 
-- **本会话已完成（源码）：** r8–r11 见 HANDOFF；**r12** 强制 `tc-tiny` 进镜像（merge scrub `# is not set`、manifest/ORIG 硬验收、`apply-tc-htb` 认 `/usr/libexec/tc-tiny`）
-- **当前卡点：** 构建机编出 **r12** 镜像并刷机 **完整 E2E**（含 tc）
+- **源码包版本：** `gfc-client` **1.1.0-r15**（含 Runtime OTA API/agent、VLESS SOCKS 感知诊断；LuCI 升级页随 `luci-app-gfc` git 描述）
+- **平台侧 OTA/生命周期：** 见 `docs/SESSION_HANDOFF_2026-07_OTA_LIFECYCLE.md` 与 `gfc-platform-ota-lifecycle.mdc`
 - **构建机：** Ubuntu 22.04，`/opt/gfc/{sip-proxy,immortalwrt}`，用户 **gfcbuild**，Go **1.22+** `/usr/local/go`
+- **验收：** manifest `gfc-client - 1.1.0-r15` + `luci-app-gfc`；功能探针 `/api/v1/upgrade/status`、`/diagnostics/vless`
 - **产品契约：** 未激活也要 DHCP+NAT+DNS hijack；策略路由等 `gfctun`；SSH **212**；OEM 密码 **`Wgh@125434`**；WAN=首块 NIC、LAN=末块
 
 ## 新会话第一步
 
-1. 读 `FIRMWARE-BUILD-HANDOFF.md` §0–§5 与 `BUILD-FIRMWARE.md` §1–§6
-2. 构建机：`git pull` → `rebuild-gfc-image.sh` → 确认 manifest **`1.1.0-r12`** + **`tc-tiny`**
-3. 刷最新 `*ext4*combined*efi*.img.gz`，按 HANDOFF / BUILD-FIRMWARE E2E 验收（含 `/sbin/tc` 或 `/usr/libexec/tc-tiny`）
+1. 读 `FIRMWARE-BUILD-HANDOFF.md` §0–§5 与 `BUILD-FIRMWARE.md` §1–§6；OTA 读 `docs/SESSION_HANDOFF_2026-07_OTA_LIFECYCLE.md`
+2. 构建机：`git pull` → `rebuild-gfc-image.sh` → 确认 manifest **`1.1.0-r15`** + **`tc-tiny`**
+3. 刷最新 `*ext4*combined*efi*.img.gz`，按 HANDOFF / BUILD-FIRMWARE E2E 验收；并验升级页与 VLESS 诊断新字段
 
 ## 修改前必须做的事
 
