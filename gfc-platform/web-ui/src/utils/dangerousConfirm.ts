@@ -163,3 +163,19 @@ export function confirmDeleteClientDevice(
 ) {
   confirmHardRetire(name, onConfirm, { codeCleared: true, lineBound: false });
 }
+
+export function confirmResetUserPassword(
+  username: string,
+  onConfirm: () => Promise<void>,
+  onCancel?: () => void
+) {
+  Modal.confirm({
+    title: `重置用户「${username}」的密码？`,
+    content: "重置后旧密码立即失效；若该用户已登录，其会话将在下次鉴权时失败。",
+    okText: "继续重置",
+    okButtonProps: { danger: true },
+    cancelText: "取消",
+    onOk: onConfirm,
+    onCancel,
+  });
+}
