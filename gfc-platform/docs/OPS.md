@@ -375,6 +375,7 @@ ssh root@<client> 'pidof autossh; /etc/init.d/gfc-reverse-ssh status; ls -la /va
 |------|------|
 | Web 管理「No RPC reply」 | 检查 `/remote/{id}/cgi-bin/...` 是否 200；API 是否已更新 remote_proxy |
 | 隧道 connecting 不 ready | 设备 `logread -e autossh`；控制面 `authorized_keys` 是否含该设备公钥 |
+| WebSSH Permission denied | 密钥在 **容器** `/data/pki/webssh_id`（非宿主机 `/data/pki`）。`curl /healthz` 看 `webssh_keypair`；`sudo bash deploy/control/ensure-webssh-pki.sh`；设备 `grep gfc-webssh /etc/dropbear/authorized_keys` |
 | 升级后远程不可用 | 确认 `upgrade-runtime.sh` 已执行 reverse-ssh restart；agent 是否消费 restore 标记 |
 | 删设备后新设备串线 | 检查 `GFC_REVERSE_SSH_PORT_RELEASE_COOLDOWN_SECONDS` 与 `released_reverse_ports` 表 |
 

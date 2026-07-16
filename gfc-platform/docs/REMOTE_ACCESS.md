@@ -86,10 +86,21 @@ ImmortalWrt 客户端（gfc-reverse-ssh + gfc-agent）
 
 ## 5. WebSSH 认证
 
-- 控制面自动生成 `/data/pki/webssh_id`，经心跳下发 `webssh_authorized_key` 到设备 `authorized_keys`
+- 控制面启动时自动生成容器内 `/data/pki/webssh_id`（Docker volume `gfc-data`），经心跳下发 `webssh_authorized_key` 到设备 `authorized_keys`
+- **密钥不在宿主机 `/data/pki`**；请用容器查看：
+  - `gfc-compose exec api ls -la /data/pki/webssh_id*`（推荐；`gfc-compose` 已兼容 `docker-compose` v1）
+  - 或 `docker exec $(docker ps -qf label=com.docker.compose.service=api) ls -la /data/pki/`
+- 新环境若缺失：`sudo bash deploy/control/ensure-webssh-pki.sh`
 - WebSSH WebSocket 使用平台登录 JWT 鉴权
 - 设备 shell 经 `127.0.0.1:{reverse_ssh_port}` 连接
 - 浏览器端使用 **xterm.js** 终端仿真（支持 Backspace/Delete/方向键）；SSH 子进程 `TERM=xterm-256color`
+- 手动从控制面登录设备（须带 identity）：
+
+```bash
+CID=$(docker ps -qf label=com.docker.compose.service=api)
+docker exec -it "$CID" ssh -i /data/pki/webssh_id -p 6001 \
+  -o BatchMode=yes -o StrictHostKeyChecking=no root@127.0.0.1
+```
 
 ---
 
@@ -112,6 +123,7 @@ Web UI 统一使用 `src/utils/dangerousConfirm.ts`：
 - `sshd` 监听 `GFC_REVERSE_SSH_SSHD_PORT`（默认 212）
 - 用户 `gfc-reverse`，`authorized_keys` 路径 `GFC_REVERSE_SSH_AUTHORIZED_KEYS_PATH`
 - API 容器可访问 `127.0.0.1:{端口池}`
+- API 镜像含 `openssh-client`（`ssh-keygen` / `ssh`）；安装脚本会校验 WebSSH PKI
 
 Web UI nginx 需代理 `/remote/` 及裸 `/cgi-bin/`、`/luci-static/`（Referer 路由）。
 
@@ -125,13 +137,17 @@ Web UI nginx 需代理 `/remote/` 及裸 `/cgi-bin/`、`/luci-static/`（Referer
 # 控制面：端口池与冷却表
 sqlite3 gfc.db "SELECT port, released_until FROM released_reverse_ports;"
 
+# WebSSH 密钥（容器内）
+curl -fsS http://127.0.0.1:8181/healthz   # 应含 "webssh_keypair": true
+sudo bash deploy/control/ensure-webssh-pki.sh
+
 # 设备：隧道状态
 pidof autossh
 /etc/init.d/gfc-reverse-ssh status
 logread -e gfc-reverse
 
-# 控制面：隧道探测
-curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:6001/   # 示例 SSH 端口
+# 控制面：隧道端口是否在听（SSH，不是 HTTP）
+ss -lntp | grep 6001
 ```
 
 ---
@@ -143,6 +159,8 @@ curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:6001/   # 示例 SSH 端
 | `gfc-platform/control-plane/api/app/reverse_ssh.py` | 端口池、冷却、authorized_keys |
 | `gfc-platform/control-plane/api/app/remote_proxy.py` | LuCI HTTP 反代 |
 | `gfc-platform/control-plane/api/app/webssh.py` | WebSSH 桥 |
-| `gfc-client/internal/reversessh/` | autossh 管理、网络恢复 |
+| `gfc-platform/control-plane/api/app/webssh_keys.py` | `/data/pki/webssh_id` 生成 |
+| `gfc-platform/deploy/control/ensure-webssh-pki.sh` | 安装/修复 WebSSH PKI |
+| `gfc-client/internal/reversessh/` | autossh 管理、网络恢复、WebSSH 公钥安装 |
 | `gfc-client/internal/agent/runner.go` | 心跳同步隧道 |
 | `gfc-platform/web-ui/src/lib/openRemote.ts` | 弹窗远程入口 |

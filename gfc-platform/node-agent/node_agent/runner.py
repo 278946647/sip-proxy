@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import socket
 import time
 from pathlib import Path
 from typing import Any
@@ -13,6 +12,7 @@ from .client import ControlPlaneClient, NodeState
 from .server_url import parse_server_url_list, resolve_server_urls_from_env
 from .metrics import collect_metrics
 from .env_sync import read_bootstrap_token, sync_bootstrap_token
+from .public_ip import detect_public_ip
 from .routes import ROUTES_STATE, egress_snat_active, resolve_snat_iface, tproxy_policy_active
 from .singbox import singbox_config_ok
 from .socks_health import dns_health_changed, evaluate_socks_dns_health
@@ -62,17 +62,6 @@ def _routes_need_apply(payload: dict[str, Any]) -> bool:
         return saved != want
     except (OSError, json.JSONDecodeError):
         return True
-
-
-def detect_public_ip() -> str | None:
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
-    except OSError:
-        return None
 
 
 def resolve_server_urls(args: argparse.Namespace) -> list[str]:

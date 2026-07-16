@@ -121,6 +121,40 @@ gfc_compose_wait_api() {
   return 1
 }
 
+# Ensure WebSSH ed25519 keypair exists inside the API container volume (/data/pki).
+# Safe to re-run; does not rotate an existing key.
+gfc_compose_ensure_webssh_pki() {
+  local root=${1:-.}
+  local cid
+  gfc_compose_cmd
+  cid=$(gfc_compose_service_container_id "$root" api)
+  if [[ -z "$cid" ]]; then
+    echo "WARN: api 容器未运行，跳过 webssh PKI 检查"
+    return 1
+  fi
+  echo "==> 检查 WebSSH PKI (/data/pki/webssh_id) in api 容器"
+  if docker exec "$cid" test -f /data/pki/webssh_id -a -f /data/pki/webssh_id.pub; then
+    echo "    OK webssh_id 已存在"
+    docker exec "$cid" sh -c 'echo "    pub: $(head -c 60 /data/pki/webssh_id.pub)…"' 2>/dev/null || true
+    return 0
+  fi
+  echo "    缺失 — 正在生成 ed25519 密钥对…"
+  if ! docker exec "$cid" sh -c '
+    set -e
+    command -v ssh-keygen >/dev/null || { echo "ERROR: ssh-keygen missing in api image"; exit 1; }
+    mkdir -p /data/pki
+    ssh-keygen -t ed25519 -f /data/pki/webssh_id -N "" -C "gfc-webssh@control-plane"
+    chmod 600 /data/pki/webssh_id
+    chmod 644 /data/pki/webssh_id.pub
+  '; then
+    echo "ERROR: 无法生成 webssh_id（请确认 API 镜像含 openssh-client 并重建）"
+    return 1
+  fi
+  echo "    OK 已生成 webssh_id；客户端下次心跳会安装公钥到 dropbear"
+  docker exec "$cid" cat /data/pki/webssh_id.pub || true
+  return 0
+}
+
 gfc_compose_service_container_id() {
   local root=${1:-.}
   local service=${2:?}

@@ -138,6 +138,7 @@ cd "$REPO_ROOT"
 echo "==> Building and starting control plane (gfc-compose safe up)..."
 gfc_compose_safe_up "$REPO_ROOT" 1
 gfc_compose_wait_api "${GFC_PUBLIC_PORT:-8181}" 30 || true
+gfc_compose_ensure_webssh_pki "$REPO_ROOT" || true
 
 echo ""
 echo "==> Done"
@@ -151,6 +152,9 @@ echo "Web:  http://${local_ip}:5173"
 echo ""
 echo "Verify:"
 echo "  curl -fsS http://127.0.0.1:${GFC_PUBLIC_PORT:-8181}/healthz"
+echo "  # WebSSH PKI（密钥在 Docker volume，勿在宿主机 cat /data/pki）:"
+echo "  gfc-compose exec api ls -la /data/pki/webssh_id*"
+echo "  # 或: docker exec \$(docker ps -qf label=com.docker.compose.service=api) ls -la /data/pki/"
 echo ""
 echo "==> 初始管理员账号（首次安装）"
 echo "  用户名: admin"

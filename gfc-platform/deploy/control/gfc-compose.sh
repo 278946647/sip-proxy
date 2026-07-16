@@ -85,10 +85,12 @@ GFC 控制平台 Compose 包装器（规避 docker-compose 1.29 ContainerConfig�
 
 用法:
   gfc-compose up -d [api] [web]     安全启动（先删旧容器再 up）
+  gfc-compose ensure-webssh         确保容器内 WebSSH PKI 存在
   gfc-compose build [服务...]       构建镜像
   gfc-compose ps | logs | down ...  透传给 compose
 
 勿直接使用: docker-compose up -d web  （可能报 KeyError: ContainerConfig）
+勿使用: docker compose …（部分主机仅有 docker-compose v1；请用本包装器）
 
 仓库目录: $ROOT
 EOF
@@ -110,6 +112,9 @@ main() {
     up)
       shift
       gfc_compose_cmd_up "$@"
+      ;;
+    ensure-webssh | ensure-webssh-pki)
+      gfc_compose_ensure_webssh_pki "$ROOT"
       ;;
     *)
       "${COMPOSE[@]}" "$@"

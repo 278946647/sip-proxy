@@ -25,10 +25,11 @@ from .alerts import send_email
 from .migrate import migrate_sqlite
 from .models import Base, ConfigBundle, Line, Node, NodeToken, PlatformUser, SocksProfile
 from .node_config import build_node_payload, payload_version
+from .node_public_ip import normalize_node_public_ip
 from .monitor import monitor_loop
 from .node_health import emit_alert, process_heartbeat_metrics
 from .reverse_ssh import sync_authorized_keys
-from .webssh_keys import ensure_webssh_keypair
+from .webssh_keys import ensure_webssh_keypair, identity_path, public_key_path
 from .schemas import (
     ActivateRequest,
     ActivateResponse,
@@ -72,8 +73,14 @@ async def _lifespan(_app: FastAPI):
         await ensure_platform_secrets(session)
         try:
             ensure_webssh_keypair()
+            if not identity_path().is_file() or not public_key_path().is_file():
+                raise RuntimeError("webssh_id missing after ensure_webssh_keypair")
+            logger.info("webssh keypair ready at %s", identity_path())
         except Exception:
-            logger.exception("webssh keypair bootstrap failed (continuing)")
+            logger.exception(
+                "webssh keypair bootstrap failed — WebSSH will not work until "
+                "/data/pki/webssh_id exists (check openssh-client in API image)"
+            )
         try:
             await sync_authorized_keys(session)
         except Exception:
@@ -153,7 +160,7 @@ async def activate_node(
         name=body.node_name,
         region=body.region,
         country=body.region,
-        public_ip=body.public_ip,
+        public_ip=normalize_node_public_ip(body.public_ip),
         agent_version=body.agent_version,
         last_seen_at=dt.datetime.now(dt.timezone.utc),
     )
@@ -185,8 +192,9 @@ async def heartbeat(
 ) -> HeartbeatResponse:
     node = await _auth_node(session, authorization)
     node.last_seen_at = dt.datetime.now(dt.timezone.utc)
-    if body.public_ip:
-        node.public_ip = body.public_ip
+    public_ip = normalize_node_public_ip(body.public_ip)
+    if public_ip:
+        node.public_ip = public_ip
     if body.node_name and body.node_name.strip():
         node.name = body.node_name.strip()
     if body.agent_version:
@@ -277,7 +285,8 @@ async def ack_config(
 
 @app.get("/healthz")
 async def healthz() -> dict[str, Any]:
-    return {"ok": True}
+    webssh_ok = identity_path().is_file() and public_key_path().is_file()
+    return {"ok": True, "webssh_keypair": webssh_ok}
 
 
 @app.get("/metrics")

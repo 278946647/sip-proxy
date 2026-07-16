@@ -109,6 +109,25 @@ curl -fsS "$(grep SERVER_URL /etc/gfc-node/gfc.env | cut -d= -f2-)/healthz"
 systemctl cat gfc-node-agent   # ExecStart 应为 /usr/local/bin/gfc-node-agent-start
 ```
 
+### 公网 IP（GCP / 云 NAT）
+
+Agent ≥ `0.3.1` 会探测真正可从公网访问的 IPv4（HTTP egress / GCP metadata），并拒绝上报 RFC1918。  
+若控制台「公网 IP」仍为 `10.x`/`172.x`，升级 Agent 后重启：
+
+```bash
+systemctl restart gfc-node-agent
+journalctl -u gfc-node-agent -n 30 --no-pager | grep -i public
+```
+
+仍失败时可在 `/etc/gfc-node/gfc.env` 钉死：
+
+```bash
+GFC_NODE_PUBLIC_IP=你的GCP外部IP
+systemctl restart gfc-node-agent
+```
+
+注意：VM 必须绑定 **External IP**（或等价 inbound 可达地址）；仅 Cloud NAT 共享出口 IP 无法作为 VLESS 入口。
+
 ## 服务管理
 
 ```bash
