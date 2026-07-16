@@ -1,4 +1,4 @@
-import { Button, Form, Input, Modal, Select, Table, Tag, Typography, message } from "antd";
+import { Button, Form, Input, Modal, Select, Space, Table, Tag, Typography, message } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import { useEffect, useState } from "react";
 import { formatApiTime } from "../utils/datetime";
@@ -35,6 +35,20 @@ export function UsersPage() {
     void load().catch((e) => message.error(String(e)));
   }, []);
 
+  const toggleActive = async (row: PlatformUser) => {
+    if (row.id === me?.id) {
+      message.warning("不能禁用当前登录账号");
+      return;
+    }
+    try {
+      await apiPatch(`/admin/users/${row.id}`, { is_active: !row.isActive });
+      message.success(row.isActive ? "已禁用" : "已启用");
+      await load();
+    } catch (e) {
+      message.error(String(e));
+    }
+  };
+
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16 }}>
@@ -42,7 +56,14 @@ export function UsersPage() {
           用户管理
         </Typography.Title>
         {isAdmin && (
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setOpen(true)}>
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={() => {
+              form.resetFields();
+              setOpen(true);
+            }}
+          >
             添加用户
           </Button>
         )}
@@ -72,16 +93,26 @@ export function UsersPage() {
                 {
                   title: "操作",
                   render: (_: unknown, r: PlatformUser) => (
-                    <Button
-                      type="link"
-                      onClick={() => {
-                        setCurrent(r);
-                        resetForm.resetFields();
-                        setResetOpen(true);
-                      }}
-                    >
-                      重置密码
-                    </Button>
+                    <Space>
+                      <Button
+                        type="link"
+                        onClick={() => {
+                          setCurrent(r);
+                          resetForm.resetFields();
+                          setResetOpen(true);
+                        }}
+                      >
+                        重置密码
+                      </Button>
+                      <Button
+                        type="link"
+                        danger={r.isActive}
+                        disabled={r.id === me?.id}
+                        onClick={() => void toggleActive(r)}
+                      >
+                        {r.isActive ? "禁用" : "启用"}
+                      </Button>
+                    </Space>
                   ),
                 },
               ]
@@ -93,13 +124,18 @@ export function UsersPage() {
         open={open}
         onOk={async () => {
           const v = await form.validateFields();
-          await apiPost("/admin/users", v);
+          await apiPost("/admin/users", {
+            username: v.username,
+            password: v.password,
+            role: v.role,
+          });
           message.success("已创建");
           setOpen(false);
           form.resetFields();
           await load();
         }}
         onCancel={() => setOpen(false)}
+        destroyOnClose
       >
         <Form form={form} layout="vertical">
           <Form.Item name="username" label="用户名" rules={[{ required: true }]}>
@@ -109,6 +145,24 @@ export function UsersPage() {
             name="password"
             label="密码"
             rules={[{ required: true, min: 6, message: "至少 6 位" }]}
+          >
+            <Input.Password />
+          </Form.Item>
+          <Form.Item
+            name="confirmPassword"
+            label="确认密码"
+            dependencies={["password"]}
+            rules={[
+              { required: true, message: "请再次输入密码" },
+              ({ getFieldValue }) => ({
+                validator(_, value) {
+                  if (!value || getFieldValue("password") === value) {
+                    return Promise.resolve();
+                  }
+                  return Promise.reject(new Error("两次输入的密码不一致"));
+                },
+              }),
+            ]}
           >
             <Input.Password />
           </Form.Item>
@@ -137,6 +191,7 @@ export function UsersPage() {
                     await apiPatch(`/admin/users/${current!.id}`, { password: v.password });
                     message.success("密码已重置");
                     setResetOpen(false);
+                    resetForm.resetFields();
                     resolve();
                   },
                   () => reject(new Error("cancelled"))
@@ -146,12 +201,31 @@ export function UsersPage() {
           })
         }
         onCancel={() => setResetOpen(false)}
+        destroyOnClose
       >
         <Form form={resetForm} layout="vertical">
           <Form.Item
             name="password"
             label="新密码"
             rules={[{ required: true, min: 6, message: "至少 6 位" }]}
+          >
+            <Input.Password />
+          </Form.Item>
+          <Form.Item
+            name="confirmPassword"
+            label="确认密码"
+            dependencies={["password"]}
+            rules={[
+              { required: true, message: "请再次输入密码" },
+              ({ getFieldValue }) => ({
+                validator(_, value) {
+                  if (!value || getFieldValue("password") === value) {
+                    return Promise.resolve();
+                  }
+                  return Promise.reject(new Error("两次输入的密码不一致"));
+                },
+              }),
+            ]}
           >
             <Input.Password />
           </Form.Item>

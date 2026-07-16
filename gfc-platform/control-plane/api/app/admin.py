@@ -1336,6 +1336,26 @@ async def update_user(
     if not u:
         raise HTTPException(404, "user not found")
     data = body.model_dump(exclude_unset=True)
+
+    # Users are never deleted; only is_active can disable (including admin).
+    if data.get("is_active") is False:
+        if u.id == operator.id:
+            raise HTTPException(400, "不能禁用当前登录账号")
+        if u.role == "admin" and u.is_active:
+            other_admins = (
+                await session.execute(
+                    select(func.count())
+                    .select_from(PlatformUser)
+                    .where(
+                        PlatformUser.role == "admin",
+                        PlatformUser.is_active.is_(True),
+                        PlatformUser.id != u.id,
+                    )
+                )
+            ).scalar_one()
+            if int(other_admins or 0) == 0:
+                raise HTTPException(400, "不能禁用最后一个启用的超级管理员")
+
     if "password" in data:
         u.password_hash = hash_password(data.pop("password"))
     for k, v in data.items():
