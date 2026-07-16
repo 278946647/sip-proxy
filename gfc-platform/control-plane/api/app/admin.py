@@ -1337,7 +1337,7 @@ async def update_user(
         raise HTTPException(404, "user not found")
     data = body.model_dump(exclude_unset=True)
 
-    # Admin accounts may be disabled but never deleted (see delete_user).
+    # Built-in username 'admin' may be disabled but never deleted (see delete_user).
     if data.get("is_active") is False:
         if u.id == operator.id:
             raise HTTPException(400, "不能禁用当前登录账号")
@@ -1373,14 +1373,14 @@ async def delete_user(
     session: AsyncSession = Depends(get_session),
     operator: PlatformUser = Depends(get_current_user),
 ) -> dict[str, bool]:
-    """Delete non-admin users only. Super-admin accounts can only be disabled."""
+    """Delete any user except the built-in username 'admin' (disable-only)."""
     u = await session.get(PlatformUser, user_id)
     if not u:
         raise HTTPException(404, "user not found")
     if u.id == operator.id:
         raise HTTPException(400, "不能删除当前登录账号")
-    if u.role == "admin":
-        raise HTTPException(400, "超级管理员不能删除，只能禁用")
+    if u.username.strip().lower() == "admin":
+        raise HTTPException(400, "内置账号 admin 不能删除，只能禁用")
     label = u.username
     await session.delete(u)
     await _log_op(session, operator.username, "delete_user", label, f"id={user_id}")

@@ -50,8 +50,8 @@ export function UsersPage() {
   };
 
   const removeUser = (row: PlatformUser) => {
-    if (row.role === "admin") {
-      message.warning("超级管理员不能删除，只能禁用");
+    if (row.username.toLowerCase() === "admin") {
+      message.warning("内置账号 admin 不能删除，只能禁用");
       return;
     }
     confirmDeleteUser(row.username, async () => {
@@ -124,7 +124,7 @@ export function UsersPage() {
                       >
                         {r.isActive ? "禁用" : "启用"}
                       </Button>
-                      {r.role !== "admin" && (
+                      {r.username.toLowerCase() !== "admin" && (
                         <Button type="link" danger onClick={() => removeUser(r)}>
                           删除
                         </Button>
