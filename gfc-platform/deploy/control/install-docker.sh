@@ -136,10 +136,12 @@ install -m 755 "$REPO_ROOT/deploy/control/gfc-compose.sh" /usr/local/bin/gfc-com
 cat >/usr/local/bin/gfc-compose <<EOF
 #!/usr/bin/env bash
 # Thin wrapper so /usr/local/bin/gfc-compose can find compose-util.sh in the repo.
+# Always invoke via bash (repo checkout may lack +x on Windows/git).
 export GFC_ROOT="$REPO_ROOT"
-exec "$REPO_ROOT/deploy/control/gfc-compose.sh" "\$@"
+exec bash "$REPO_ROOT/deploy/control/gfc-compose.sh" "\$@"
 EOF
 chmod 755 /usr/local/bin/gfc-compose
+chmod +x "$REPO_ROOT/deploy/control/gfc-compose.sh" "$REPO_ROOT/deploy/control/ensure-webssh-pki.sh" 2>/dev/null || true
 
 cd "$REPO_ROOT"
 echo "==> Building and starting control plane (gfc-compose safe up)..."
