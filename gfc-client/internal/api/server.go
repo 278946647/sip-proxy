@@ -16,6 +16,7 @@ import (
 
 	"github.com/278946647/sip-proxy/gfc-client/internal/activation"
 	"github.com/278946647/sip-proxy/gfc-client/internal/config"
+	"github.com/278946647/sip-proxy/gfc-client/internal/controlplane"
 	"github.com/278946647/sip-proxy/gfc-client/internal/cpsync"
 	"github.com/278946647/sip-proxy/gfc-client/internal/dataplane"
 	"github.com/278946647/sip-proxy/gfc-client/internal/dnslists"
@@ -91,7 +92,9 @@ func (s *Server) Router() *gin.Engine {
 		v1.GET("/agent", s.getAgent)
 
 		v1.GET("/upgrade/status", s.getUpgradeStatus)
+		v1.GET("/upgrade/artifacts", s.listUpgradeArtifacts)
 		v1.POST("/upgrade/check", s.checkUpgrade)
+		v1.POST("/upgrade/apply-remote", s.applyRemoteUpgrade)
 		v1.POST("/upgrade/apply-local", s.applyLocalUpgrade)
 		v1.POST("/upgrade/apply-file", s.applyUploadedUpgrade)
 
@@ -748,7 +751,45 @@ func (s *Server) getAgent(c *gin.Context) {
 }
 
 func (s *Server) getUpgradeStatus(c *gin.Context) {
-	s.ok(c, upgrade.Check(""))
+	prog := upgrade.GetProgress()
+	latest, avail, checked, _ := upgrade.CachedPlatform()
+	out := map[string]any{
+		"current":          upgrade.LocalVersion(),
+		"latest":           latest,
+		"platform_latest":  latest,
+		"update_available": avail,
+		"checked_at":       checked,
+		"source":           "platform",
+		"arch":             upgrade.RuntimeArch(),
+		"progress":         prog,
+		"phase":            prog.Phase,
+		"percent":          prog.Percent,
+		"status_text":      prog.Message,
+		"last_result":      prog.LastResult,
+		"busy":             prog.Busy,
+	}
+	if latest == "" {
+		out["source"] = "local"
+	}
+	s.ok(c, out)
+}
+
+func (s *Server) listUpgradeArtifacts(c *gin.Context) {
+	client, err := s.controlPlaneClient()
+	if err != nil {
+		s.fail(c, 400, err.Error())
+		return
+	}
+	_, arts, err := upgrade.CheckFromPlatform(client)
+	if err != nil {
+		s.fail(c, 502, err.Error())
+		return
+	}
+	s.ok(c, map[string]any{
+		"arch":      upgrade.RuntimeArch(),
+		"current":   upgrade.LocalVersion(),
+		"artifacts": arts,
+	})
 }
 
 func (s *Server) checkUpgrade(c *gin.Context) {
@@ -756,7 +797,53 @@ func (s *Server) checkUpgrade(c *gin.Context) {
 		ManifestURL string `json:"manifest_url"`
 	}
 	_ = c.BindJSON(&body)
-	s.ok(c, upgrade.Check(body.ManifestURL))
+	if strings.TrimSpace(body.ManifestURL) != "" {
+		s.ok(c, upgrade.Check(body.ManifestURL))
+		return
+	}
+	client, err := s.controlPlaneClient()
+	if err != nil {
+		// Fall back to local/manifest env check.
+		st := upgrade.Check("")
+		st.Error = err.Error()
+		s.ok(c, st)
+		return
+	}
+	st, arts, err := upgrade.CheckFromPlatform(client)
+	if err != nil {
+		s.fail(c, 502, err.Error())
+		return
+	}
+	s.ok(c, map[string]any{
+		"current":          st.Current,
+		"latest":           st.Latest,
+		"update_available": st.UpdateAvail,
+		"checked_at":       st.CheckedAt,
+		"source":           st.Source,
+		"arch":             upgrade.RuntimeArch(),
+		"artifacts":        arts,
+		"progress":         upgrade.GetProgress(),
+	})
+}
+
+func (s *Server) applyRemoteUpgrade(c *gin.Context) {
+	var body struct {
+		ArtifactID int `json:"artifact_id"`
+	}
+	if err := c.BindJSON(&body); err != nil || body.ArtifactID <= 0 {
+		s.fail(c, 400, "artifact_id required")
+		return
+	}
+	client, err := s.controlPlaneClient()
+	if err != nil {
+		s.fail(c, 400, err.Error())
+		return
+	}
+	if err := upgrade.StartApplyRemote(client, body.ArtifactID); err != nil {
+		s.fail(c, 409, err.Error())
+		return
+	}
+	s.ok(c, map[string]any{"started": true, "progress": upgrade.GetProgress()})
 }
 
 func (s *Server) applyLocalUpgrade(c *gin.Context) {
@@ -767,12 +854,11 @@ func (s *Server) applyLocalUpgrade(c *gin.Context) {
 		s.fail(c, 400, err.Error())
 		return
 	}
-	msg, err := upgrade.ApplyLocalPackage(body.Path)
-	if err != nil {
-		s.fail(c, 500, err.Error())
+	if err := upgrade.StartApplyLocal(body.Path, "local"); err != nil {
+		s.fail(c, 409, err.Error())
 		return
 	}
-	s.ok(c, map[string]any{"applied": true, "message": msg, "current": upgrade.LocalVersion()})
+	s.ok(c, map[string]any{"started": true, "progress": upgrade.GetProgress()})
 }
 
 func (s *Server) applyUploadedUpgrade(c *gin.Context) {
@@ -788,17 +874,50 @@ func (s *Server) applyUploadedUpgrade(c *gin.Context) {
 	}
 	path := tmp.Name()
 	tmp.Close()
-	defer os.Remove(path)
 	if err := c.SaveUploadedFile(fh, path); err != nil {
+		_ = os.Remove(path)
 		s.fail(c, 500, err.Error())
 		return
 	}
-	msg, err := upgrade.ApplyLocalPackage(path)
-	if err != nil {
-		s.fail(c, 500, err.Error())
+	if err := upgrade.StartApplyLocal(path, "upload"); err != nil {
+		_ = os.Remove(path)
+		s.fail(c, 409, err.Error())
 		return
 	}
-	s.ok(c, map[string]any{"applied": true, "message": msg, "current": upgrade.LocalVersion()})
+	// Clean temp after job finishes (best-effort delayed remove).
+	go func() {
+		for i := 0; i < 600; i++ {
+			time.Sleep(time.Second)
+			if !upgrade.GetProgress().Busy {
+				_ = os.Remove(path)
+				return
+			}
+		}
+		_ = os.Remove(path)
+	}()
+	s.ok(c, map[string]any{"started": true, "progress": upgrade.GetProgress()})
+}
+
+func (s *Server) controlPlaneClient() (*controlplane.Client, error) {
+	st, err := s.activation.LoadClientState()
+	if err != nil || st == nil || strings.TrimSpace(st.ClientToken) == "" {
+		return nil, fmt.Errorf("设备未激活或缺少 client token，无法拉取控制平台制品")
+	}
+	urls := controlPlaneURLsFromEnv()
+	if len(urls) == 0 {
+		return nil, fmt.Errorf("未配置 SERVER_URL，无法连接控制平台")
+	}
+	return controlplane.New(urls, st.ClientToken)
+}
+
+func controlPlaneURLsFromEnv() []string {
+	var out []string
+	for _, key := range []string{"SERVER_URL", "SERVER_URL_FALLBACK"} {
+		if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 func (s *Server) putSettings(c *gin.Context) {

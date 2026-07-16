@@ -95,6 +95,7 @@ func ApplyLocalPackage(tarPath string) (string, error) {
 	}
 	defer os.RemoveAll(work)
 
+	setProgress("extracting", 40, "extracting "+filepath.Base(tarPath), "", "")
 	cmd := exec.Command("tar", "xzf", tarPath, "-C", work)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -104,6 +105,7 @@ func ApplyLocalPackage(tarPath string) (string, error) {
 	if install == "" {
 		return "", fmt.Errorf("install.sh not found in package")
 	}
+	setProgress("installing", 70, "running install.sh", "", "")
 	c := exec.Command("sh", install)
 	c.Dir = filepath.Dir(install)
 	c.Env = append(os.Environ(), "GFC_SAFE_INSTALL=1")
@@ -167,14 +169,44 @@ func DownloadAndApply(downloadURL, token, expectSHA, filename string) (string, e
 		return "", err
 	}
 	h := sha256.New()
-	if _, err := io.Copy(io.MultiWriter(f, h), resp.Body); err != nil {
-		f.Close()
-		return "", err
+	total := resp.ContentLength
+	var written int64
+	buf := make([]byte, 32*1024)
+	for {
+		n, rerr := resp.Body.Read(buf)
+		if n > 0 {
+			if _, werr := f.Write(buf[:n]); werr != nil {
+				f.Close()
+				return "", werr
+			}
+			if _, werr := h.Write(buf[:n]); werr != nil {
+				f.Close()
+				return "", werr
+			}
+			written += int64(n)
+			if total > 0 {
+				pct := 15 + int(written*40/total)
+				if pct > 55 {
+					pct = 55
+				}
+				setProgress("downloading", pct, fmt.Sprintf("downloaded %d/%d bytes", written, total), "", "")
+			} else if written%(2<<20) < int64(n) {
+				setProgress("downloading", 35, fmt.Sprintf("downloaded %d bytes", written), "", "")
+			}
+		}
+		if rerr == io.EOF {
+			break
+		}
+		if rerr != nil {
+			f.Close()
+			return "", rerr
+		}
 	}
 	f.Close()
 	got := hex.EncodeToString(h.Sum(nil))
 	if expectSHA != "" && !strings.EqualFold(got, expectSHA) {
 		return "", fmt.Errorf("sha256 mismatch: got %s want %s", got, expectSHA)
 	}
+	setProgress("extracting", 60, "download complete, extracting", "", "")
 	return ApplyLocalPackage(dest)
 }

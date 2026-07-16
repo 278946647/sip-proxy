@@ -62,6 +62,33 @@ func (c *Client) ActiveServer() string {
 	return c.servers[c.activeIdx]
 }
 
+func (c *Client) Token() string {
+	return c.token
+}
+
+// Artifact mirrors control-plane RuntimeArtifactOut for client OTA.
+type Artifact struct {
+	ID        int    `json:"id"`
+	Version   string `json:"version"`
+	Arch      string `json:"arch"`
+	Filename  string `json:"filename"`
+	SHA256    string `json:"sha256"`
+	SizeBytes int64  `json:"size_bytes"`
+	Notes     string `json:"notes,omitempty"`
+}
+
+func (c *Client) ListArtifacts(arch string) ([]Artifact, error) {
+	path := "/clients/artifacts"
+	if strings.TrimSpace(arch) != "" {
+		path += "?arch=" + strings.TrimSpace(arch)
+	}
+	var out []Artifact
+	if err := c.requestJSON("GET", path, nil, true, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *Client) CheckReachable() bool {
 	_, err := c.request("GET", "/health", nil, false)
 	return err == nil
