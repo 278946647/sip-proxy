@@ -87,6 +87,12 @@ func (c *Client) Activate(lineCode, deviceName, lanMAC, deviceID, proxyMode, age
 type HeartbeatResult struct {
 	ReverseSSH          map[string]any `json:"reverse_ssh"`
 	WebSSHAuthorizedKey string         `json:"webssh_authorized_key"`
+	DeviceCommand       *DeviceCommand `json:"device_command"`
+}
+
+type DeviceCommand struct {
+	Action    string `json:"action"`
+	RequestID string `json:"request_id"`
 }
 
 func (c *Client) Heartbeat(
@@ -96,6 +102,7 @@ func (c *Client) Heartbeat(
 	sshPublicKey string,
 	reverseSSHStatus map[string]any,
 	proxyMode, agentVersion string,
+	deviceCommandAck map[string]any,
 ) (*HeartbeatResult, error) {
 	body := map[string]any{
 		"metrics":       metrics,
@@ -114,6 +121,9 @@ func (c *Client) Heartbeat(
 	}
 	if reverseSSHStatus != nil {
 		body["reverse_ssh_status"] = reverseSSHStatus
+	}
+	if deviceCommandAck != nil {
+		body["device_command_ack"] = deviceCommandAck
 	}
 	var resp HeartbeatResult
 	if err := c.requestJSON("POST", "/clients/heartbeat", body, true, &resp); err != nil {

@@ -76,6 +76,13 @@ func (s *Service) Clear() error {
 	return nil
 }
 
+// ClearLineCode removes local line activation code only (soft factory reset).
+// Keeps client_state.json / token so the device stays platform-managed.
+func (s *Service) ClearLineCode() error {
+	_ = os.Remove(s.cfg.Paths.ActivationFile)
+	return nil
+}
+
 func (s *Service) ReadActivation() (string, map[string]any, error) {
 	data, err := os.ReadFile(s.cfg.Paths.ActivationFile)
 	if err != nil {

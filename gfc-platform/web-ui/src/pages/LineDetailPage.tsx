@@ -166,11 +166,15 @@ export function LineDetailPage() {
         <Button
           danger
           onClick={() =>
-            confirmDeleteLine(line.tid, async () => {
-              await apiDelete(`/admin/lines/${line.id}`);
-              message.success("已删除");
-              nav("/lines");
-            })
+            confirmDeleteLine(
+              line.tid,
+              async () => {
+                await apiDelete(`/admin/lines/${line.id}`);
+                message.success("已删除");
+                nav("/lines");
+              },
+              { boundDeviceName: line.clientDeviceName }
+            )
           }
         >
           删除线路

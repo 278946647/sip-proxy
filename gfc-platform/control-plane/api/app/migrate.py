@@ -122,6 +122,18 @@ def _migrate_sync(sync_conn: Connection) -> None:
         "reverse_ssh_tunnel_reported_at": (
             "ALTER TABLE client_devices ADD COLUMN reverse_ssh_tunnel_reported_at DATETIME"
         ),
+        "name_source": (
+            "ALTER TABLE client_devices ADD COLUMN name_source VARCHAR(16) DEFAULT 'auto'"
+        ),
+        "binding_revoked_at": (
+            "ALTER TABLE client_devices ADD COLUMN binding_revoked_at DATETIME"
+        ),
+        "code_cleared_at": (
+            "ALTER TABLE client_devices ADD COLUMN code_cleared_at DATETIME"
+        ),
+        "pending_device_command_json": (
+            "ALTER TABLE client_devices ADD COLUMN pending_device_command_json TEXT"
+        ),
     }
     if _table_exists(sync_conn, "client_devices"):
         existing = _cols(sync_conn, "client_devices")
@@ -154,6 +166,10 @@ def _migrate_sync(sync_conn: Connection) -> None:
                     reverse_ssh_tunnel_reported_at DATETIME,
                     proxy_mode VARCHAR(32) DEFAULT 'gateway',
                     routing_scheme VARCHAR(32) DEFAULT 'split',
+                    name_source VARCHAR(16) DEFAULT 'auto',
+                    binding_revoked_at DATETIME,
+                    code_cleared_at DATETIME,
+                    pending_device_command_json TEXT,
                     agent_version VARCHAR(32),
                     last_seen_at DATETIME,
                     last_metrics_json TEXT,
@@ -225,6 +241,25 @@ def _migrate_sync(sync_conn: Connection) -> None:
                     former_device_id INTEGER,
                     released_at DATETIME,
                     released_until DATETIME
+                )
+                """
+            )
+        )
+
+    if not _table_exists(sync_conn, "client_device_tombstones"):
+        sync_conn.execute(
+            text(
+                """
+                CREATE TABLE client_device_tombstones (
+                    id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                    device_key VARCHAR(64) NOT NULL,
+                    former_device_id INTEGER,
+                    former_name VARCHAR(128),
+                    lan_mac VARCHAR(32),
+                    retired_at DATETIME,
+                    retired_by VARCHAR(64),
+                    reclaimed_at DATETIME,
+                    UNIQUE (device_key)
                 )
                 """
             )

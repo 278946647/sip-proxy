@@ -30,7 +30,17 @@ from .platform_secrets import (
     security_to_public,
 )
 from .client_config import encode_platform_bootstrap_code, line_code_fingerprint, refresh_line_code
-from .models import AlertEvent, ClientDevice, FlowStat, Line, Node, OperationLog, PlatformUser, SocksProfile
+from .models import (
+    AlertEvent,
+    ClientDevice,
+    ClientDeviceTombstone,
+    FlowStat,
+    Line,
+    Node,
+    OperationLog,
+    PlatformUser,
+    SocksProfile,
+)
 from .reality_util import default_reality_config
 from .reverse_ssh import (
     ensure_device_reverse_ports,
@@ -70,6 +80,8 @@ from .schemas import (
     OperationLogOut,
     ClientDeviceDetailOut,
     ClientDeviceListItem,
+    ClientDeviceReclaimIn,
+    ClientDeviceTombstoneOut,
     ClientDeviceUpdateIn,
     PaginatedLines,
     PaginatedClientDevices,
@@ -872,9 +884,21 @@ async def delete_line(
     session: AsyncSession = Depends(get_session),
     operator: str = Query("admin"),
 ) -> dict[str, bool]:
-    line = await session.get(Line, line_id)
+    stmt = (
+        select(Line)
+        .where(Line.id == line_id)
+        .options(selectinload(Line.client_device))
+    )
+    line = (await session.execute(stmt)).scalars().first()
     if not line:
         raise HTTPException(404, "line not found")
+    bound = line.client_device
+    if bound:
+        raise HTTPException(
+            400,
+            f"线路 {line.tid} 仍绑定客户端「{bound.name or bound.device_key}」，"
+            "请先在客户端管理中解绑后再删除",
+        )
     tid = line.tid
     await session.delete(line)
     await _log_op(session, operator, "delete_line", tid)
@@ -1365,6 +1389,8 @@ def _derive_client_device_states(
 
     line = device.line
     if device.line_id is None:
+        if device.code_cleared_at is not None:
+            return management_state, "unbound", "awaiting_line", None
         return management_state, "unbound", "line_unbound", None
     if line is None:
         return management_state, "suspended", "line_deleted", None
@@ -1454,6 +1480,8 @@ def _client_device_list_item(device: ClientDevice) -> ClientDeviceListItem:
         reverse_ssh_session_state=session_state(device),
         proxy_mode=device.proxy_mode or "gateway",
         routing_scheme=device.routing_scheme or "split",
+        name_source=(device.name_source or "auto"),
+        code_cleared=device.code_cleared_at is not None,
         online=_client_device_online(device),
         management_state=management_state,
         service_state=service_state,
@@ -1497,6 +1525,92 @@ async def list_client_devices(
     start = (page - 1) * page_size
     page_items = items[start : start + page_size]
     return PaginatedClientDevices(total=total, items=page_items)
+
+
+@router.get(
+    "/client-devices/tombstones",
+    response_model=list[ClientDeviceTombstoneOut],
+    dependencies=[Depends(require_action("read"))],
+)
+async def list_client_device_tombstones(
+    session: AsyncSession = Depends(get_session),
+    include_reclaimed: bool = Query(False),
+) -> list[ClientDeviceTombstoneOut]:
+    stmt = select(ClientDeviceTombstone).order_by(ClientDeviceTombstone.retired_at.desc())
+    if not include_reclaimed:
+        stmt = stmt.where(ClientDeviceTombstone.reclaimed_at.is_(None))
+    rows = (await session.execute(stmt)).scalars().all()
+    return [
+        ClientDeviceTombstoneOut(
+            id=r.id,
+            device_key=r.device_key,
+            former_device_id=r.former_device_id,
+            former_name=r.former_name,
+            lan_mac=r.lan_mac,
+            retired_at=r.retired_at,
+            retired_by=r.retired_by,
+            reclaimed_at=r.reclaimed_at,
+        )
+        for r in rows
+    ]
+
+
+@router.post(
+    "/client-devices/reclaim",
+    response_model=ClientDeviceDetailOut,
+    dependencies=[Depends(require_action("write_safe"))],
+)
+async def reclaim_client_device(
+    body: ClientDeviceReclaimIn,
+    session: AsyncSession = Depends(get_session),
+    operator: PlatformUser = Depends(get_current_user),
+) -> ClientDeviceDetailOut:
+    """Re-admit a hard-retired device_key into platform custody (unbound / awaiting line)."""
+    device_key = body.device_key.strip().upper()
+    tomb = (
+        await session.execute(
+            select(ClientDeviceTombstone).where(
+                ClientDeviceTombstone.device_key == device_key,
+                ClientDeviceTombstone.reclaimed_at.is_(None),
+            )
+        )
+    ).scalars().first()
+    if not tomb:
+        raise HTTPException(404, "no active tombstone for this device_key")
+
+    existing = (
+        await session.execute(select(ClientDevice).where(ClientDevice.device_key == device_key))
+    ).scalars().first()
+    if existing:
+        raise HTTPException(409, "device already exists in inventory")
+
+    name = (body.name or "").strip() or (tomb.former_name or device_key)
+    device = ClientDevice(
+        device_key=device_key,
+        name=name,
+        name_source="admin" if body.name else "auto",
+        lan_mac=tomb.lan_mac,
+        device_id=device_key,
+        line_id=None,
+        binding_revoked_at=utc_now(),
+        code_cleared_at=utc_now(),
+        is_active=True,
+    )
+    session.add(device)
+    await session.flush()
+    await ensure_device_reverse_ports(session, device)
+
+    tomb.reclaimed_at = utc_now()
+    session.add(tomb)
+    await _log_op(
+        session,
+        operator.username,
+        "reclaim_client_device",
+        device_key,
+        f"former_id={tomb.former_device_id}",
+    )
+    await session.commit()
+    return await get_client_device(device.id, session)
 
 
 @router.get("/client-devices/{device_id}", response_model=ClientDeviceDetailOut)
@@ -1571,10 +1685,60 @@ async def update_client_device(
         if bound:
             raise HTTPException(409, "line already bound to another device")
 
+    if "name" in data and data["name"] is not None:
+        trimmed = str(data["name"]).strip()
+        if not trimmed:
+            raise HTTPException(400, "device name cannot be empty")
+        data["name"] = trimmed
+        device.name_source = "admin"
+
+    if "line_id" in data:
+        if data["line_id"] is None:
+            device.binding_revoked_at = utc_now()
+        else:
+            device.binding_revoked_at = None
+            device.code_cleared_at = None
+
     for k, v in data.items():
         setattr(device, k, v)
     session.add(device)
     await _log_op(session, operator.username, "update_client_device", device.device_key)
+    await session.commit()
+    return await get_client_device(device_id, session)
+
+
+@router.post(
+    "/client-devices/{device_id}/factory-reset-soft",
+    response_model=ClientDeviceDetailOut,
+    dependencies=[Depends(require_action("write_safe"))],
+)
+async def soft_factory_reset_client_device(
+    device_id: int,
+    session: AsyncSession = Depends(get_session),
+    operator: PlatformUser = Depends(get_current_user),
+) -> ClientDeviceDetailOut:
+    """Unbind + clear local line code via heartbeat command; keep token / platform custody."""
+    device = await session.get(ClientDevice, device_id)
+    if not device:
+        raise HTTPException(404, "client device not found")
+
+    request_id = str(uuid.uuid4())
+    device.line_id = None
+    device.binding_revoked_at = utc_now()
+    # Mark intent immediately; client ACK confirms code cleared on box.
+    device.code_cleared_at = utc_now()
+    device.pending_device_command_json = json.dumps(
+        {"action": "factory_reset_soft", "requestId": request_id},
+        ensure_ascii=False,
+    )
+    session.add(device)
+    await _log_op(
+        session,
+        operator.username,
+        "soft_factory_reset",
+        device.device_key,
+        f"id={device_id} request_id={request_id}",
+    )
     await session.commit()
     return await get_client_device(device_id, session)
 
@@ -1584,12 +1748,13 @@ async def delete_client_device(
     device_id: int,
     session: AsyncSession = Depends(get_session),
     operator: PlatformUser = Depends(get_current_user),
-    confirm: bool = Query(False, description="Must be true to delete device record"),
+    confirm: bool = Query(False, description="Must be true to hard-retire device"),
 ) -> dict[str, str | bool]:
+    """Hard retire: requires soft factory reset first; writes tombstone + port cooldown."""
     if not confirm:
         raise HTTPException(
             400,
-            "destructive action requires confirm=true — delete releases remote ports into cooldown",
+            "destructive action requires confirm=true — hard retire releases remote ports into cooldown",
         )
     device = await session.get(ClientDevice, device_id)
     if not device:
@@ -1601,9 +1766,48 @@ async def delete_client_device(
         online=_client_device_online(device),
     )
 
+    if device.line_id is not None:
+        raise HTTPException(
+            400,
+            "硬退库前须先执行软恢复出厂（解除线路绑定并清除线路码）",
+        )
+    if device.code_cleared_at is None:
+        raise HTTPException(
+            400,
+            "硬退库前须先执行软恢复出厂",
+        )
+
     label = device.name or device.device_key
+    device_key = device.device_key
     await release_device_reverse_ports(session, device)
-    await _log_op(session, operator.username, "delete_client_device", label, f"id={device_id}")
+
+    existing_tomb = (
+        await session.execute(
+            select(ClientDeviceTombstone).where(ClientDeviceTombstone.device_key == device_key)
+        )
+    ).scalars().first()
+    if existing_tomb is None:
+        session.add(
+            ClientDeviceTombstone(
+                device_key=device_key,
+                former_device_id=device.id,
+                former_name=device.name,
+                lan_mac=device.lan_mac,
+                retired_at=utc_now(),
+                retired_by=operator.username,
+                reclaimed_at=None,
+            )
+        )
+    else:
+        existing_tomb.former_device_id = device.id
+        existing_tomb.former_name = device.name
+        existing_tomb.lan_mac = device.lan_mac
+        existing_tomb.retired_at = utc_now()
+        existing_tomb.retired_by = operator.username
+        existing_tomb.reclaimed_at = None
+        session.add(existing_tomb)
+
+    await _log_op(session, operator.username, "hard_retire_client_device", label, f"id={device_id}")
     await session.delete(device)
     await session.commit()
     await sync_authorized_keys(session)
@@ -1611,7 +1815,7 @@ async def delete_client_device(
     return {
         "ok": True,
         "message": (
-            "设备记录已删除；客户端仍在线时会通过线路码自动重新注册。"
+            "设备已硬退库；平台不再管控。同 MAC 须管理员「重新认领」后方可入库。"
             f" 远程端口已进入 {cooldown}s 冷却期。"
         ),
     }

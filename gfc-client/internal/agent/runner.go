@@ -76,24 +76,41 @@ func (r *Runner) tick() {
 		r.pendingReverseSSH = true
 	}
 
-	code, payload, err := r.activation.ReadActivation()
-	if err != nil || code == "" {
-		r.writeIdle("请刷入线路码")
-		return
+	state, stateErr := r.activation.LoadClientState()
+	hasToken := stateErr == nil && state != nil && state.ClientToken != ""
+
+	code, payload, actErr := r.activation.ReadActivation()
+	hasLineCode := actErr == nil && code != "" && linecode.IsLine(payload)
+
+	var servers []string
+	if hasLineCode {
+		servers = r.resolveServers(payload)
+	} else {
+		servers = r.envServers()
 	}
-	if !linecode.IsLine(payload) {
-		r.writeIdle("等待线路码")
-		return
-	}
-	servers := r.resolveServers(payload)
-	if len(servers) == 0 {
+
+	// Soft factory reset clears line code but keeps token — stay platform-managed.
+	if !hasLineCode {
+		if !hasToken {
+			r.writeIdle("请刷入线路码")
+			return
+		}
+		if len(servers) == 0 {
+			r.writeIdle("缺少控制平台地址")
+			return
+		}
+	} else if len(servers) == 0 {
 		r.writeIdle("线路码缺少控制平台地址")
 		return
 	}
 
-	state, err := r.activation.LoadClientState()
 	var client *controlplane.Client
-	if err != nil || state == nil || state.ClientToken == "" {
+	if !hasToken {
+		if !hasLineCode {
+			r.writeIdle("请刷入线路码")
+			return
+		}
+		var err error
 		client, err = controlplane.New(servers, "")
 		if err != nil {
 			r.writeIdle(err.Error())
@@ -126,6 +143,7 @@ func (r *Runner) tick() {
 		client, _ = controlplane.New(servers, st.ClientToken)
 		fmt.Printf("activated line=%s via %s\n", st.TID, client.ActiveServer())
 	} else {
+		var err error
 		client, err = controlplane.New(servers, state.ClientToken)
 		if err != nil {
 			return
@@ -147,16 +165,27 @@ func (r *Runner) tick() {
 	_ = metrics.WriteStatus(r.cfg.Paths.StatusFile, m, device)
 
 	pubKey, _ := r.revSSH.EnsureKeypair()
-	hb, err := client.Heartbeat(m, r.cfg.DeviceName, nil, nil, pubKey, nil, r.cfg.ProxyMode, config.Version)
+	hb, err := client.Heartbeat(m, r.cfg.DeviceName, nil, nil, pubKey, nil, r.cfg.ProxyMode, config.Version, nil)
 	r.pendingReverseSSH = false
 	if err != nil {
 		fmt.Printf("heartbeat: %v\n", err)
+		if strings.Contains(err.Error(), "401") || strings.Contains(strings.ToLower(err.Error()), "invalid client token") {
+			// Hard-retire invalidates token; clear local state so we do not loop forever.
+			// Soft unbind keeps token — do not clear on generic heartbeat errors.
+			fmt.Printf("heartbeat auth failed; clearing client state (re-flash or reclaim required)\n")
+			_ = os.Remove(r.cfg.Paths.StateFile)
+			return
+		}
 	} else {
 		cmd := reversessh.ParseCommand(nil)
+		var deviceCmdAck map[string]any
 		if hb != nil {
 			cmd = reversessh.ParseCommand(hb.ReverseSSH)
 			if err := reversessh.EnsureWebSSHAuthorizedKey(hb.WebSSHAuthorizedKey); err != nil {
 				fmt.Printf("webssh authorized key: %v\n", err)
+			}
+			if hb.DeviceCommand != nil {
+				deviceCmdAck = r.applyDeviceCommand(hb.DeviceCommand)
 			}
 		}
 		ok, msg, active := r.syncReverseSSH(cmd)
@@ -173,7 +202,7 @@ func (r *Runner) tick() {
 		if active {
 			status["active"] = true
 		}
-		if _, err := client.Heartbeat(m, r.cfg.DeviceName, nil, nil, "", status, r.cfg.ProxyMode, config.Version); err != nil {
+		if _, err := client.Heartbeat(m, r.cfg.DeviceName, nil, nil, "", status, r.cfg.ProxyMode, config.Version, deviceCmdAck); err != nil {
 			fmt.Printf("heartbeat status: %v\n", err)
 		}
 		if msg != "" {
@@ -187,6 +216,7 @@ func (r *Runner) tick() {
 		return
 	}
 	payload2 := bundle.Payload
+	r.applyPlatformDeviceName(payload2)
 	r.mergePayloadProxyMode(payload2)
 	r.reconcileRoutingScheme(payload2, bundle.Version, state.AppliedVersion)
 	if cp := client.ActiveServer(); cp != "" {
@@ -376,6 +406,45 @@ func (r *Runner) syncReverseSSH(cmd *reversessh.Command) (bool, string, bool) {
 	ok, msg := r.revSSH.SyncCommand(cmd)
 	active := r.revSSH.Status()["active"] == "active"
 	return ok, msg, active
+}
+
+// applyPlatformDeviceName syncs admin-authored device name from config bundle.
+func (r *Runner) applyPlatformDeviceName(p map[string]any) {
+	raw, _ := p["deviceName"].(string)
+	name := strings.TrimSpace(raw)
+	if name == "" || name == r.cfg.DeviceName {
+		return
+	}
+	r.cfg.DeviceName = name
+	_ = envfile.Set(r.cfg.Paths.EnvFile, "DEVICE_NAME", name)
+	_ = os.Setenv("DEVICE_NAME", name)
+	fmt.Printf("device name synced from platform: %s\n", name)
+}
+
+func (r *Runner) applyDeviceCommand(cmd *controlplane.DeviceCommand) map[string]any {
+	if cmd == nil || cmd.RequestID == "" {
+		return nil
+	}
+	switch cmd.Action {
+	case "factory_reset_soft":
+		if err := r.activation.ClearLineCode(); err != nil {
+			fmt.Printf("soft factory reset: clear line code: %v\n", err)
+		} else {
+			fmt.Printf("soft factory reset: line code cleared (platform custody retained)\n")
+		}
+		return map[string]any{
+			"request_id": cmd.RequestID,
+			"status":     "ok",
+			"action":     cmd.Action,
+		}
+	default:
+		fmt.Printf("unknown device command: %s\n", cmd.Action)
+		return map[string]any{
+			"request_id": cmd.RequestID,
+			"status":     "ignored",
+			"action":     cmd.Action,
+		}
+	}
 }
 
 func isPlaceholderDeviceName(name string) bool {

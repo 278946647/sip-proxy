@@ -20,9 +20,9 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { formatApiTime, formatApiTimeFromNow } from "../utils/datetime";
-import { apiDelete, apiGet, apiPatch } from "../api/client";
+import { apiDelete, apiGet, apiPatch, apiPost } from "../api/client";
 import { openRemoteTarget } from "../lib/openRemote";
-import { confirmDeleteClientDevice } from "../utils/dangerousConfirm";
+import { confirmHardRetire, confirmSoftFactoryReset } from "../utils/dangerousConfirm";
 import {
   confirmClientLineChange,
   confirmClientLineUnbind,
@@ -44,6 +44,7 @@ const SERVICE_REASON_LABEL: Record<string, string> = {
   line_disabled: "线路已禁用",
   line_deleted: "线路已删除",
   line_unbound: "未绑线",
+  awaiting_line: "托管·待分配",
   node_offline: "节点离线",
   agent_not_active: "Agent 未就绪",
 };
@@ -60,6 +61,9 @@ const ROUTING_SCHEME_LABEL: Record<DeviceRoutingScheme, string> = {
 };
 
 function serviceTag(item: ClientDeviceDetail) {
+  if (item.serviceReason === "awaiting_line") {
+    return <Tag color="blue">托管·待分配</Tag>;
+  }
   const map: Record<ClientDeviceDetail["serviceState"], { color: string; label: string }> = {
     active: { color: "green", label: "业务正常" },
     suspended: { color: "orange", label: "业务关停" },
@@ -119,8 +123,19 @@ export function ClientDeviceDetailPage() {
       const res = await apiDelete<{ ok: boolean; message?: string }>(
         `/admin/client-devices/${id}?operator=${localStorage.getItem("gfc_user") || "admin"}&confirm=true`
       );
-      message.success(res.message || "已删除");
+      message.success(res.message || "已硬退库");
       nav("/client-devices");
+    } catch (e) {
+      message.error(String(e));
+    }
+  };
+
+  const softFactoryReset = async () => {
+    if (!id) return;
+    try {
+      await apiPost(`/admin/client-devices/${id}/factory-reset-soft`, {});
+      message.success("已下发软恢复出厂；设备将清除线路码并保持平台托管");
+      await load();
     } catch (e) {
       message.error(String(e));
     }
@@ -256,13 +271,32 @@ export function ClientDeviceDetailPage() {
             <Button onClick={() => void openRemoteTarget(device.id, "flash", device.name)}>刷码协助</Button>
           </Space>
         )}
+        {writable ? (
+          <Button
+            danger
+            onClick={() =>
+              confirmSoftFactoryReset(
+                device.name,
+                device.lineTid || device.name,
+                () => softFactoryReset()
+              )
+            }
+          >
+            软恢复出厂
+          </Button>
+        ) : null}
         {perms.canDeleteStructural || isOperatorDeletableClient(device) ? (
           <Button
             danger
             icon={<DeleteOutlined />}
-            onClick={() => confirmDeleteClientDevice(device.name, () => removeDevice())}
+            onClick={() =>
+              confirmHardRetire(device.name, () => removeDevice(), {
+                codeCleared: device.codeCleared,
+                lineBound: !!device.lineId,
+              })
+            }
           >
-            删除
+            硬退库
           </Button>
         ) : null}
       </Space>

@@ -1,4 +1,5 @@
-import { Modal } from "antd";
+import { Input, Modal, Typography, message } from "antd";
+import { createElement } from "react";
 
 type RemoteTarget = "ssh" | "web" | "flash";
 
@@ -51,12 +52,20 @@ export function confirmDeleteSocks(name: string, onConfirm: () => Promise<void>)
 
 export function confirmDeleteLine(
   tid: string,
-  onConfirm: () => Promise<void>
+  onConfirm: () => Promise<void>,
+  opts?: { boundDeviceName?: string | null }
 ) {
+  if (opts?.boundDeviceName) {
+    Modal.warning({
+      title: `无法删除线路 ${tid}`,
+      content: `线路仍绑定客户端「${opts.boundDeviceName}」，请先在客户端管理中解绑后再删除。`,
+      okText: "知道了",
+    });
+    return;
+  }
   Modal.confirm({
     title: `确认删除线路 ${tid}？`,
-    content:
-      "将删除线路记录与线路码；已绑定设备将失去配置关联，需重新刷码或改绑。此操作不可恢复。",
+    content: "将删除线路记录与线路码。请确认该线路未绑定任何客户端。此操作不可恢复。",
     okText: "确认删除",
     okButtonProps: { danger: true },
     cancelText: "取消",
@@ -64,33 +73,93 @@ export function confirmDeleteLine(
   });
 }
 
+/** Soft factory reset — clear line code, unbind, keep platform custody. */
+export function confirmSoftFactoryReset(
+  deviceName: string,
+  confirmToken: string,
+  onConfirm: () => Promise<void>
+) {
+  const token = (confirmToken || deviceName).trim();
+  let typed = "";
+
+  Modal.confirm({
+    title: `确认对设备「${deviceName}」执行软恢复出厂？`,
+    width: 520,
+    content: createElement(
+      "div",
+      null,
+      createElement(
+        Typography.Paragraph,
+        null,
+        `将对设备 ${deviceName} 执行恢复出厂：`
+      ),
+      createElement(
+        "ul",
+        { style: { paddingLeft: 20, marginBottom: 12 } },
+        createElement("li", null, "清除设备上的线路码"),
+        createElement("li", null, "解除线路绑定，切换直连"),
+        createElement("li", null, "设备保持平台托管（远程管理仍可用）"),
+        createElement("li", null, "重新分配线路请在平台操作，无需刷码")
+      ),
+      createElement(
+        Typography.Paragraph,
+        { type: "secondary" },
+        "此操作不可撤销，需输入设备名称或 TID 确认。"
+      ),
+      createElement(Input, {
+        placeholder: `请输入「${token}」确认`,
+        onChange: (e: { target: { value: string } }) => {
+          typed = e.target.value;
+        },
+        style: { marginTop: 8 },
+      })
+    ),
+    okText: "确认软恢复",
+    okButtonProps: { danger: true },
+    cancelText: "取消",
+    onOk: async () => {
+      if (typed.trim() !== token) {
+        message.error(`请输入「${token}」以确认`);
+        return Promise.reject();
+      }
+      await onConfirm();
+    },
+  });
+}
+
+/** Hard retire (replaces plain delete) — requires prior soft factory reset. */
+export function confirmHardRetire(
+  deviceName: string,
+  onConfirm: () => Promise<void>,
+  opts?: { codeCleared?: boolean; lineBound?: boolean }
+) {
+  if (opts?.lineBound || !opts?.codeCleared) {
+    Modal.warning({
+      title: "无法硬退库",
+      content:
+        "硬退库前必须先执行「软恢复出厂」（解除线路绑定并清除线路码）。硬退库后平台不再管控该设备，同 MAC 须管理员重新认领方可入库。",
+      okText: "知道了",
+    });
+    return;
+  }
+  Modal.confirm({
+    title: `硬退库「${deviceName}」？`,
+    width: 520,
+    content:
+      "将退出平台管控：撤销 Token、写入退库记录、释放远程端口（进入冷却期）。\n\n" +
+      "设备将无法自动重新注册；同 MAC 须管理员在「已退库」中重新认领。\n\n" +
+      "防硬件丢失场景请勿使用此操作。此操作不可恢复。",
+    okText: "确认硬退库",
+    okButtonProps: { danger: true },
+    cancelText: "取消",
+    onOk: onConfirm,
+  });
+}
+
+/** @deprecated use confirmHardRetire */
 export function confirmDeleteClientDevice(
   name: string,
   onConfirm: () => Promise<void>
 ) {
-  Modal.confirm({
-    title: `删除客户端「${name}」？`,
-    content:
-      "删除后释放远程端口（进入冷却期）；在线设备将自动重新注册。线路码仍有效，可再次刷入。",
-    okText: "确认删除",
-    okButtonProps: { danger: true },
-    cancelText: "取消",
-    onOk: onConfirm,
-  });
-}
-
-export function confirmResetUserPassword(
-  username: string,
-  onConfirm: () => Promise<void>,
-  onCancel?: () => void
-) {
-  Modal.confirm({
-    title: `重置用户「${username}」的密码？`,
-    content: "重置后旧密码立即失效；若该用户已登录，其会话将在下次鉴权时失败。",
-    okText: "继续重置",
-    okButtonProps: { danger: true },
-    cancelText: "取消",
-    onOk: onConfirm,
-    onCancel,
-  });
+  confirmHardRetire(name, onConfirm, { codeCleared: true, lineBound: false });
 }

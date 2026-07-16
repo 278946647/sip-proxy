@@ -2,6 +2,7 @@ import {
   Alert,
   Button,
   Dropdown,
+  Modal,
   Space,
   Table,
   Tabs,
@@ -13,10 +14,10 @@ import type { MenuProps } from "antd";
 import { DeleteOutlined, DownOutlined, EyeOutlined, ReloadOutlined } from "@ant-design/icons";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { apiDelete, apiGet } from "../api/client";
+import { apiDelete, apiGet, apiPost } from "../api/client";
 import { formatApiTime, formatApiTimeFromNow, nowDisplay } from "../utils/datetime";
 import { openRemoteTarget } from "../lib/openRemote";
-import { confirmDeleteClientDevice } from "../utils/dangerousConfirm";
+import { confirmHardRetire } from "../utils/dangerousConfirm";
 import {
   lineBindingLabel,
   mapClientDevice,
@@ -25,14 +26,24 @@ import {
   type LineListItem,
 } from "../types";
 import { getUser } from "../api/auth";
-import { isOperatorDeletableClient, permissionsFromUser } from "../utils/permissions";
+import { canWrite, isOperatorDeletableClient, permissionsFromUser } from "../utils/permissions";
 
 type DeviceTab = "attention" | "active" | "suspended" | "all";
+
+type TombstoneRow = {
+  id: number;
+  deviceKey: string;
+  formerName: string | null;
+  lanMac: string | null;
+  retiredAt: string;
+  retiredBy: string | null;
+};
 
 const SERVICE_REASON_LABEL: Record<string, string> = {
   line_disabled: "线路已禁用",
   line_deleted: "线路已删除",
   line_unbound: "未绑线",
+  awaiting_line: "托管·待分配",
   node_offline: "节点离线",
   agent_not_active: "Agent 未就绪",
 };
@@ -46,6 +57,9 @@ function managementTag(state: ClientDeviceListItem["managementState"]) {
 }
 
 function serviceTag(item: ClientDeviceListItem) {
+  if (item.serviceReason === "awaiting_line") {
+    return <Tag color="blue">托管·待分配</Tag>;
+  }
   const map: Record<ClientDeviceListItem["serviceState"], { color: string; label: string }> = {
     active: { color: "green", label: "业务正常" },
     suspended: { color: "orange", label: "业务关停" },
@@ -113,7 +127,11 @@ export function ClientDevicesPage() {
   const [loading, setLoading] = useState(false);
   const [lastRefresh, setLastRefresh] = useState(nowDisplay());
   const [activeTab, setActiveTab] = useState<DeviceTab>("all");
+  const [tombOpen, setTombOpen] = useState(false);
+  const [tombs, setTombs] = useState<TombstoneRow[]>([]);
+  const [tombLoading, setTombLoading] = useState(false);
   const perms = permissionsFromUser(getUser());
+  const writable = canWrite(getUser());
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -133,6 +151,27 @@ export function ClientDevicesPage() {
       setLoading(false);
     }
   }, []);
+
+  const loadTombs = async () => {
+    setTombLoading(true);
+    try {
+      const rows = await apiGet<Record<string, unknown>[]>("/admin/client-devices/tombstones");
+      setTombs(
+        rows.map((r) => ({
+          id: r.id as number,
+          deviceKey: r.device_key as string,
+          formerName: (r.former_name as string | null) ?? null,
+          lanMac: (r.lan_mac as string | null) ?? null,
+          retiredAt: r.retired_at as string,
+          retiredBy: (r.retired_by as string | null) ?? null,
+        }))
+      );
+    } catch (e) {
+      message.error(String(e));
+    } finally {
+      setTombLoading(false);
+    }
+  };
 
   useEffect(() => {
     void load();
@@ -157,8 +196,23 @@ export function ClientDevicesPage() {
       const res = await apiDelete<{ ok: boolean; message?: string }>(
         `/admin/client-devices/${row.id}?operator=${localStorage.getItem("gfc_user") || "admin"}&confirm=true`
       );
-      message.success(res.message || "已删除");
+      message.success(res.message || "已硬退库");
       void load();
+    } catch (e) {
+      message.error(String(e));
+    }
+  };
+
+  const reclaim = async (deviceKey: string) => {
+    try {
+      const raw = await apiPost<Record<string, unknown>>("/admin/client-devices/reclaim", {
+        device_key: deviceKey,
+      });
+      const mapped = mapClientDevice(raw);
+      message.success(`已重新认领「${mapped.name}」，请分配线路`);
+      setTombOpen(false);
+      void load();
+      nav(`/client-devices/${mapped.id}`);
     } catch (e) {
       message.error(String(e));
     }
@@ -196,16 +250,28 @@ export function ClientDevicesPage() {
         <Typography.Title level={4} style={{ margin: 0 }}>
           客户端管理
         </Typography.Title>
-        <Button icon={<ReloadOutlined />} onClick={() => void load()}>
-          立即刷新状态
-        </Button>
+        <Space>
+          {writable ? (
+            <Button
+              onClick={() => {
+                setTombOpen(true);
+                void loadTombs();
+              }}
+            >
+              已退库
+            </Button>
+          ) : null}
+          <Button icon={<ReloadOutlined />} onClick={() => void load()}>
+            立即刷新状态
+          </Button>
+        </Space>
       </div>
 
       <Alert
         type="info"
         showIcon
         style={{ marginBottom: 16 }}
-        message="列表展示设备管控与业务状态。更换线路、编辑名称等操作请进入设备详情。刷码适用于首次激活或本地状态恢复。"
+        message="列表展示设备管控与业务状态。更换线路、编辑名称、软恢复出厂请进入设备详情。硬退库须先软恢复；同 MAC 重新入库请在「已退库」认领。"
       />
 
       <div style={{ marginBottom: 12, color: "#64748b", fontSize: 13 }}>
@@ -305,9 +371,14 @@ export function ClientDevicesPage() {
                     size="small"
                     danger
                     icon={<DeleteOutlined />}
-                    onClick={() => confirmDeleteClientDevice(row.name, () => deleteRow(row))}
+                    onClick={() =>
+                      confirmHardRetire(row.name, () => deleteRow(row), {
+                        codeCleared: row.codeCleared,
+                        lineBound: !!row.lineId,
+                      })
+                    }
                   >
-                    删除
+                    硬退库
                   </Button>
                 )}
               </Space>
@@ -315,6 +386,38 @@ export function ClientDevicesPage() {
           },
         ]}
       />
+
+      <Modal
+        title="已退库设备"
+        open={tombOpen}
+        onCancel={() => setTombOpen(false)}
+        footer={null}
+        width={720}
+      >
+        <Table
+          rowKey="id"
+          loading={tombLoading}
+          dataSource={tombs}
+          pagination={false}
+          locale={{ emptyText: "暂无已退库设备" }}
+          columns={[
+            { title: "原名称", dataIndex: "formerName", render: (v: string | null) => v || "—" },
+            { title: "Device Key", dataIndex: "deviceKey", render: (v: string) => <Typography.Text code>{v}</Typography.Text> },
+            { title: "MAC", dataIndex: "lanMac", render: (v: string | null) => v || "—" },
+            { title: "退库时间", dataIndex: "retiredAt", render: (v: string) => formatApiTime(v) },
+            { title: "操作人", dataIndex: "retiredBy", render: (v: string | null) => v || "—" },
+            {
+              title: "操作",
+              render: (_, row) =>
+                writable ? (
+                  <Button type="link" onClick={() => void reclaim(row.deviceKey)}>
+                    重新认领
+                  </Button>
+                ) : null,
+            },
+          ]}
+        />
+      </Modal>
     </div>
   );
 }

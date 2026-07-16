@@ -82,6 +82,8 @@ export type ClientDeviceListItem = {
   reverseSshSessionState: string;
   proxyMode: DeviceProxyMode;
   routingScheme: DeviceRoutingScheme;
+  nameSource: "auto" | "admin";
+  codeCleared: boolean;
   online: boolean;
   managementState: "online" | "offline";
   serviceState: "active" | "suspended" | "unbound" | "degraded" | "unknown";
@@ -347,6 +349,8 @@ export function mapClientDevice(raw: Record<string, unknown>): ClientDeviceListI
     reverseSshSessionState: String(raw.reverse_ssh_session_state || "idle"),
     proxyMode: ((raw.proxy_mode as string) || "gateway") as DeviceProxyMode,
     routingScheme: ((raw.routing_scheme as string) || "split") as DeviceRoutingScheme,
+    nameSource: ((raw.name_source as string) || "auto") === "admin" ? "admin" : "auto",
+    codeCleared: Boolean(raw.code_cleared),
     online: raw.online as boolean,
     managementState: (raw.management_state as ClientDeviceListItem["managementState"]) || (raw.online ? "online" : "offline"),
     serviceState: (raw.service_state as ClientDeviceListItem["serviceState"]) || "unknown",

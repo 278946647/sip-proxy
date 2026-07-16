@@ -161,6 +161,18 @@ class ClientDevice(Base):
     )
     proxy_mode: Mapped[str] = mapped_column(String(32), default="gateway")
     routing_scheme: Mapped[str] = mapped_column(String(32), default="split")
+    # auto = first activate / placeholder → TID; admin = platform rename is authoritative
+    name_source: Mapped[str] = mapped_column(String(16), default="auto")
+    # Set on unbind; cleared when admin assigns/rebinds a line. Blocks code re-activate.
+    binding_revoked_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Soft factory reset completed (local line code cleared / pending clear).
+    code_cleared_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Pending command delivered via heartbeat, e.g. {"action":"factory_reset_soft","requestId":"..."}
+    pending_device_command_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     agent_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
     last_seen_at: Mapped[dt.datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
@@ -174,6 +186,26 @@ class ClientDevice(Base):
     line: Mapped["Line | None"] = relationship(back_populates="client_device")
     tokens: Mapped[list["ClientToken"]] = relationship(
         back_populates="device", cascade="all, delete-orphan"
+    )
+
+
+class ClientDeviceTombstone(Base):
+    """Hard-retired device identity — blocks silent re-activate until admin reclaim."""
+
+    __tablename__ = "client_device_tombstones"
+    __table_args__ = (UniqueConstraint("device_key", name="uq_tombstone_device_key"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    device_key: Mapped[str] = mapped_column(String(64), index=True)
+    former_device_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    former_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    lan_mac: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    retired_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: dt.datetime.now(dt.timezone.utc)
+    )
+    retired_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    reclaimed_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
 
 

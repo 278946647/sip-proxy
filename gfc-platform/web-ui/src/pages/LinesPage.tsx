@@ -269,11 +269,15 @@ export function LinesPage() {
                   danger
                   icon={<DeleteOutlined />}
                   onClick={() =>
-                    confirmDeleteLine(r.tid, async () => {
-                      await apiDelete(`/admin/lines/${r.id}`);
-                      message.success("已删除");
-                      void load();
-                    })
+                    confirmDeleteLine(
+                      r.tid,
+                      async () => {
+                        await apiDelete(`/admin/lines/${r.id}`);
+                        message.success("已删除");
+                        void load();
+                      },
+                      { boundDeviceName: r.clientDeviceName }
+                    )
                   }
                 />
                 )}

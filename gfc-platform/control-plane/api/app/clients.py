@@ -20,7 +20,7 @@ from .client_config import (
 )
 from .line_code import decode_line_code as _decode_line_code
 from .db import get_session
-from .models import ClientDevice, ClientToken, ConfigBundle, FlowStat, Line
+from .models import ClientDevice, ClientDeviceTombstone, ClientToken, ConfigBundle, FlowStat, Line
 from .schemas import (
     ClientActivateIn,
     ClientActivateResponse,
@@ -29,6 +29,7 @@ from .schemas import (
     ClientHeartbeatResponse,
     ClientRuntimeUpdateIn,
     ConfigBundleOut,
+    DeviceCommandOut,
     ReverseSSHCommandOut,
     ReverseSSHPortsOut,
 )
@@ -106,6 +107,23 @@ def _initial_device_name(requested: str | None, tid: str) -> str:
     return name
 
 
+def _name_source(device: ClientDevice) -> str:
+    return (getattr(device, "name_source", None) or "auto").strip().lower()
+
+
+async def _active_tombstone(
+    session: AsyncSession, device_key: str
+) -> ClientDeviceTombstone | None:
+    return (
+        await session.execute(
+            select(ClientDeviceTombstone).where(
+                ClientDeviceTombstone.device_key == device_key,
+                ClientDeviceTombstone.reclaimed_at.is_(None),
+            )
+        )
+    ).scalars().first()
+
+
 async def _ensure_reverse_ports(session: AsyncSession, device: ClientDevice) -> None:
     await ensure_device_reverse_ports(session, device)
 
@@ -136,24 +154,51 @@ async def activate_client(
         raise HTTPException(400, "line code uuid mismatch")
 
     device_key = _device_key_from_mac(body.lan_mac, body.device_id)
+
+    tombstone = await _active_tombstone(session, device_key)
+    if tombstone:
+        raise HTTPException(
+            403,
+            "device was hard-retired; ask an admin to reclaim it before activating",
+        )
+
     existing = (
         await session.execute(select(ClientDevice).where(ClientDevice.device_key == device_key))
     ).scalars().first()
+
+    # Platform binding is authoritative: revoked devices must not re-bind via line code.
+    if existing and existing.binding_revoked_at is not None and existing.line_id is None:
+        raise HTTPException(
+            403,
+            "line binding revoked; assign a line from the control platform",
+        )
+
+    # If already bound on platform, keep platform line — do not let stale code override.
+    if existing and existing.line_id and existing.line_id != line.id:
+        raise HTTPException(
+            409,
+            "device already bound to another line; unbind or rebind from the control platform",
+        )
 
     bound = line.client_device
     if bound and (not existing or bound.id != existing.id):
         if existing and existing.line_id and existing.line_id != line.id:
             raise HTTPException(409, "device already bound to another line")
         bound.line_id = None
+        bound.binding_revoked_at = utc_now()
         session.add(bound)
         await session.flush()
 
     if existing:
         device = existing
-        if existing.line_id and existing.line_id != line.id:
-            raise HTTPException(409, "device already bound to another line")
-        device.line_id = line.id
-        device.name = _initial_device_name(body.device_name, line.tid)
+        # Prefer existing platform binding when set.
+        if existing.line_id is None:
+            device.line_id = line.id
+        device.binding_revoked_at = None
+        device.code_cleared_at = None
+        if _name_source(device) != "admin":
+            device.name = _initial_device_name(body.device_name, line.tid)
+            device.name_source = "auto"
         device.lan_mac = body.lan_mac
         device.device_id = body.device_id or device_key
         device.proxy_mode = body.proxy_mode
@@ -164,6 +209,7 @@ async def activate_client(
         device = ClientDevice(
             device_key=device_key,
             name=_initial_device_name(body.device_name, line.tid),
+            name_source="auto",
             lan_mac=body.lan_mac,
             device_id=body.device_id or device_key,
             line_id=line.id,
@@ -213,7 +259,7 @@ async def activate_client(
         device_id=device.id,
         device_key=device.device_key,
         client_token=raw_token,
-        line_id=line.id,
+        line_id=device.line_id or line.id,
         tid=line.tid,
     )
 
@@ -268,16 +314,18 @@ async def client_heartbeat(
 ) -> ClientHeartbeatResponse:
     device = await _auth_client(session, authorization)
     device.last_seen_at = utc_now()
-    # Do not let stock OpenWrt hostname "(none)" / ImmortalWrt overwrite a
-    # platform-edited name. Fill placeholder names from line TID when possible.
-    if body.device_name and not _is_placeholder_device_name(body.device_name):
-        device.name = body.device_name.strip()
-    elif _is_placeholder_device_name(device.name):
-        line = device.line
-        if line is None and device.line_id:
-            line = await session.get(Line, device.line_id)
-        if line and line.tid:
-            device.name = line.tid
+
+    # Name sync: only auto-sourced names accept client reports / TID fill.
+    if _name_source(device) != "admin":
+        if body.device_name and not _is_placeholder_device_name(body.device_name):
+            device.name = body.device_name.strip()
+        elif _is_placeholder_device_name(device.name):
+            line = device.line
+            if line is None and device.line_id:
+                line = await session.get(Line, device.line_id)
+            if line and line.tid:
+                device.name = line.tid
+
     if body.agent_version:
         device.agent_version = body.agent_version
     if body.proxy_mode:
@@ -302,6 +350,20 @@ async def client_heartbeat(
     if not session_active(device):
         device.reverse_ssh_tunnel_reported_at = None
 
+    # Acknowledge pending device command (e.g. soft factory reset).
+    if body.device_command_ack and isinstance(body.device_command_ack, dict):
+        ack_id = str(body.device_command_ack.get("request_id") or body.device_command_ack.get("requestId") or "")
+        pending = None
+        if device.pending_device_command_json:
+            try:
+                pending = json.loads(device.pending_device_command_json)
+            except json.JSONDecodeError:
+                pending = None
+        if pending and ack_id and ack_id == str(pending.get("requestId") or pending.get("request_id") or ""):
+            device.pending_device_command_json = None
+            if pending.get("action") == "factory_reset_soft":
+                device.code_cleared_at = utc_now()
+
     if body.metrics is not None:
         device.last_metrics_json = json.dumps(body.metrics, ensure_ascii=False)
         await _record_tunnel_flow(session, device, body.metrics)
@@ -322,10 +384,23 @@ async def client_heartbeat(
             ports=ReverseSSHPortsOut(**cmd["ports"]) if cmd.get("ports") else None,
             targets=cmd.get("targets") or [],
         )
+
+    device_command = None
+    if device.pending_device_command_json:
+        try:
+            pending = json.loads(device.pending_device_command_json)
+            action = str(pending.get("action") or "")
+            req_id = str(pending.get("requestId") or pending.get("request_id") or "")
+            if action and req_id:
+                device_command = DeviceCommandOut(action=action, request_id=req_id)
+        except json.JSONDecodeError:
+            pass
+
     return ClientHeartbeatResponse(
         server_time=utc_now(),
         reverse_ssh=reverse_ssh,
         webssh_authorized_key=webssh_public_key_line(),
+        device_command=device_command,
     )
 
 

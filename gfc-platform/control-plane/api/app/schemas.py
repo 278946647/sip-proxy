@@ -441,6 +441,7 @@ class ClientHeartbeatRequest(BaseModel):
     ssh_key_rotate: bool = False
     reverse_ssh_status: dict[str, Any] | None = None
     proxy_mode: str | None = Field(default=None, pattern="^(gateway|bypass|transparent)$")
+    device_command_ack: dict[str, Any] | None = None
 
 
 class ClientRuntimeUpdateIn(BaseModel):
@@ -463,11 +464,17 @@ class ReverseSSHCommandOut(BaseModel):
     targets: list[str] = Field(default_factory=list)
 
 
+class DeviceCommandOut(BaseModel):
+    action: str
+    request_id: str
+
+
 class ClientHeartbeatResponse(BaseModel):
     ok: bool = True
     server_time: dt.datetime
     reverse_ssh: ReverseSSHCommandOut | None = None
     webssh_authorized_key: str | None = None
+    device_command: DeviceCommandOut | None = None
 
 
 class ClientConfigAckIn(BaseModel):
@@ -499,6 +506,8 @@ class ClientDeviceListItem(BaseModel):
     reverse_ssh_session_state: str = "idle"
     proxy_mode: str
     routing_scheme: str = "split"
+    name_source: str = "auto"
+    code_cleared: bool = False
     online: bool
     management_state: str = "offline"
     service_state: str = "unknown"
@@ -532,6 +541,22 @@ class ReverseSSHSessionOut(BaseModel):
     targets: list[str] = Field(default_factory=list)
     urls: dict[str, str | None] = Field(default_factory=dict)
     message: str | None = None
+
+
+class ClientDeviceTombstoneOut(BaseModel):
+    id: int
+    device_key: str
+    former_device_id: int | None
+    former_name: str | None
+    lan_mac: str | None
+    retired_at: dt.datetime
+    retired_by: str | None
+    reclaimed_at: dt.datetime | None = None
+
+
+class ClientDeviceReclaimIn(BaseModel):
+    device_key: str = Field(min_length=1, max_length=64)
+    name: str | None = Field(default=None, max_length=128)
 
 
 class PaginatedClientDevices(BaseModel):
