@@ -5,9 +5,9 @@
 
 var API = 'http://127.0.0.1:8080/api/v1';
 
-function post(path, body) {
+function post(path, body, timeoutSec) {
 	return fs.exec('/usr/bin/wget', [
-		'-qO-', '-T', '25',
+		'-qO-', '-T', String(timeoutSec || 25),
 		'--header=Content-Type: application/json',
 		'--post-data=' + JSON.stringify(body || {}),
 		API + path
@@ -18,7 +18,8 @@ function post(path, body) {
 
 function run(kind, host, out) {
 	out.textContent = '检测中...';
-	return post('/diagnostics/' + kind, { host: host }).then(function(res) {
+	var timeout = kind === 'vless' ? 60 : 25;
+	return post('/diagnostics/' + kind, { host: host }, timeout).then(function(res) {
 		var data = (res || {}).data || res || {};
 		if (kind === 'vless' && data.conclusion) {
 			var head = (data.ok ? '【通过】' : '【未通过】') + ' ' + data.conclusion;
