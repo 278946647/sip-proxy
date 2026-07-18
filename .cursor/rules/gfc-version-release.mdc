@@ -1,0 +1,37 @@
+---
+description: GFC 产品版本 / 兼容矩阵 / 发版自动化 — 每次迭代必读
+alwaysApply: true
+---
+
+# GFC 版本与发布协议（强制）
+
+## 权威来源
+
+1. `docs/VERSION_AND_RELEASE.md`
+2. `docs/releases/VERSION_MATRIX.json`（机器权威；已发布行之组件钉扎 **禁止改写**）
+3. `docs/releases/CHANGELOG.md`
+
+## 兼容策略（用户已定）
+
+- **仅同 Major 内直升**（`1.x → 1.y`）
+- **跨 Major 禁止直跳**；必须矩阵中的 `upgrade_path.bridge` 或 `migration_doc`
+- 旧代码靠 **immutable annotated git tag** 找回；禁止 `tag -f` / force-push tag；禁止用目录拷贝存旧版
+
+## 改功能 / 发版前必须
+
+1. 定级：Patch / Minor / Major / Dataplane-Arch
+2. 更新 `VERSION_MATRIX.json`（同步 yaml 摘要）+ `CHANGELOG.md`
+3. 对齐 `PKG_VERSION-rPKG_RELEASE`、`AGENT_VERSION`、产品 `product.current`
+4. 跑 `scripts/version/check_release.ps1` 或 `.py`
+5. 查询路径：`show_compat.ps1 -From A -To B`（或 py 等价）
+6. 切 tag：`cut_release.ps1 -Version X.Y.Z`（默认不 push；禁止覆盖已有 tag）
+
+未更新矩阵就改协议/配置契约 = **违规**。
+
+## 与数据面
+
+nft / unbound / sing-box 变更仍须「确认修改」；级别至少 Major 或 Dataplane-Arch，通道为固件/人工，不得假装普通 OTA Patch。
+
+## 固定口令（建议）
+
+> 严格按 `docs/VERSION_AND_RELEASE.md` 与 `VERSION_MATRIX.json`；同 Major 才直升；发版前跑 `check_release`；用 tag 留旧版，禁止改写 tag。

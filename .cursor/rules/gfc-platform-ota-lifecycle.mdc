@@ -16,8 +16,9 @@ alwaysApply: true
 ## 权威文档
 
 1. `docs/SESSION_HANDOFF_2026-07_OTA_LIFECYCLE.md` — **本批任务完成态、验收、踩坑**
-2. `gfc-client/deploy/immortalwrt/FIRMWARE-BUILD-HANDOFF.md` + `BUILD-FIRMWARE.md` — 固件构建
-3. `docs/NFT_ARCHITECTURE.md` / `UNBOUND_ARCHITECTURE.md` / `SINGBOX_ARCHITECTURE.md` — 数据面（仍须批准）
+2. `docs/VERSION_AND_RELEASE.md` + `docs/releases/VERSION_MATRIX.json` — **产品版本 / 同 Major 直升 / 发版**
+3. `gfc-client/deploy/immortalwrt/FIRMWARE-BUILD-HANDOFF.md` + `BUILD-FIRMWARE.md` — 固件构建
+4. `docs/NFT_ARCHITECTURE.md` / `UNBOUND_ARCHITECTURE.md` / `SINGBOX_ARCHITECTURE.md` — 数据面（仍须批准）
 
 ## 已完成（禁止当「未做」重开需求）
 
