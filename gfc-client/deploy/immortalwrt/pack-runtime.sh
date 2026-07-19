@@ -46,6 +46,7 @@ install -m 755 "$ROOT/bin/gfc-agent" "$STAGE/bin/gfc-agent"
 install -m 755 "$ROOT/bin/gfc-bootstrap" "$STAGE/bin/gfc-bootstrap"
 cp -a "$ROOT/deploy" "$STAGE/usr/lib/gfc-client/"
 cp -a "$ROOT/share" "$STAGE/usr/lib/gfc-client/"
+printf '%s\n' "$VERSION" >"$STAGE/usr/lib/gfc-client/VERSION"
 chmod +x "$STAGE/usr/lib/gfc-client/deploy/immortalwrt/"*.sh 2>/dev/null || true
 find "$STAGE/usr/lib/gfc-client/deploy" -name '*.sh' -exec chmod +x {} \; 2>/dev/null || true
 
@@ -99,6 +100,13 @@ step "install deploy + share under /usr/lib/gfc-client"
 mkdir -p /usr/lib/gfc-client
 cp -a usr/lib/gfc-client/deploy /usr/lib/gfc-client/
 cp -a usr/lib/gfc-client/share /usr/lib/gfc-client/
+if [ -f usr/lib/gfc-client/VERSION ]; then
+	cp -f usr/lib/gfc-client/VERSION /usr/lib/gfc-client/VERSION
+	if [ -z "${GFC_UPGRADE_VERSION:-}" ]; then
+		GFC_UPGRADE_VERSION="$(tr -d '\n' < /usr/lib/gfc-client/VERSION)"
+		export GFC_UPGRADE_VERSION
+	fi
+fi
 chmod +x /usr/lib/gfc-client/deploy/immortalwrt/*.sh
 
 if [ -x /usr/lib/gfc-client/deploy/immortalwrt/upgrade-runtime.sh ]; then

@@ -82,6 +82,11 @@ func Check(manifestURL string) Status {
 
 // ApplyLocalPackage extracts and runs install.sh / upgrade-runtime.sh for a local tar.gz.
 func ApplyLocalPackage(tarPath string) (string, error) {
+	return ApplyLocalPackageOpts(tarPath, "", "")
+}
+
+// ApplyLocalPackageOpts is ApplyLocalPackage with optional version / request id for OTA markers.
+func ApplyLocalPackageOpts(tarPath, version, requestID string) (string, error) {
 	tarPath = strings.TrimSpace(tarPath)
 	if tarPath == "" {
 		return "", fmt.Errorf("empty package path")
@@ -105,16 +110,62 @@ func ApplyLocalPackage(tarPath string) (string, error) {
 	if install == "" {
 		return "", fmt.Errorf("install.sh not found in package")
 	}
-	setProgress("installing", 70, "running install.sh", "", "")
+
+	_ = os.MkdirAll(stateDir(), 0o755)
+	_ = os.MkdirAll(logDir(), 0o755)
+	ClearOTAResult()
+
+	logPath := filepath.Join(logDir(), "ota-install.log")
+	logFile, err := os.Create(logPath)
+	if err != nil {
+		return "", fmt.Errorf("open install log: %w", err)
+	}
+
+	setProgress("installing", 70, "running install.sh (log "+logPath+")", "", version)
 	c := exec.Command("sh", install)
 	c.Dir = filepath.Dir(install)
-	c.Env = append(os.Environ(), "GFC_SAFE_INSTALL=1")
-	out2, err := c.CombinedOutput()
-	msg := strings.TrimSpace(string(out2))
-	if err != nil {
-		return msg, fmt.Errorf("install failed: %w (%s)", err, msg)
+	c.Env = append(os.Environ(), resultEnv(version, requestID)...)
+	c.Stdout = logFile
+	c.Stderr = logFile
+	configureInstallCmd(c)
+
+	startErr := c.Start()
+	if startErr != nil {
+		logFile.Close()
+		return "", fmt.Errorf("start install: %w", startErr)
 	}
-	return msg, nil
+	waitErr := c.Wait()
+	logFile.Close()
+
+	// Prefer on-disk marker: upgrade-runtime writes it before restarting api/agent,
+	// which may kill this process before Wait returns cleanly.
+	if res := ReadOTAResult(); res != nil {
+		msg := strings.TrimSpace(res.Message)
+		if msg == "" {
+			msg = tailFile(logPath, 4096)
+		}
+		if strings.EqualFold(res.Status, "ok") {
+			return msg, nil
+		}
+		return msg, fmt.Errorf("install failed: %s", msg)
+	}
+
+	logTail := tailFile(logPath, 4096)
+	if waitErr != nil {
+		return logTail, fmt.Errorf("install failed: %w (%s)", waitErr, logTail)
+	}
+	return logTail, nil
+}
+
+func tailFile(path string, max int) string {
+	data, err := os.ReadFile(path)
+	if err != nil || len(data) == 0 {
+		return ""
+	}
+	if len(data) > max {
+		data = data[len(data)-max:]
+	}
+	return strings.TrimSpace(string(data))
 }
 
 func findInstallScript(root string) string {
@@ -134,6 +185,11 @@ func findInstallScript(root string) string {
 
 // DownloadAndApply downloads package with bearer token, verifies sha256, then applies.
 func DownloadAndApply(downloadURL, token, expectSHA, filename string) (string, error) {
+	return DownloadAndApplyOpts(downloadURL, token, expectSHA, filename, "", "")
+}
+
+// DownloadAndApplyOpts passes artifact version / request id into the install environment.
+func DownloadAndApplyOpts(downloadURL, token, expectSHA, filename, version, requestID string) (string, error) {
 	if strings.TrimSpace(downloadURL) == "" {
 		return "", fmt.Errorf("empty download url")
 	}
@@ -207,6 +263,6 @@ func DownloadAndApply(downloadURL, token, expectSHA, filename string) (string, e
 	if expectSHA != "" && !strings.EqualFold(got, expectSHA) {
 		return "", fmt.Errorf("sha256 mismatch: got %s want %s", got, expectSHA)
 	}
-	setProgress("extracting", 60, "download complete, extracting", "", "")
-	return ApplyLocalPackage(dest)
+	setProgress("extracting", 60, "download complete, extracting", "", version)
+	return ApplyLocalPackageOpts(dest, version, requestID)
 }

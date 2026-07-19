@@ -60,6 +60,30 @@ env_set() {
 
 step() { echo "==> [upgrade] $*"; }
 
+write_ota_result() {
+	# Persist before restarting gfc-api/gfc-agent so the OTA parent can observe success
+	# even if Wait() is interrupted by the service restart.
+	local status="$1"
+	local msg="${2:-}"
+	local dest="${GFC_OTA_RESULT_FILE:-$GFC_LIB/state/ota-result.json}"
+	mkdir -p "$(dirname "$dest")" "$GFC_LIB/state" 2>/dev/null || true
+	if [ -z "$msg" ]; then
+		if [ "$status" = "ok" ]; then
+			msg="GFC runtime upgraded"
+		else
+			msg="GFC runtime upgrade failed"
+		fi
+	fi
+	# Minimal JSON (busybox-safe): escape quotes in message.
+	msg="$(printf '%s' "$msg" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+	ver="${GFC_UPGRADE_VERSION:-}"
+	req="${GFC_OTA_REQUEST_ID:-}"
+	at="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date)"
+	cat >"$dest" <<EOF
+{"status":"$status","version":"$ver","request_id":"$req","message":"$msg","at":"$at"}
+EOF
+}
+
 install_unbound_pkg() {
 	if [ "${GFC_SKIP_OPKG:-0}" = "1" ]; then
 		step "skip opkg (GFC_SKIP_OPKG=1)"
@@ -109,18 +133,36 @@ install_tc_deps() {
 step "optional tc/htb packages"
 install_tc_deps
 
-step "stop gfc services"
-stop_service gfc-agent
-stop_service gfc-api
-stop_service gfc-unbound
-stop_service gfc-mosdns
-stop_service gfc-sing-box
-stop_service gfc-routing
+if [ "${GFC_SAFE_INSTALL:-0}" = "1" ]; then
+	# Ensure a failed/aborted OTA still leaves a marker for the next agent tick.
+	trap 'write_ota_result failed "upgrade-runtime aborted"' EXIT
+fi
 
-pkill gfc-api 2>/dev/null || true
-pkill gfc-agent 2>/dev/null || true
-pkill gfc-bootstrap 2>/dev/null || true
-sleep 1
+if [ "${GFC_SAFE_INSTALL:-0}" = "1" ]; then
+	# OTA runs inside gfc-api or gfc-agent. Stopping/killing them mid-install
+	# orphans the installer under a broken stdout pipe (SIGPIPE) and aborts the upgrade.
+	# Keep control-plane processes alive; only bounce dataplane services. Brief offline is OK.
+	step "OTA safe mode: stop dataplane only (keep gfc-api/gfc-agent)"
+	stop_service gfc-unbound
+	stop_service gfc-mosdns
+	stop_service gfc-sing-box
+	stop_service gfc-routing
+	pkill gfc-bootstrap 2>/dev/null || true
+	sleep 1
+else
+	step "stop gfc services"
+	stop_service gfc-agent
+	stop_service gfc-api
+	stop_service gfc-unbound
+	stop_service gfc-mosdns
+	stop_service gfc-sing-box
+	stop_service gfc-routing
+
+	pkill gfc-api 2>/dev/null || true
+	pkill gfc-agent 2>/dev/null || true
+	pkill gfc-bootstrap 2>/dev/null || true
+	sleep 1
+fi
 
 step "install binaries"
 for bin in gfc-api gfc-agent gfc-bootstrap; do
@@ -129,6 +171,13 @@ for bin in gfc-api gfc-agent gfc-bootstrap; do
 		chmod +x "/usr/bin/$bin"
 	fi
 done
+
+if [ -n "${GFC_UPGRADE_VERSION:-}" ]; then
+	step "write VERSION ${GFC_UPGRADE_VERSION}"
+	mkdir -p "$GFC_ROOT" /usr/lib/gfc-client
+	printf '%s\n' "$GFC_UPGRADE_VERSION" >"$GFC_ROOT/VERSION"
+	cp -f "$GFC_ROOT/VERSION" /usr/lib/gfc-client/VERSION 2>/dev/null || true
+fi
 
 step "sync deploy scripts + gfc.env"
 chmod +x /usr/lib/gfc-client/deploy/immortalwrt/*.sh 2>/dev/null || true
@@ -290,7 +339,21 @@ if [ -n "$_dns_sh" ]; then
 	sh "$_dns_sh"
 fi
 
+# Marker MUST be written before restarting gfc-api/gfc-agent (OTA parent processes).
+if [ "${GFC_SAFE_INSTALL:-0}" = "1" ]; then
+	write_ota_result ok "GFC runtime upgraded"
+	trap - EXIT
+fi
+
 step "start services"
+if [ "${GFC_SAFE_INSTALL:-0}" = "1" ]; then
+	# Replace running control-plane binaries with the newly installed inodes.
+	stop_service gfc-api
+	stop_service gfc-agent
+	pkill gfc-api 2>/dev/null || true
+	pkill gfc-agent 2>/dev/null || true
+	sleep 1
+fi
 start_service gfc-api
 start_service gfc-unbound
 /etc/init.d/dnsmasq restart 2>/dev/null || true

@@ -4,11 +4,18 @@
 # 已发布行之 components / floors 钉扎禁止改写；纠错发新 Patch。
 
 policy.upgrade: same_major_only
-product.current: 1.1.0
+product.current: 1.1.1
 product.ota_baseline: 1.1.0
 
 releases:
-  - 1.1.0 (current, tag v1.1.0)
+  - 1.1.1 (current, tag v1.1.1)
+      gfc_client: 1.1.0-r16
+      node_agent: 0.3.1
+      control_plane_api: 0.1.0
+      client_proto / node_proto: 1
+      notes: OTA mid-install self-kill / SIGPIPE fix
+
+  - 1.1.0 (supported, tag v1.1.0)
       gfc_client: 1.1.0-r15
       node_agent: 0.3.1
       control_plane_api: 0.1.0

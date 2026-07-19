@@ -102,7 +102,7 @@ func applyFromPlatform(client *controlplane.Client, artifactID int) (string, err
 	base := strings.TrimRight(client.ActiveServer(), "/")
 	url := fmt.Sprintf("%s/clients/artifacts/%d/download", base, art.ID)
 	setProgress("downloading", 15, "downloading "+art.Filename, "platform", art.Version)
-	return DownloadAndApply(url, client.Token(), art.SHA256, art.Filename)
+	return DownloadAndApplyOpts(url, client.Token(), art.SHA256, art.Filename, art.Version, "")
 }
 
 // StartApplyRemote downloads and installs artifact asynchronously.

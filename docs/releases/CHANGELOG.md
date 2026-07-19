@@ -29,6 +29,33 @@ Patch | Minor | Major | Dataplane-Arch
 
 ---
 
+## [1.1.1] - 2026-07-19
+
+### 级别
+Patch
+
+### 组件钉扎
+- control_plane_api: 0.1.0
+- node_agent: 0.3.1
+- gfc_client: 1.1.0-r16
+
+### 变更
+- Runtime OTA：安装期不再中途停止/pkill `gfc-api`/`gfc-agent`，避免父进程管道 SIGPIPE 导致半装
+- 安装日志落盘 `ota-install.log`；成功/失败 marker `ota-result.json`（重启控制面前写入）
+- Agent 对已达目标版本或 marker 命中短路 ack，避免重复整包
+
+### 升级
+- 同 Major 直升：是（`1.1.0` → `1.1.1`）
+- 跨 Major 路径：无
+- OTA 基线：仍为 `1.1.0`；本版可 OTA 或刷 `1.1.0-r16` OEM 图
+
+### 验收探针
+- 见 [`notes/v1.1.1.md`](notes/v1.1.1.md) 验收检查清单
+- 固件 manifest：`gfc-client - 1.1.0-r16`
+- OTA 后：`/var/lib/gfc-client/state/ota-result.json` → `status=ok`
+
+---
+
 ## [1.1.0] - 2026-07-16
 
 ### 级别

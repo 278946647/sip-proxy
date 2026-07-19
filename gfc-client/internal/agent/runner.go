@@ -439,6 +439,21 @@ func (r *Runner) applyDeviceCommand(cmd *controlplane.DeviceCommand) map[string]
 			"action":     cmd.Action,
 		}
 	case "runtime_upgrade":
+		// Parent may be restarted mid-install; if we already reached the target
+		// (or a prior run left an ok marker), acknowledge without re-downloading.
+		if upgrade.AlreadyAtVersion(cmd.Version) || upgrade.ResultSatisfies(cmd.Version, cmd.RequestID) {
+			msg := "already at " + strings.TrimSpace(cmd.Version)
+			if res := upgrade.ReadOTAResult(); res != nil && strings.TrimSpace(res.Message) != "" {
+				msg = res.Message
+			}
+			fmt.Printf("runtime upgrade skip (already applied): %s\n", msg)
+			return map[string]any{
+				"request_id": cmd.RequestID,
+				"status":     "ok",
+				"action":     cmd.Action,
+				"message":    msg,
+			}
+		}
 		url := strings.TrimSpace(cmd.DownloadURL)
 		if url == "" && cmd.DownloadPath != "" {
 			base := ""
@@ -456,7 +471,7 @@ func (r *Runner) applyDeviceCommand(cmd *controlplane.DeviceCommand) map[string]
 			token = st.ClientToken
 		}
 		fmt.Printf("runtime upgrade: downloading %s version=%s\n", url, cmd.Version)
-		msg, err := upgrade.DownloadAndApply(url, token, cmd.SHA256, cmd.Filename)
+		msg, err := upgrade.DownloadAndApplyOpts(url, token, cmd.SHA256, cmd.Filename, cmd.Version, cmd.RequestID)
 		status := "ok"
 		if err != nil {
 			status = "failed"

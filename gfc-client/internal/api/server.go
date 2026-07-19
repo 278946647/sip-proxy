@@ -751,6 +751,7 @@ func (s *Server) getAgent(c *gin.Context) {
 }
 
 func (s *Server) getUpgradeStatus(c *gin.Context) {
+	upgrade.HydrateProgressFromDisk()
 	prog := upgrade.GetProgress()
 	latest, avail, checked, _ := upgrade.CachedPlatform()
 	out := map[string]any{

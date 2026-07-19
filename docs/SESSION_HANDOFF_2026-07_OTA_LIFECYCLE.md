@@ -127,8 +127,8 @@ LuCI 菜单：**配置运维 → 系统版本升级**（平台升级区 + 本地
 
 ## 5. 建议的新会话开场白
 
-> 读 `docs/SESSION_HANDOFF_2026-07_OTA_LIFECYCLE.md` 与 `.cursor/rules/gfc-platform-ota-lifecycle.mdc`。  
-> OTA/生命周期/VLESS 诊断已在 main；固件以 manifest **`gfc-client 1.1.0-r15+`** 与功能探针为准。  
+> 读 `docs/SESSION_HANDOFF_2026-07_OTA_LIFECYCLE.md` 与 `.cursor/rules/gfc-platform-ota-lifecycle.mdc`。
+> OTA/生命周期/VLESS 诊断已在 main；固件以 manifest **`gfc-client 1.1.0-r16`**（产品 **v1.1.1**）与功能探针为准；OTA 验收见 `docs/releases/notes/v1.1.1.md`。
 > 改 nft/unbound/sing-box 须确认修改；改 PKG 进镜像必须 bump `PKG_RELEASE`。
 
 ---
