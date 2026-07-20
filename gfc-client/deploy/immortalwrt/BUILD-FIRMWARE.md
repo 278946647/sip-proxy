@@ -2,7 +2,7 @@
 
 > **状态 / 卡点 / 踩坑：** [`FIRMWARE-BUILD-HANDOFF.md`](FIRMWARE-BUILD-HANDOFF.md)  
 > **Cursor 规则：** [`.cursor/rules/gfc-firmware-build.mdc`](../../../.cursor/rules/gfc-firmware-build.mdc)  
-> **包版本（源码）：** `gfc-client` **`1.1.0-r19`**（以 `package/Makefile` 的 `PKG_RELEASE` 与构建机 manifest 为准）  
+> **包版本（源码）：** `gfc-client` **`1.1.0-r20`**（以 `package/Makefile` 的 `PKG_RELEASE` 与构建机 manifest 为准）  
 > **最后更新：** 2026-07-13
 
 本手册面向**构建机操作人员**：按目录、命令、模块、验收步骤操作即可产出可刷盘镜像。
@@ -111,7 +111,7 @@ ls -lt "$IMT_SRC/bin/targets/x86/64/"*ext4*combined*efi*.img.gz | head -3
 
 | 检查 | 期望 |
 |------|------|
-| `opkg list-installed \| grep gfc-client` | `1.1.0-r19`（或当前 PKG） |
+| `opkg list-installed \| grep gfc-client` | `1.1.0-r20`（或当前 PKG） |
 | `grep downloads.immortalwrt.org /etc/opkg/distfeeds.conf` | 有官方源、无 vsean |
 | `opkg list-installed \| grep kmod-tcp-bbr` | 已安装 |
 | `sysctl -n net.ipv4.tcp_congestion_control` | `bbr` |

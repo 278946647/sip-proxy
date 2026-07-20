@@ -88,11 +88,8 @@ merge_gfc_config() {
     -e '/^CONFIG_PACKAGE_kmod-sched-htb=/d;/^# CONFIG_PACKAGE_kmod-sched-htb is not set$/d' \
     -e '/^CONFIG_PACKAGE_partx=/d;/^# CONFIG_PACKAGE_partx is not set$/d' \
     .config
-  # Force-disable ImmortalWrt stock packages that break package/install:
-  # - fullcone/firewall4/luci meta form a hard dep chain ImmortalWrt patches in
-  # - default-settings pins an old kernel ABI after vermagic drift
-  # - kmod-r8168 is out-of-tree and often arch-incompatible in image install
-  # GFC uses luci-base + luci-app-gfc + theme/mod-admin-full; fw4 is disabled at firstboot.
+  # Force-disable ImmortalWrt stock packages that break package/install.
+  # GFC uses luci-base + luci-app-gfc + theme/mod-admin-full; fw4 is stopped at firstboot.
   local disable_pkgs=(
     default-settings
     default-settings-chn
@@ -100,15 +97,28 @@ merge_gfc_config() {
     firewall4
     luci-app-firewall
     luci
+    luci-i18n-firewall-zh-cn
+    luci-i18n-firewall-en
     kmod-r8168
+    kmod-r8101
+    kmod-r8125
+    kmod-r8126
+    kmod-usb-net-rtl8152-vendor
   )
   for pkg in "${disable_pkgs[@]}"; do
     scrub_package_config_lines .config "CONFIG_PACKAGE_${pkg}"
     echo "# CONFIG_PACKAGE_${pkg} is not set" >>.config
   done
+  # Catch any remaining luci firewall i18n / realtek vendor symbols.
+  while IFS= read -r key; do
+    [[ -n "$key" ]] || continue
+    scrub_package_config_lines .config "$key"
+    echo "# ${key} is not set" >>.config
+  done < <(grep -E '^CONFIG_PACKAGE_(luci-i18n-.*firewall|kmod-r81[0-9]*).*=(y|m)$' .config \
+    | sed 's/=.*//' || true)
   grep -q '^CONFIG_PACKAGE_gfc-client=y$' .config || die "CONFIG_PACKAGE_gfc-client not in .config after merge"
   grep -q '^CONFIG_PACKAGE_luci-base=y$' .config || die "CONFIG_PACKAGE_luci-base not in .config after merge"
-  log "merged gfc-packages.config (skipped=$skipped); disabled fw4/fullcone/luci-meta/r8168"
+  log "merged gfc-packages.config (skipped=$skipped); disabled fw4/fullcone/luci-meta/realtek-oob"
 }
 
 # OpenWrt image install list comes from Kconfig package-y + pkginfo/*.install.
@@ -139,12 +149,13 @@ verify_dotconfig() {
       die ".config still has '# CONFIG_PACKAGE_${pkg} is not set' alongside =y"
     fi
   done
-  for pkg in default-settings default-settings-chn kmod-nft-fullcone firewall4 luci-app-firewall luci kmod-r8168; do
+  for pkg in default-settings default-settings-chn kmod-nft-fullcone firewall4 luci-app-firewall luci \
+    luci-i18n-firewall-zh-cn kmod-r8168 kmod-r8101 kmod-r8125 kmod-r8126 kmod-usb-net-rtl8152-vendor; do
     if grep -qE "^CONFIG_PACKAGE_${pkg}=y$" .config; then
       die ".config still enables CONFIG_PACKAGE_${pkg}=y (must be disabled for GFC OEM)"
     fi
   done
-  log ".config OK: gfc + luci-base stack + tc/bbr; fw4/fullcone/luci-meta/r8168 off"
+  log ".config OK: gfc + luci-base stack + tc/bbr; fw4/fullcone/luci-meta/realtek-oob off"
 }
 
 # tc-tiny installs binary at /usr/libexec/tc-tiny; /sbin/tc is ALTERNATIVES symlink.
@@ -428,59 +439,114 @@ force_rootfs() {
   rm -f "$IMT_SRC/bin/targets/x86/64/"*ext4*combined*efi*.img.gz
 }
 
-# After kernel vermagic drifts, stale ipks in bin/ still Depend on the old
-# kernel (= 6.6.x~OLDHASH). package/install then fails for almost everything.
-# Also: packages may already Depend on the *current* hash while kernel_*.ipk
-# is missing from bin/ — same symptom (dnsmasq/tc/sing-box cannot satisfy kernel).
-purge_stale_kernel_abi_packages() {
-  local vermagic_file hash kernel_ver need_rebuild=0 pkg_index kernel_ipk
-  cd "$IMT_SRC"
+# package/install resolves every kmod via Depends: kernel (= VER~HASH-rN).
+# If that exact kernel_*.ipk is missing from bin/targets/x86/64/packages/, OR
+# bin/ still mixes an older vermagic (c2bd4df8 vs 57887482), opkg reports
+# "cannot find dependency kernel" + misleading "incompatible architectures"
+# for EVERY package. Always refresh unless GFC_SKIP_KERNEL_REFRESH=1.
+read_build_vermagic() {
+  local vermagic_file
   vermagic_file="$(
     find "$IMT_SRC/build_dir" -path '*/linux-x86_64/linux-*/.vermagic' 2>/dev/null \
       | head -1
   )"
-  [[ -n "$vermagic_file" && -f "$vermagic_file" ]] || {
-    log "WARN: no .vermagic — skip stale kernel ABI purge"
-    return 0
-  }
-  hash="$(tr -d '[:space:]' <"$vermagic_file")"
-  kernel_ver="$(basename "$(dirname "$vermagic_file")")"
-  kernel_ver="${kernel_ver#linux-}"
-  [[ -n "$hash" && -n "$kernel_ver" ]] || return 0
-  log "build kernel=${kernel_ver} vermagic=${hash}"
+  [[ -n "$vermagic_file" && -f "$vermagic_file" ]] || return 1
+  tr -d '[:space:]' <"$vermagic_file"
+}
 
+read_build_kernel_ver() {
+  local vermagic_file
+  vermagic_file="$(
+    find "$IMT_SRC/build_dir" -path '*/linux-x86_64/linux-*/.vermagic' 2>/dev/null \
+      | head -1
+  )"
+  [[ -n "$vermagic_file" && -f "$vermagic_file" ]] || return 1
+  local d
+  d="$(basename "$(dirname "$vermagic_file")")"
+  printf '%s\n' "${d#linux-}"
+}
+
+verify_kernel_ipk_for_install() {
+  local hash=$1 kernel_ver=$2
+  local pkgdir="$IMT_SRC/bin/targets/x86/64/packages"
+  local ipk ver
+  [[ -d "$pkgdir" ]] || die "missing $pkgdir after kernel rebuild"
+  ipk="$(find "$pkgdir" -maxdepth 1 -name "kernel_${kernel_ver}~${hash}*.ipk" 2>/dev/null | head -1)"
+  [[ -n "$ipk" ]] || die "missing $pkgdir/kernel_${kernel_ver}~${hash}*.ipk (package/install cannot resolve kmods)"
+  ver="$(
+    tar -xOf "$ipk" ./control.tar.gz 2>/dev/null | tar -xzO ./control 2>/dev/null \
+      || tar -xOf "$ipk" control.tar.gz 2>/dev/null | tar -xzO control 2>/dev/null \
+      || true
+  )"
+  ver="$(printf '%s\n' "$ver" | awk -F': ' '/^Version:/{print $2; exit}')"
+  [[ -n "$ver" ]] || die "cannot read Version from $ipk"
+  [[ "$ver" == "${kernel_ver}~${hash}-"* ]] \
+    || die "kernel ipk Version=$ver does not match build ${kernel_ver}~${hash}-* ($ipk)"
+  log "kernel ipk OK: $(basename "$ipk") Version=$ver"
+}
+
+prepare_package_install_abi() {
+  local hash kernel_ver pkgdir mixed
+  cd "$IMT_SRC"
+  hash="$(read_build_vermagic)" || die "no .vermagic under build_dir — compile target/linux first"
+  kernel_ver="$(read_build_kernel_ver)" || die "cannot parse kernel version from build_dir"
+  pkgdir="bin/targets/x86/64/packages"
+  log "prepare package/install ABI: kernel=${kernel_ver} vermagic=${hash}"
+
+  if [[ "${GFC_SKIP_KERNEL_REFRESH:-0}" == "1" ]]; then
+    log "GFC_SKIP_KERNEL_REFRESH=1 — only verify existing kernel ipk"
+    verify_kernel_ipk_for_install "$hash" "$kernel_ver"
+    return 0
+  fi
+
+  # Any Packages index mentioning a different 6.6.x~hash means mixed ABI.
+  mixed=0
   while IFS= read -r pkg_index; do
     [[ -f "$pkg_index" ]] || continue
     if grep -E "kernel \(= 6\.6\.[0-9]+~[0-9a-f]+" "$pkg_index" 2>/dev/null \
       | grep -v "~${hash}" >/dev/null 2>&1; then
-      need_rebuild=1
-      log "stale kernel ABI in $pkg_index"
+      mixed=1
+      log "mixed kernel ABI in $pkg_index"
       break
     fi
   done < <(find bin -type f -name Packages 2>/dev/null)
 
-  kernel_ipk="$(find bin -name "kernel_${kernel_ver}~${hash}*.ipk" 2>/dev/null | head -1)"
-  if [[ -z "$kernel_ipk" ]]; then
-    need_rebuild=1
-    log "missing kernel_${kernel_ver}~${hash}*.ipk under bin/"
-  else
-    log "found kernel ipk: $kernel_ipk"
-  fi
+  log "refresh bin/targets/x86/64/packages for single vermagic ${hash}"
+  rm -rf "$pkgdir"
+  mkdir -p "$pkgdir"
+  # Drop out-of-tree Realtek leftovers that often pin an old vermagic.
+  find bin -type f \( \
+    -name 'kmod-r8101_*.ipk' -o -name 'kmod-r8125_*.ipk' -o -name 'kmod-r8126_*.ipk' \
+    -o -name 'kmod-r8168_*.ipk' -o -name 'kmod-usb-net-rtl8152-vendor_*.ipk' \
+  \) -delete 2>/dev/null || true
 
-  if [[ "$need_rebuild" -eq 1 ]]; then
-    log "refresh target packages for current kernel ABI"
-    rm -rf bin/targets/x86/64/packages
-    rm -f bin/targets/x86/64/Packages* 2>/dev/null || true
-    make package/kernel/linux/compile -j"$JOBS" V=s \
-      || die "package/kernel/linux/compile failed"
-    make package/compile -j"$JOBS" V=s \
-      || die "package/compile failed after kernel ABI refresh"
-    kernel_ipk="$(find bin -name "kernel_${kernel_ver}~${hash}*.ipk" 2>/dev/null | head -1)"
-    [[ -n "$kernel_ipk" ]] || die "still missing kernel ipk for ${kernel_ver}~${hash} after rebuild"
-    log "kernel ipk OK: $kernel_ipk"
-  else
-    log "kernel ABI + kernel ipk OK"
+  log "clean + compile package/kernel/linux (produces kernel_*.ipk + kmods)"
+  make package/kernel/linux/clean V=s 2>/dev/null || true
+  make target/linux/compile -j"$JOBS" V=s \
+    || die "target/linux/compile failed"
+  make package/kernel/linux/compile -j"$JOBS" V=s \
+    || die "package/kernel/linux/compile failed"
+  verify_kernel_ipk_for_install "$hash" "$kernel_ver"
+
+  log "recompile all packages so Depends: kernel (= ${kernel_ver}~${hash}-…) matches"
+  make package/compile -j"$JOBS" V=s \
+    || die "package/compile failed after kernel refresh"
+  # Regenerate Packages indexes used by some install paths.
+  make package/index -j1 V=s 2>/dev/null || true
+  verify_kernel_ipk_for_install "$hash" "$kernel_ver"
+
+  if [[ "$mixed" -eq 1 ]]; then
+    log "note: had mixed ABI indexes before refresh; re-check for leftover stale hashes"
+    while IFS= read -r pkg_index; do
+      [[ -f "$pkg_index" ]] || continue
+      if grep -E "kernel \(= 6\.6\.[0-9]+~[0-9a-f]+" "$pkg_index" 2>/dev/null \
+        | grep -v "~${hash}" >/dev/null 2>&1; then
+        log "WARN: still stale ABI in $pkg_index — removing that Packages file"
+        rm -f "$pkg_index" "${pkg_index}.gz" "${pkg_index}.sig" 2>/dev/null || true
+      fi
+    done < <(find bin -type f -name Packages 2>/dev/null)
   fi
+  log "package/install ABI ready"
 }
 
 require_rootfs_populated() {
@@ -492,7 +558,7 @@ require_rootfs_populated() {
 
 install_rootfs() {
   cd "$IMT_SRC"
-  purge_stale_kernel_abi_packages
+  prepare_package_install_abi
   log "package/install -> populate $ROOTFS_DIR (+ snapshot $ROOTFS_ORIG_DIR)"
   make package/install -j1 V=s
   require_rootfs_populated "$ROOTFS_DIR"

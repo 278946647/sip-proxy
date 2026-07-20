@@ -4,40 +4,26 @@
 # 已发布行之 components / floors 钉扎禁止改写；纠错发新 Patch。
 
 policy.upgrade: same_major_only
-product.current: 1.1.4
+product.current: 1.1.5
 product.ota_baseline: 1.1.0
 
 releases:
-  - 1.1.4 (current, tag v1.1.4)
+  - 1.1.5 (current, tag v1.1.5)
+      gfc_client: 1.1.0-r20
+      notes: force kernel ipk refresh before package/install; drop Realtek oob
+
+  - 1.1.4 (supported, tag v1.1.4)
       gfc_client: 1.1.0-r19
-      node_agent: 0.3.1
-      control_plane_api: 0.1.0
-      client_proto / node_proto: 1
-      notes: OEM drop luci-meta/firewall4/fullcone/r8168; luci-base stack
+      notes: OEM drop luci-meta/firewall4/fullcone/r8168
 
   - 1.1.3 (supported, tag v1.1.3)
       gfc_client: 1.1.0-r18
-      node_agent: 0.3.1
-      control_plane_api: 0.1.0
-      client_proto / node_proto: 1
-      notes: distfeeds overlay-only; disable default-settings/fullcone
 
   - 1.1.2 (supported, tag v1.1.2)
       gfc_client: 1.1.0-r17
-      node_agent: 0.3.1
-      control_plane_api: 0.1.0
-      client_proto / node_proto: 1
-      notes: OEM opkg → downloads.immortalwrt.org 24.10.6; bake TCP BBR
 
   - 1.1.1 (supported, tag v1.1.1)
       gfc_client: 1.1.0-r16
-      node_agent: 0.3.1
-      control_plane_api: 0.1.0
-      client_proto / node_proto: 1
-      notes: OTA mid-install self-kill / SIGPIPE fix
 
   - 1.1.0 (supported, tag v1.1.0)
       gfc_client: 1.1.0-r15
-      node_agent: 0.3.1
-      control_plane_api: 0.1.0
-      client_proto / node_proto: 1

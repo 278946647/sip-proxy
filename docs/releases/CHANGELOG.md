@@ -29,6 +29,32 @@ Patch | Minor | Major | Dataplane-Arch
 
 ---
 
+## [1.1.5] - 2026-07-20
+
+### 级别
+Patch
+
+### 组件钉扎
+- control_plane_api: 0.1.0
+- node_agent: 0.3.1
+- gfc_client: 1.1.0-r20
+
+### 变更
+- `package/install` 前**强制**刷新 `bin/targets/x86/64/packages` 中的 `kernel_*.ipk`（缺 kernel 会导致全部 kmod 报「找不到依赖 / incompatible architectures」）
+- 关闭更多 Realtek 树外驱动与 `luci-i18n-firewall-*`
+- 增加 `scripts/recover-package-install.sh` 一键恢复
+
+### 升级
+- 同 Major 直升：是
+- OTA 基线：仍为 `1.1.0`
+
+### 验收探针
+- 构建机：`ls bin/targets/x86/64/packages/kernel_6.6.*~*.ipk`
+- manifest：`gfc-client - 1.1.0-r20`
+- `package/install` 成功
+
+---
+
 ## [1.1.4] - 2026-07-20
 
 ### 级别
