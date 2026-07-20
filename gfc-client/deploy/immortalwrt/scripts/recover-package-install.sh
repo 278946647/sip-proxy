@@ -102,6 +102,11 @@ compile_missing_gfc_packages() {
     make package/network/utils/iproute2/compile -j"$JOBS" V=s \
       || die "iproute2/tc-tiny compile failed"
   fi
+  # setcap for sing-box non-root (package/libs/libcap → libcap-bin)
+  if ! have_ipk libcap-bin; then
+    make package/libs/libcap/compile -j"$JOBS" V=s \
+      || die "libcap/libcap-bin compile failed — ensure CONFIG_PACKAGE_libcap-bin=y in .config"
+  fi
   if ! have_ipk resize2fs; then
     make package/utils/e2fsprogs/compile -j"$JOBS" V=s || die "e2fsprogs/resize2fs failed"
   fi
