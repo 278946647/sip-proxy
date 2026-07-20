@@ -29,6 +29,32 @@ Patch | Minor | Major | Dataplane-Arch
 
 ---
 
+## [1.1.4] - 2026-07-20
+
+### 级别
+Patch
+
+### 组件钉扎
+- control_plane_api: 0.1.0
+- node_agent: 0.3.1
+- gfc_client: 1.1.0-r19
+
+### 变更
+- OEM 镜像强制关闭 ImmortalWrt `luci` meta / `firewall4` / `luci-app-firewall` / `kmod-nft-fullcone` / `kmod-r8168`（避免 package/install 依赖链失败）
+- 改用 `luci-base` + `luci-theme-bootstrap` + `luci-mod-admin-full` + `luci-app-gfc`
+- rebuild：检测缺失/过期 `kernel_*.ipk` 时刷新 target packages
+
+### 升级
+- 同 Major 直升：是
+- OTA 基线：仍为 `1.1.0`；本版以刷 OEM 固件为准
+
+### 验收探针
+- manifest：`gfc-client - 1.1.0-r19`
+- 已装：`luci-base`、`luci-app-gfc`、`kmod-tcp-bbr`
+- 未装：`firewall4`、`kmod-nft-fullcone`
+
+---
+
 ## [1.1.3] - 2026-07-20
 
 ### 级别

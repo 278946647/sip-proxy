@@ -5,6 +5,8 @@
 gfc-client
 luci-app-gfc
 luci-base
+luci-theme-bootstrap
+luci-mod-admin-full
 #
 # data-plane (base tree unless noted)
 sing-box

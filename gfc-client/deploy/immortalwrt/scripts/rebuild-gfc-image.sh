@@ -71,9 +71,9 @@ merge_gfc_config() {
     fi
   done <"$fragment"
   # Required bandwidth + expand packages must never be silently skipped.
-  for pkg in tc-tiny kmod-sched-core kmod-ifb resize2fs parted partx-utils losetup kmod-tcp-bbr kmod-sched; do
+  for pkg in tc-tiny kmod-sched-core kmod-ifb resize2fs parted partx-utils losetup kmod-tcp-bbr kmod-sched luci-theme-bootstrap luci-mod-admin-full; do
     grep -q "^CONFIG_PACKAGE_${pkg}=y$" "$merged" \
-      || die "merge skipped required CONFIG_PACKAGE_${pkg}=y (Kconfig missing? feeds install parted?)"
+      || die "merge skipped required CONFIG_PACKAGE_${pkg}=y (Kconfig missing? feeds install parted/luci?)"
   done
   while IFS= read -r line; do
     [[ "$line" =~ ^CONFIG_PACKAGE_ ]] || continue
@@ -88,13 +88,27 @@ merge_gfc_config() {
     -e '/^CONFIG_PACKAGE_kmod-sched-htb=/d;/^# CONFIG_PACKAGE_kmod-sched-htb is not set$/d' \
     -e '/^CONFIG_PACKAGE_partx=/d;/^# CONFIG_PACKAGE_partx is not set$/d' \
     .config
-  # Force-disable ImmortalWrt stock packages that break package/install on custom vermagic.
-  for pkg in default-settings default-settings-chn kmod-nft-fullcone; do
+  # Force-disable ImmortalWrt stock packages that break package/install:
+  # - fullcone/firewall4/luci meta form a hard dep chain ImmortalWrt patches in
+  # - default-settings pins an old kernel ABI after vermagic drift
+  # - kmod-r8168 is out-of-tree and often arch-incompatible in image install
+  # GFC uses luci-base + luci-app-gfc + theme/mod-admin-full; fw4 is disabled at firstboot.
+  local disable_pkgs=(
+    default-settings
+    default-settings-chn
+    kmod-nft-fullcone
+    firewall4
+    luci-app-firewall
+    luci
+    kmod-r8168
+  )
+  for pkg in "${disable_pkgs[@]}"; do
     scrub_package_config_lines .config "CONFIG_PACKAGE_${pkg}"
     echo "# CONFIG_PACKAGE_${pkg} is not set" >>.config
   done
   grep -q '^CONFIG_PACKAGE_gfc-client=y$' .config || die "CONFIG_PACKAGE_gfc-client not in .config after merge"
-  log "merged gfc-packages.config (skipped=$skipped); disabled default-settings/fullcone"
+  grep -q '^CONFIG_PACKAGE_luci-base=y$' .config || die "CONFIG_PACKAGE_luci-base not in .config after merge"
+  log "merged gfc-packages.config (skipped=$skipped); disabled fw4/fullcone/luci-meta/r8168"
 }
 
 # OpenWrt image install list comes from Kconfig package-y + pkginfo/*.install.
@@ -118,19 +132,19 @@ verify_dotconfig() {
   cd "$IMT_SRC"
   grep -q '^CONFIG_PACKAGE_gfc-client=y$' .config || die ".config missing CONFIG_PACKAGE_gfc-client=y"
   grep -q '^CONFIG_PACKAGE_luci-app-gfc=y$' .config || die ".config missing CONFIG_PACKAGE_luci-app-gfc=y"
-  for pkg in tc-tiny kmod-sched-core kmod-ifb kmod-tcp-bbr kmod-sched resize2fs parted partx-utils losetup; do
+  for pkg in tc-tiny kmod-sched-core kmod-ifb kmod-tcp-bbr kmod-sched resize2fs parted partx-utils losetup luci-theme-bootstrap luci-mod-admin-full; do
     grep -q "^CONFIG_PACKAGE_${pkg}=y$" .config || die ".config missing CONFIG_PACKAGE_${pkg}=y"
     # Must use if/then: under set -e, "grep -q && die" returns 1 when absent and aborts the script.
     if grep -qE "^# CONFIG_PACKAGE_${pkg} is not set$" .config; then
       die ".config still has '# CONFIG_PACKAGE_${pkg} is not set' alongside =y"
     fi
   done
-  for pkg in default-settings default-settings-chn kmod-nft-fullcone; do
+  for pkg in default-settings default-settings-chn kmod-nft-fullcone firewall4 luci-app-firewall luci kmod-r8168; do
     if grep -qE "^CONFIG_PACKAGE_${pkg}=y$" .config; then
       die ".config still enables CONFIG_PACKAGE_${pkg}=y (must be disabled for GFC OEM)"
     fi
   done
-  log ".config OK: gfc + tc + bbr + expand tools; default-settings/fullcone off"
+  log ".config OK: gfc + luci-base stack + tc/bbr; fw4/fullcone/luci-meta/r8168 off"
 }
 
 # tc-tiny installs binary at /usr/libexec/tc-tiny; /sbin/tc is ALTERNATIVES symlink.
@@ -414,6 +428,61 @@ force_rootfs() {
   rm -f "$IMT_SRC/bin/targets/x86/64/"*ext4*combined*efi*.img.gz
 }
 
+# After kernel vermagic drifts, stale ipks in bin/ still Depend on the old
+# kernel (= 6.6.x~OLDHASH). package/install then fails for almost everything.
+# Also: packages may already Depend on the *current* hash while kernel_*.ipk
+# is missing from bin/ — same symptom (dnsmasq/tc/sing-box cannot satisfy kernel).
+purge_stale_kernel_abi_packages() {
+  local vermagic_file hash kernel_ver need_rebuild=0 pkg_index kernel_ipk
+  cd "$IMT_SRC"
+  vermagic_file="$(
+    find "$IMT_SRC/build_dir" -path '*/linux-x86_64/linux-*/.vermagic' 2>/dev/null \
+      | head -1
+  )"
+  [[ -n "$vermagic_file" && -f "$vermagic_file" ]] || {
+    log "WARN: no .vermagic — skip stale kernel ABI purge"
+    return 0
+  }
+  hash="$(tr -d '[:space:]' <"$vermagic_file")"
+  kernel_ver="$(basename "$(dirname "$vermagic_file")")"
+  kernel_ver="${kernel_ver#linux-}"
+  [[ -n "$hash" && -n "$kernel_ver" ]] || return 0
+  log "build kernel=${kernel_ver} vermagic=${hash}"
+
+  while IFS= read -r pkg_index; do
+    [[ -f "$pkg_index" ]] || continue
+    if grep -E "kernel \(= 6\.6\.[0-9]+~[0-9a-f]+" "$pkg_index" 2>/dev/null \
+      | grep -v "~${hash}" >/dev/null 2>&1; then
+      need_rebuild=1
+      log "stale kernel ABI in $pkg_index"
+      break
+    fi
+  done < <(find bin -type f -name Packages 2>/dev/null)
+
+  kernel_ipk="$(find bin -name "kernel_${kernel_ver}~${hash}*.ipk" 2>/dev/null | head -1)"
+  if [[ -z "$kernel_ipk" ]]; then
+    need_rebuild=1
+    log "missing kernel_${kernel_ver}~${hash}*.ipk under bin/"
+  else
+    log "found kernel ipk: $kernel_ipk"
+  fi
+
+  if [[ "$need_rebuild" -eq 1 ]]; then
+    log "refresh target packages for current kernel ABI"
+    rm -rf bin/targets/x86/64/packages
+    rm -f bin/targets/x86/64/Packages* 2>/dev/null || true
+    make package/kernel/linux/compile -j"$JOBS" V=s \
+      || die "package/kernel/linux/compile failed"
+    make package/compile -j"$JOBS" V=s \
+      || die "package/compile failed after kernel ABI refresh"
+    kernel_ipk="$(find bin -name "kernel_${kernel_ver}~${hash}*.ipk" 2>/dev/null | head -1)"
+    [[ -n "$kernel_ipk" ]] || die "still missing kernel ipk for ${kernel_ver}~${hash} after rebuild"
+    log "kernel ipk OK: $kernel_ipk"
+  else
+    log "kernel ABI + kernel ipk OK"
+  fi
+}
+
 require_rootfs_populated() {
   local root="$1"
   [[ -d "$root" ]] || die "rootfs dir missing: $root (run make package/install first)"
@@ -423,6 +492,7 @@ require_rootfs_populated() {
 
 install_rootfs() {
   cd "$IMT_SRC"
+  purge_stale_kernel_abi_packages
   log "package/install -> populate $ROOTFS_DIR (+ snapshot $ROOTFS_ORIG_DIR)"
   make package/install -j1 V=s
   require_rootfs_populated "$ROOTFS_DIR"
