@@ -529,11 +529,13 @@ prepare_package_install_abi() {
   verify_kernel_ipk_for_install "$hash" "$kernel_ver"
 
   log "recompile all packages so Depends: kernel (= ${kernel_ver}~${hash}-…) matches"
-  make package/compile -j"$JOBS" V=s \
-    || die "package/compile failed after kernel refresh"
+  if ! make package/compile -j"$JOBS" V=s; then
+    die "package/compile failed after kernel refresh (patchelf on static gfc-* is OK; re-run with JOBS=1 to find real package). See scripts/recover-package-install.sh"
+  fi
   # Regenerate Packages indexes used by some install paths.
   make package/index -j1 V=s 2>/dev/null || true
   verify_kernel_ipk_for_install "$hash" "$kernel_ver"
+  verify_required_gfc_ipks
 
   if [[ "$mixed" -eq 1 ]]; then
     log "note: had mixed ABI indexes before refresh; re-check for leftover stale hashes"
@@ -547,6 +549,29 @@ prepare_package_install_abi() {
     done < <(find bin -type f -name Packages 2>/dev/null)
   fi
   log "package/install ABI ready"
+}
+
+# Ensure GFC OEM runtime packages were actually built (not only kernel).
+verify_required_gfc_ipks() {
+  local name missing=0
+  local pkgs=(
+    gfc-client luci-app-gfc luci-base luci-theme-bootstrap luci-mod-admin-full
+    sing-box unbound-daemon unbound-checkconf dnsmasq-full
+    tc-tiny kmod-sched-core kmod-sched kmod-ifb kmod-tcp-bbr kmod-tun kmod-nft-core
+    nftables-json curl wget-ssl tcpdump iftop bmon autossh
+    libcap-bin ca-bundle ip-full resize2fs parted partx-utils losetup
+  )
+  log "verify required GFC ipks under bin/"
+  for name in "${pkgs[@]}"; do
+    if find bin -type f -name "${name}_*.ipk" 2>/dev/null | grep -q .; then
+      :
+    else
+      log "MISSING ipk: ${name}_*.ipk"
+      missing=1
+    fi
+  done
+  [[ "$missing" -eq 0 ]] || die "required GFC packages missing after package/compile — check .config / feeds"
+  log "required GFC ipks present"
 }
 
 require_rootfs_populated() {
