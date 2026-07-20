@@ -88,8 +88,93 @@ export function NodesPage() {
   const [form] = Form.useForm();
   const [vpnForm] = Form.useForm();
   const [routesForm] = Form.useForm();
+  const [addOpen, setAddOpen] = useState(false);
+  const [addLoading, setAddLoading] = useState(false);
+  const [addCmd, setAddCmd] = useState("");
+  const [addForm] = Form.useForm();
   const perms = permissionsFromUser(getUser());
   const writable = canWrite(getUser());
+  const isAdmin = getUser()?.role === "admin";
+  const defaultApiUrl = useMemo(() => {
+    const scheme = window.location.protocol === "https:" ? "https" : "http";
+    return `${scheme}://${window.location.hostname}:8181`;
+  }, []);
+  const defaultRepoUrl = "https://github.com/278946647/sip-proxy.git";
+
+  const openAddNodeModal = async () => {
+    if (!isAdmin) {
+      message.error("仅管理员可生成转发节点安装命令");
+      return;
+    }
+    setAddOpen(true);
+    setAddCmd("");
+    setAddLoading(true);
+    try {
+      const s = await apiGet<{ bootstrap_tokens: string }>("/admin/settings/security");
+      const tokens = (s.bootstrap_tokens || "")
+        .split(",")
+        .map((t) => t.trim())
+        .filter(Boolean);
+      const primary = tokens[0] || "";
+      const defaultNodeName = `gfc-node-${Math.floor(Date.now() / 1000)}`;
+      await addForm.resetFields();
+      addForm.setFieldsValue({
+        repoUrl: defaultRepoUrl,
+        nodeName: defaultNodeName,
+        region: "ap-southeast-1",
+        serverUrl: defaultApiUrl,
+        serverUrlFallback: "",
+        bootstrapToken: primary,
+        tproxyIface: "",
+        snatIface: "auto",
+      });
+      if (!primary) {
+        message.warning("Bootstrap Token 未配置或为空，请先在「平台安全」里确认");
+      }
+    } catch (e) {
+      message.error(String(e));
+      setAddOpen(false);
+    } finally {
+      setAddLoading(false);
+    }
+  };
+
+  const buildInstallCommand = (v: {
+    repoUrl: string;
+    serverUrl: string;
+    serverUrlFallback?: string;
+    bootstrapToken: string;
+    nodeName: string;
+    region: string;
+    tproxyIface: string;
+    snatIface: string;
+  }) => {
+    const repoUrl = v.repoUrl.trim();
+    const serverUrl = v.serverUrl.trim();
+    const serverUrlFallback = (v.serverUrlFallback || "").trim();
+    const bootstrapToken = v.bootstrapToken.trim();
+    const nodeName = v.nodeName.trim();
+    const region = v.region.trim();
+    const tproxyIface = v.tproxyIface.trim();
+    const snatIface = v.snatIface.trim() || "auto";
+
+    // Bootstrap Token 是“转发节点激活”所需的唯一凭证（install.sh 内会写入 /etc/gfc-node/gfc.env）。
+    // 统一目录：源码拉到 /opt/sip-proxy；运行目录默认 /opt/gfc-node。
+    return [
+      "sudo apt-get update -qq",
+      "sudo apt-get install -y -qq git",
+      `if [ -d /opt/sip-proxy/.git ]; then git -C /opt/sip-proxy pull origin main; else git clone '${repoUrl}' /opt/sip-proxy; fi`,
+      "cd /opt/sip-proxy/gfc-platform",
+      `SERVER_URL='${serverUrl}'`,
+      `SERVER_URL_FALLBACK='${serverUrlFallback}'`,
+      `BOOTSTRAP_TOKEN='${bootstrapToken}'`,
+      `NODE_NAME='${nodeName}'`,
+      `REGION='${region}'`,
+      `GFC_TPROXY_IFACE='${tproxyIface}'`,
+      `GFC_SNAT_IFACE='${snatIface}'`,
+      "bash deploy/node/install.sh --yes",
+    ].join(" && ");
+  };
 
   const load = async () => {
     const rows = await apiGet<Record<string, unknown>[]>("/admin/nodes");
@@ -187,7 +272,24 @@ export function NodesPage() {
 
   return (
     <div>
-      <Typography.Title level={4}>转发节点管理</Typography.Title>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginBottom: 16,
+          gap: 12,
+        }}
+      >
+        <Typography.Title level={4} style={{ margin: 0 }}>
+          转发节点管理
+        </Typography.Title>
+        {isAdmin && perms.canDeleteStructural && (
+          <Button type="primary" icon={<PlusIcon />} onClick={() => void openAddNodeModal()}>
+            添加转发节点
+          </Button>
+        )}
+      </div>
       <Card>
         <Table
           rowKey="id"
@@ -324,6 +426,95 @@ export function NodesPage() {
           ]}
         />
       </Card>
+
+      <Modal
+        title="添加转发节点（生成一键安装命令）"
+        open={addOpen}
+        onCancel={() => setAddOpen(false)}
+        width={920}
+        confirmLoading={addLoading}
+        okText="生成安装命令"
+        onOk={async () => {
+          try {
+            const v = await addForm.validateFields();
+            setAddCmd(
+              buildInstallCommand({
+                repoUrl: v.repoUrl,
+                serverUrl: v.serverUrl,
+                serverUrlFallback: v.serverUrlFallback,
+                bootstrapToken: v.bootstrapToken,
+                nodeName: v.nodeName,
+                region: v.region,
+                tproxyIface: v.tproxyIface,
+                snatIface: v.snatIface,
+              })
+            );
+            message.success("已生成安装命令（请在转发节点上执行）");
+          } catch (e) {
+            message.error(String(e));
+          }
+        }}
+      >
+        <Form form={addForm} layout="vertical" initialValues={{ snatIface: "auto" }}>
+          <Form.Item name="repoUrl" label="Git 仓库 URL（含 gfc-platform）" rules={[{ required: true }]}>
+            <Input />
+          </Form.Item>
+          <Form.Item name="nodeName" label="节点名称 NODE_NAME" rules={[{ required: true }]}>
+            <Input />
+          </Form.Item>
+          <Form.Item name="region" label="Region" rules={[{ required: true }]}>
+            <Input />
+          </Form.Item>
+          <Form.Item name="serverUrl" label="控制平台 API 地址 SERVER_URL" rules={[{ required: true }]}>
+            <Input />
+          </Form.Item>
+          <Form.Item name="serverUrlFallback" label="备用控制平台 API 地址 SERVER_URL_FALLBACK（可选）">
+            <Input />
+          </Form.Item>
+          <Form.Item
+            name="bootstrapToken"
+            label="Bootstrap Token（转发节点激活）"
+            rules={[{ required: true }]}
+          >
+            <Input.Password disabled />
+          </Form.Item>
+          <Form.Item name="tproxyIface" label="TPROXY 入向网卡 GFC_TPROXY_IFACE（以太网/VyOS 侧）" rules={[{ required: true }]}>
+            <Input placeholder="例如: ens224 / eth0" />
+          </Form.Item>
+          <Form.Item
+            name="snatIface"
+            label="SNAT 出口网卡 GFC_SNAT_IFACE（默认 auto）"
+            rules={[{ required: true }]}
+          >
+            <Input placeholder="auto 或网卡名（如 ens160）" />
+          </Form.Item>
+        </Form>
+
+        <Typography.Paragraph type="secondary" style={{ marginTop: 14 }}>
+          生成命令的源码目录固定为 <code>/opt/sip-proxy</code>，运行目录默认 <code>/opt/gfc-node</code>。
+          请将整段命令粘贴到目标转发节点的 shell 执行；安装完成后节点会自动激活并出现在列表中。
+        </Typography.Paragraph>
+
+        <Input.TextArea
+          value={addCmd || ""}
+          readOnly
+          rows={7}
+          style={{ fontFamily: "monospace" }}
+          placeholder="点击「生成安装命令」后这里会显示可复制的一键命令"
+        />
+        <Space style={{ marginTop: 10 }}>
+          <Button
+            disabled={!addCmd}
+            onClick={() => {
+              void copyToClipboard(addCmd)
+                .then(() => message.success("已复制"))
+                .catch((e) => message.error(String(e)));
+            }}
+          >
+            复制命令
+          </Button>
+        </Space>
+      </Modal>
 
       <Modal
         title="修改节点"
