@@ -4,11 +4,15 @@
 # 已发布行之 components / floors 钉扎禁止改写；纠错发新 Patch。
 
 policy.upgrade: same_major_only
-product.current: 1.1.5
+product.current: 1.1.6
 product.ota_baseline: 1.1.0
 
 releases:
-  - 1.1.5 (current, tag v1.1.5)
+  - 1.1.6 (current, tag v1.1.6)
+      gfc_client: 1.1.0-r21
+      notes: disable luci-light/luci-ssl (depend on luci-app-firewall)
+
+  - 1.1.5 (supported, tag v1.1.5)
       gfc_client: 1.1.0-r20
       notes: force kernel ipk refresh before package/install; drop Realtek oob
 

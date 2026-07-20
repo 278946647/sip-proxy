@@ -29,6 +29,29 @@ Patch | Minor | Major | Dataplane-Arch
 
 ---
 
+## [1.1.6] - 2026-07-20
+
+### 级别
+Patch
+
+### 组件钉扎
+- control_plane_api: 0.1.0
+- node_agent: 0.3.1
+- gfc_client: 1.1.0-r21
+
+### 变更
+- OEM：强制关闭 `luci-light` / `luci-ssl*`（依赖已禁用的 `luci-app-firewall`），保留 `luci-base` + theme + `luci-mod-admin-full` + `luci-app-gfc`
+
+### 升级
+- 同 Major 直升：是
+- 跨 Major 路径：无
+- OTA 基线：1.1.0
+
+### 验收探针
+- manifest：`gfc-client - 1.1.0-r21`
+- `.config` 无 `CONFIG_PACKAGE_luci-light=y`
+- 镜像内无 `luci-light` / `luci-app-firewall`
+
 ## [1.1.5] - 2026-07-20
 
 ### 级别

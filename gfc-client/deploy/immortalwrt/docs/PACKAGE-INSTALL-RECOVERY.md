@@ -31,6 +31,27 @@ Only if required userspace ipks are missing and selective compile is not enough:
 GFC_FULL_PACKAGE_COMPILE=1 bash gfc-client/deploy/immortalwrt/scripts/recover-package-install.sh
 ```
 
+## `luci-light` / `luci-app-firewall` at package/install
+
+GFC disables `luci-app-firewall` (fw4 stack). Stock `luci-light` depends on it and
+will fail install with:
+
+`cannot find dependency luci-app-firewall for luci-light`
+
+OEM LuCI is `luci-base` + `luci-theme-bootstrap` + `luci-mod-admin-full` +
+`luci-app-gfc`. `rebuild-gfc-image.sh` force-disables `luci-light` / `luci-ssl*`.
+
+Quick scrub on a dirty `.config` before rebuild:
+
+```bash
+cd /opt/gfc/immortalwrt
+for p in luci-light luci-ssl luci-ssl-openssl luci-ssl-nginx luci-app-firewall luci; do
+  sed -i "/CONFIG_PACKAGE_${p}[= ]/d" .config
+  echo "# CONFIG_PACKAGE_${p} is not set" >>.config
+done
+grep -E 'CONFIG_PACKAGE_luci-light=' .config   # expect: is not set
+```
+
 ## Check required ipks (build host)
 
 ```bash

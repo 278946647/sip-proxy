@@ -97,6 +97,10 @@ merge_gfc_config() {
     firewall4
     luci-app-firewall
     luci
+    luci-light
+    luci-ssl
+    luci-ssl-openssl
+    luci-ssl-nginx
     luci-i18n-firewall-zh-cn
     luci-i18n-firewall-en
     kmod-r8168
@@ -118,7 +122,7 @@ merge_gfc_config() {
     | sed 's/=.*//' || true)
   grep -q '^CONFIG_PACKAGE_gfc-client=y$' .config || die "CONFIG_PACKAGE_gfc-client not in .config after merge"
   grep -q '^CONFIG_PACKAGE_luci-base=y$' .config || die "CONFIG_PACKAGE_luci-base not in .config after merge"
-  log "merged gfc-packages.config (skipped=$skipped); disabled fw4/fullcone/luci-meta/realtek-oob"
+  log "merged gfc-packages.config (skipped=$skipped); disabled fw4/fullcone/luci-meta/luci-light/realtek-oob"
 }
 
 # OpenWrt image install list comes from Kconfig package-y + pkginfo/*.install.
@@ -150,12 +154,13 @@ verify_dotconfig() {
     fi
   done
   for pkg in default-settings default-settings-chn kmod-nft-fullcone firewall4 luci-app-firewall luci \
-    luci-i18n-firewall-zh-cn kmod-r8168 kmod-r8101 kmod-r8125 kmod-r8126 kmod-usb-net-rtl8152-vendor; do
+    luci-light luci-ssl luci-ssl-openssl luci-ssl-nginx luci-i18n-firewall-zh-cn \
+    kmod-r8168 kmod-r8101 kmod-r8125 kmod-r8126 kmod-usb-net-rtl8152-vendor; do
     if grep -qE "^CONFIG_PACKAGE_${pkg}=y$" .config; then
       die ".config still enables CONFIG_PACKAGE_${pkg}=y (must be disabled for GFC OEM)"
     fi
   done
-  log ".config OK: gfc + luci-base stack + tc/bbr; fw4/fullcone/luci-meta/realtek-oob off"
+  log ".config OK: gfc + luci-base stack + tc/bbr; fw4/fullcone/luci-meta/luci-light/realtek-oob off"
 }
 
 # tc-tiny installs binary at /usr/libexec/tc-tiny; /sbin/tc is ALTERNATIVES symlink.

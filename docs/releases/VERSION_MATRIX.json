@@ -8,15 +8,50 @@
     "deploy_order_default": ["control_plane", "forward_node", "client"]
   },
   "product": {
-    "current": "1.1.5",
+    "current": "1.1.6",
     "major": 1,
     "ota_baseline": "1.1.0",
     "ota_baseline_notes": "Boxes without Runtime OTA must bootstrap via install.sh / OEM image, then use platform OTA."
   },
   "releases": [
     {
-      "version": "1.1.5",
+      "version": "1.1.6",
       "status": "current",
+      "git_tag": "v1.1.6",
+      "released": "2026-07-20",
+      "components": {
+        "control_plane_api": "0.1.0",
+        "node_agent": "0.3.1",
+        "gfc_client": "1.1.0-r21",
+        "client_proto": 1,
+        "node_proto": 1
+      },
+      "floors": {
+        "gfc_client": "1.1.0-r14",
+        "node_agent": "0.3.0",
+        "client_proto": 1,
+        "node_proto": 1
+      },
+      "upgrade_path": {
+        "from_any_in_major": true,
+        "from_majors": [1],
+        "bridge": null,
+        "migration_doc": null
+      },
+      "channels": {
+        "client_runtime": "ota",
+        "dataplane_arch": "firmware"
+      },
+      "probes": [
+        "opkg/manifest gfc-client == 1.1.0-r21 when OEM image claim",
+        "grep -E 'CONFIG_PACKAGE_luci-light' .config | grep -v 'is not set' must be empty",
+        "opkg list-installed | grep -E 'luci-base|luci-app-gfc' ; ! opkg list-installed | grep luci-light"
+      ],
+      "notes": "Patch: disable luci-light/luci-ssl (depend on luci-app-firewall) for GFC OEM LuCI stack."
+    },
+    {
+      "version": "1.1.5",
+      "status": "supported",
       "git_tag": "v1.1.5",
       "released": "2026-07-20",
       "components": {
