@@ -126,7 +126,7 @@ export function NodesPage() {
         serverUrlFallback: "",
         bootstrapToken: primary,
         tproxyIface: "",
-        snatIface: "auto",
+        snatIface: "",
       });
       if (!primary) {
         message.warning("Bootstrap Token 未配置或为空，请先在「平台安全」里确认");
@@ -156,7 +156,7 @@ export function NodesPage() {
     const nodeName = v.nodeName.trim();
     const region = v.region.trim();
     const tproxyIface = v.tproxyIface.trim();
-    const snatIface = v.snatIface.trim() || "auto";
+    const snatIface = v.snatIface.trim();
 
     // Bootstrap Token 是“转发节点激活”所需的唯一凭证（install.sh 内会写入 /etc/gfc-node/gfc.env）。
     // 统一目录：源码拉到 /opt/sip-proxy；运行目录默认 /opt/gfc-node。
@@ -455,7 +455,7 @@ export function NodesPage() {
           }
         }}
       >
-        <Form form={addForm} layout="vertical" initialValues={{ snatIface: "auto" }}>
+        <Form form={addForm} layout="vertical">
           <Form.Item name="repoUrl" label="Git 仓库 URL（含 gfc-platform）" rules={[{ required: true }]}>
             <Input />
           </Form.Item>
@@ -478,21 +478,28 @@ export function NodesPage() {
           >
             <Input.Password disabled />
           </Form.Item>
-          <Form.Item name="tproxyIface" label="TPROXY 入向网卡 GFC_TPROXY_IFACE（以太网/VyOS 侧）" rules={[{ required: true }]}>
-            <Input placeholder="例如: ens224 / eth0" />
+          <Form.Item
+            name="tproxyIface"
+            label="TPROXY 入向网卡 GFC_TPROXY_IFACE（选填；仅以太网/VyOS 接入时需要）"
+          >
+            <Input placeholder="例如: ens224 / eth0；不接骨干可留空" />
           </Form.Item>
           <Form.Item
             name="snatIface"
-            label="SNAT 出口网卡 GFC_SNAT_IFACE（默认 auto）"
-            rules={[{ required: true }]}
+            label="SNAT 出口网卡 GFC_SNAT_IFACE（必填）"
+            rules={[{ required: true, message: "请填写 SNAT 出口网卡" }]}
           >
-            <Input placeholder="auto 或网卡名（如 ens160）" />
+            <Input placeholder="例如: eth0 / ens160；如确需自动探测可手填 auto" />
           </Form.Item>
         </Form>
 
         <Typography.Paragraph type="secondary" style={{ marginTop: 14 }}>
           生成命令的源码目录固定为 <code>/opt/sip-proxy</code>，运行目录默认 <code>/opt/gfc-node</code>。
           请将整段命令粘贴到目标转发节点的 shell 执行；安装完成后节点会自动激活并出现在列表中。
+        </Typography.Paragraph>
+        <Typography.Paragraph type="secondary">
+          <code>auto</code> 的含义是由安装脚本按系统 IPv4 默认路由自动识别出网口。为减少多网卡机器误判，平台不再默认填
+          <code>auto</code>；如你确认节点只有单一默认出口，可手工填写 <code>auto</code>。
         </Typography.Paragraph>
 
         <Input.TextArea
