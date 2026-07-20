@@ -45,6 +45,7 @@ REQUIRED_IPKS=(
   iftop
   bmon
   autossh
+  libcap
   libcap-bin
   ca-bundle
   ip-full
@@ -102,10 +103,25 @@ compile_missing_gfc_packages() {
     make package/network/utils/iproute2/compile -j"$JOBS" V=s \
       || die "iproute2/tc-tiny compile failed"
   fi
-  # setcap for sing-box non-root (package/libs/libcap → libcap-bin)
-  if ! have_ipk libcap-bin; then
+  # setcap for sing-box non-root: need BOTH libcap (libcap.so.2) and libcap-bin
+  if ! have_ipk libcap-bin || ! have_ipk libcap; then
+    # Ensure both are selected (libcap-bin alone → "missing libcap.so.2" at ipkg stage)
+    if [[ -f .config ]]; then
+      grep -q '^CONFIG_PACKAGE_libcap=y$' .config \
+        || { grep -vE '^CONFIG_PACKAGE_libcap(=|#)' .config >.config.tmp && mv .config.tmp .config
+             echo 'CONFIG_PACKAGE_libcap=y' >>.config; }
+      grep -q '^CONFIG_PACKAGE_libcap-bin=y$' .config \
+        || { grep -vE '^CONFIG_PACKAGE_libcap-bin(=|#)' .config >.config.tmp && mv .config.tmp .config
+             echo 'CONFIG_PACKAGE_libcap-bin=y' >>.config; }
+      # Drop stale "# … is not set" lines that block =y
+      sed -i \
+        -e '/^# CONFIG_PACKAGE_libcap is not set$/d' \
+        -e '/^# CONFIG_PACKAGE_libcap-bin is not set$/d' \
+        .config
+    fi
+    make package/libs/libcap/clean V=s 2>/dev/null || true
     make package/libs/libcap/compile -j"$JOBS" V=s \
-      || die "libcap/libcap-bin compile failed — ensure CONFIG_PACKAGE_libcap-bin=y in .config"
+      || die "libcap/libcap-bin compile failed — need CONFIG_PACKAGE_libcap=y AND libcap-bin=y"
   fi
   if ! have_ipk resize2fs; then
     make package/utils/e2fsprogs/compile -j"$JOBS" V=s || die "e2fsprogs/resize2fs failed"

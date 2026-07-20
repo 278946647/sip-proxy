@@ -16,6 +16,7 @@ kmod-tun
 kmod-nft-core
 nftables-json
 dnsmasq-full
+libcap
 libcap-bin
 ca-bundle
 ip-full

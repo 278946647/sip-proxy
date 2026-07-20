@@ -563,7 +563,7 @@ verify_required_gfc_ipks() {
     sing-box unbound-daemon unbound-checkconf dnsmasq-full
     tc-tiny kmod-sched-core kmod-sched kmod-ifb kmod-tcp-bbr kmod-tun kmod-nft-core
     nftables-json curl wget-ssl tcpdump iftop bmon autossh
-    libcap-bin ca-bundle ip-full resize2fs parted partx-utils losetup
+    libcap libcap-bin ca-bundle ip-full resize2fs parted partx-utils losetup
   )
   log "verify required GFC ipks under bin/"
   for name in "${pkgs[@]}"; do

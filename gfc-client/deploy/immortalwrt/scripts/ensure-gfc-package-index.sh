@@ -22,7 +22,7 @@ GFC_FEED_PACKAGES=(gfc-client luci-app-gfc)
 
 # packages / luci feeds
 FEED_PACKAGES=(
-  sing-box unbound-daemon unbound-checkconf autossh libcap-bin luci-base
+  sing-box unbound-daemon unbound-checkconf autossh libcap libcap-bin luci-base
   luci-theme-bootstrap luci-mod-admin-full
   curl wget-ssl tcpdump iftop bmon
   # GNU parted lives in packages feed (not package/utils/parted)
