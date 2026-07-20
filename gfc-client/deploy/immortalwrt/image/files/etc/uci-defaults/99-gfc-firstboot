@@ -100,6 +100,14 @@ for svc in gfc-api gfc-agent gfc-unbound gfc-sing-box gfc-routing gfc-lan-dhcp; 
 	fi
 done
 
+# TCP BBR (kmod-tcp-bbr baked into OEM image; sysctl drop-in from gfc-client).
+if [ -f /etc/sysctl.d/12-gfc-bbr.conf ]; then
+	sysctl -p /etc/sysctl.d/12-gfc-bbr.conf >/dev/null 2>&1 \
+		|| echo "WARN: apply 12-gfc-bbr.conf failed (kernel may lack BBR)"
+	echo "tcp_cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo '?')"
+	echo "qdisc=$(sysctl -n net.core.default_qdisc 2>/dev/null || echo '?')"
+fi
+
 # Unactivated factory image: bootstrap configs only (no device_id / line activation).
 if [ -f "$GFC_LIB/state/config_bundle.json" ]; then
 	gfc-bootstrap --reapply >/tmp/gfc-bootstrap.log 2>&1 \

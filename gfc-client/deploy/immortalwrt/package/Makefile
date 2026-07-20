@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=gfc-client
 PKG_VERSION:=1.1.0
-PKG_RELEASE:=16
+PKG_RELEASE:=17
 PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)
 PKG_BUILD_DEPENDS:=golang/host
 GFC_CLIENT_SRC ?= $(abspath $(CURDIR)/../../..)
@@ -51,6 +51,14 @@ define Package/gfc-client/install
 
 	$(INSTALL_DIR) $(1)/etc/gfc-client
 	$(INSTALL_CONF) ./files/etc/gfc-client/gfc.env $(1)/etc/gfc-client/gfc.env
+
+	# Official ImmortalWrt opkg feeds (override stock mirrors.vsean.net).
+	$(INSTALL_DIR) $(1)/etc/opkg
+	$(INSTALL_DATA) ./files/etc/opkg/distfeeds.conf $(1)/etc/opkg/distfeeds.conf
+
+	# TCP BBR sysctl (kmod-tcp-bbr + kmod-sched selected via gfc-packages.config).
+	$(INSTALL_DIR) $(1)/etc/sysctl.d
+	$(INSTALL_DATA) ./files/etc/sysctl.d/12-gfc-bbr.conf $(1)/etc/sysctl.d/12-gfc-bbr.conf
 
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_BIN) ./files/etc/init.d/gfc-api $(1)/etc/init.d/gfc-api

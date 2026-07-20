@@ -11,6 +11,7 @@ BASE_TREE_PACKAGES=(
   ca-bundle ip-full dnsmasq-full kmod-tun kmod-nft-core
   nftables-json nftables-nojson
   tc-tiny kmod-sched-core kmod-ifb
+  kmod-tcp-bbr kmod-sched
   # resize2fs is a separate OpenWrt package (not e2fsprogs);
   # partx binary is in partx-utils (util-linux); losetup for wiki resize path
   resize2fs partx-utils losetup

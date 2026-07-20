@@ -29,6 +29,33 @@ Patch | Minor | Major | Dataplane-Arch
 
 ---
 
+## [1.1.2] - 2026-07-20
+
+### 级别
+Patch
+
+### 组件钉扎
+- control_plane_api: 0.1.0
+- node_agent: 0.3.1
+- gfc_client: 1.1.0-r17
+
+### 变更
+- OEM 固件 opkg 源改为官方 `downloads.immortalwrt.org` ImmortalWrt **24.10.6** x86/64（不再用 `mirrors.vsean.net`）
+- 固件预装 `kmod-tcp-bbr` + `kmod-sched`，写入 `/etc/sysctl.d/12-gfc-bbr.conf`，首启启用 TCP BBR（`fq` + `bbr`）
+
+### 升级
+- 同 Major 直升：是（`1.1.1` → `1.1.2`）
+- 跨 Major 路径：无
+- OTA 基线：仍为 `1.1.0`；本版 BBR/opkg 源以 **刷 OEM 固件** 为准（Runtime OTA 可带上 distfeeds/sysctl，但 kmod 需镜像预装）
+
+### 验收探针
+- 固件 manifest：`gfc-client - 1.1.0-r17`
+- `grep downloads.immortalwrt.org /etc/opkg/distfeeds.conf`（无 vsean）
+- `opkg list-installed | grep kmod-tcp-bbr`
+- `sysctl -n net.ipv4.tcp_congestion_control` → `bbr`
+
+---
+
 ## [1.1.1] - 2026-07-19
 
 ### 级别

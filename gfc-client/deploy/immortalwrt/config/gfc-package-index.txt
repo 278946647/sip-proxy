@@ -20,6 +20,8 @@ ip-full
 tc-tiny
 kmod-sched-core
 kmod-ifb
+kmod-tcp-bbr
+kmod-sched
 #
 # remote-ops (packages feed)
 autossh

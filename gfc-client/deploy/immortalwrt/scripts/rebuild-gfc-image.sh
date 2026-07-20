@@ -145,6 +145,14 @@ link_image_files_overlay() {
   [[ -f "$src/etc/uci-defaults/95-gfc-rootpt-resize" ]] || die "missing 95-gfc-rootpt-resize in $src"
   [[ -f "$src/etc/uci-defaults/96-gfc-rootfs-resize" ]] || die "missing 96-gfc-rootfs-resize in $src"
   [[ -f "$src/etc/uci-defaults/99-gfc-firstboot" ]] || die "missing 99-gfc-firstboot in $src"
+  [[ -f "$src/etc/opkg/distfeeds.conf" ]] || die "missing etc/opkg/distfeeds.conf in $src"
+  [[ -f "$src/etc/sysctl.d/12-gfc-bbr.conf" ]] || die "missing etc/sysctl.d/12-gfc-bbr.conf in $src"
+  if ! grep -q 'downloads.immortalwrt.org/releases/24.10.6' "$src/etc/opkg/distfeeds.conf"; then
+    die "distfeeds.conf must point at downloads.immortalwrt.org 24.10.6 (not vsean)"
+  fi
+  if grep -qi 'vsean' "$src/etc/opkg/distfeeds.conf"; then
+    die "distfeeds.conf still references vsean mirror"
+  fi
   if [[ -L "$dst" || -e "$dst" ]]; then
     rm -rf "$dst"
   fi
