@@ -29,6 +29,33 @@ Patch | Minor | Major | Dataplane-Arch
 
 ---
 
+## [1.1.3] - 2026-07-20
+
+### 级别
+Patch
+
+### 组件钉扎
+- control_plane_api: 0.1.0
+- node_agent: 0.3.1
+- gfc_client: 1.1.0-r18
+
+### 变更
+- `gfc-client` ipk **不再**安装 `/etc/opkg/distfeeds.conf`（与 `base-files` 冲突导致 `package/install` 失败）；官方源仅由 `image/files` overlay 写入
+- 强制关闭 ImmortalWrt `default-settings` / `default-settings-chn` / `kmod-nft-fullcone`，避免自编译 vermagic 下依赖失败
+
+### 升级
+- 同 Major 直升：是（`1.1.2` → `1.1.3`）
+- 跨 Major 路径：无
+- OTA 基线：仍为 `1.1.0`；本版以刷 OEM 固件为准
+
+### 验收探针
+- 固件 manifest：`gfc-client - 1.1.0-r18`
+- `package/install` 无 distfeeds clash / fullcone / default-settings 错误
+- `grep downloads.immortalwrt.org /etc/opkg/distfeeds.conf`
+- `opkg list-installed | grep kmod-tcp-bbr`；`sysctl -n net.ipv4.tcp_congestion_control` → `bbr`
+
+---
+
 ## [1.1.2] - 2026-07-20
 
 ### 级别

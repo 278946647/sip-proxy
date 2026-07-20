@@ -71,7 +71,7 @@ merge_gfc_config() {
     fi
   done <"$fragment"
   # Required bandwidth + expand packages must never be silently skipped.
-  for pkg in tc-tiny kmod-sched-core kmod-ifb resize2fs parted partx-utils losetup; do
+  for pkg in tc-tiny kmod-sched-core kmod-ifb resize2fs parted partx-utils losetup kmod-tcp-bbr kmod-sched; do
     grep -q "^CONFIG_PACKAGE_${pkg}=y$" "$merged" \
       || die "merge skipped required CONFIG_PACKAGE_${pkg}=y (Kconfig missing? feeds install parted?)"
   done
@@ -88,8 +88,13 @@ merge_gfc_config() {
     -e '/^CONFIG_PACKAGE_kmod-sched-htb=/d;/^# CONFIG_PACKAGE_kmod-sched-htb is not set$/d' \
     -e '/^CONFIG_PACKAGE_partx=/d;/^# CONFIG_PACKAGE_partx is not set$/d' \
     .config
+  # Force-disable ImmortalWrt stock packages that break package/install on custom vermagic.
+  for pkg in default-settings default-settings-chn kmod-nft-fullcone; do
+    scrub_package_config_lines .config "CONFIG_PACKAGE_${pkg}"
+    echo "# CONFIG_PACKAGE_${pkg} is not set" >>.config
+  done
   grep -q '^CONFIG_PACKAGE_gfc-client=y$' .config || die "CONFIG_PACKAGE_gfc-client not in .config after merge"
-  log "merged gfc-packages.config (skipped=$skipped)"
+  log "merged gfc-packages.config (skipped=$skipped); disabled default-settings/fullcone"
 }
 
 # OpenWrt image install list comes from Kconfig package-y + pkginfo/*.install.
@@ -113,14 +118,19 @@ verify_dotconfig() {
   cd "$IMT_SRC"
   grep -q '^CONFIG_PACKAGE_gfc-client=y$' .config || die ".config missing CONFIG_PACKAGE_gfc-client=y"
   grep -q '^CONFIG_PACKAGE_luci-app-gfc=y$' .config || die ".config missing CONFIG_PACKAGE_luci-app-gfc=y"
-  for pkg in tc-tiny kmod-sched-core kmod-ifb resize2fs parted partx-utils losetup; do
+  for pkg in tc-tiny kmod-sched-core kmod-ifb kmod-tcp-bbr kmod-sched resize2fs parted partx-utils losetup; do
     grep -q "^CONFIG_PACKAGE_${pkg}=y$" .config || die ".config missing CONFIG_PACKAGE_${pkg}=y"
     # Must use if/then: under set -e, "grep -q && die" returns 1 when absent and aborts the script.
     if grep -qE "^# CONFIG_PACKAGE_${pkg} is not set$" .config; then
       die ".config still has '# CONFIG_PACKAGE_${pkg} is not set' alongside =y"
     fi
   done
-  log ".config OK: gfc + tc + expand tools (resize2fs/parted/partx-utils/losetup)"
+  for pkg in default-settings default-settings-chn kmod-nft-fullcone; do
+    if grep -qE "^CONFIG_PACKAGE_${pkg}=y$" .config; then
+      die ".config still enables CONFIG_PACKAGE_${pkg}=y (must be disabled for GFC OEM)"
+    fi
+  done
+  log ".config OK: gfc + tc + bbr + expand tools; default-settings/fullcone off"
 }
 
 # tc-tiny installs binary at /usr/libexec/tc-tiny; /sbin/tc is ALTERNATIVES symlink.
