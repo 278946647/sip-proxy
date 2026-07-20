@@ -580,6 +580,13 @@ class RuntimeArtifactOut(BaseModel):
     created_at: dt.datetime
 
 
+class RuntimeArtifactMetaOut(BaseModel):
+    """Read-only storage info for admin UI (path from GFC_ARTIFACTS_DIR)."""
+
+    storage_dir: str
+    max_size_bytes: int = 512 * 1024 * 1024
+
+
 class RuntimeArtifactUpdateIn(BaseModel):
     notes: str | None = None
     is_enabled: bool | None = None

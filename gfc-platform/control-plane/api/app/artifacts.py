@@ -21,6 +21,7 @@ from .models import ClientDevice, PlatformUser, RuntimeArtifact
 from .schemas import (
     ClientDeviceDetailOut,
     ClientDeviceUpgradeIn,
+    RuntimeArtifactMetaOut,
     RuntimeArtifactOut,
     RuntimeArtifactUpdateIn,
 )
@@ -32,6 +33,9 @@ logger = logging.getLogger(__name__)
 
 admin_router = APIRouter(prefix="/admin/artifacts", tags=["artifacts"])
 # Client artifact routes are mounted under /clients in clients.py helpers.
+
+# Keep in sync with upload_artifact size check and web-ui nginx client_max_body_size.
+MAX_ARTIFACT_BYTES = 512 * 1024 * 1024
 
 
 def artifacts_root() -> Path:
@@ -106,6 +110,15 @@ async def list_artifacts(
     return [_artifact_to_out(r) for r in rows]
 
 
+@admin_router.get("/meta", response_model=RuntimeArtifactMetaOut, dependencies=[Depends(require_action("read"))])
+async def artifacts_meta() -> RuntimeArtifactMetaOut:
+    """Expose configured storage directory for admin UI (not per-upload editable)."""
+    return RuntimeArtifactMetaOut(
+        storage_dir=str(artifacts_root()),
+        max_size_bytes=MAX_ARTIFACT_BYTES,
+    )
+
+
 @admin_router.post("", response_model=RuntimeArtifactOut, dependencies=[Depends(require_action("write_safe"))])
 async def upload_artifact(
     file: UploadFile = File(...),
@@ -132,7 +145,7 @@ async def upload_artifact(
                 if not chunk:
                     break
                 size += len(chunk)
-                if size > 512 * 1024 * 1024:
+                if size > MAX_ARTIFACT_BYTES:
                     raise HTTPException(400, "artifact too large (max 512MB)")
                 out.write(chunk)
         digest = await sha256_file(dest)

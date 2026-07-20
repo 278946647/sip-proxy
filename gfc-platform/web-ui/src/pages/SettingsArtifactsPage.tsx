@@ -33,6 +33,11 @@ type Artifact = {
   created_at: string;
 };
 
+type ArtifactMeta = {
+  storage_dir: string;
+  max_size_bytes: number;
+};
+
 function formatBytes(n: number) {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
@@ -42,6 +47,7 @@ function formatBytes(n: number) {
 export function SettingsArtifactsPage() {
   const nav = useNavigate();
   const [items, setItems] = useState<Artifact[]>([]);
+  const [meta, setMeta] = useState<ArtifactMeta | null>(null);
   const [loading, setLoading] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -53,8 +59,12 @@ export function SettingsArtifactsPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const rows = await apiGet<Artifact[]>("/admin/artifacts");
+      const [rows, m] = await Promise.all([
+        apiGet<Artifact[]>("/admin/artifacts"),
+        apiGet<ArtifactMeta>("/admin/artifacts/meta").catch(() => null),
+      ]);
       setItems(rows);
+      if (m) setMeta(m);
     } catch (e) {
       message.error(String(e));
     } finally {
@@ -71,6 +81,10 @@ export function SettingsArtifactsPage() {
     const file = fileList[0]?.originFileObj;
     if (!file) {
       message.warning("请选择 runtime tar.gz 文件");
+      return;
+    }
+    if (meta?.max_size_bytes && file.size > meta.max_size_bytes) {
+      message.warning(`文件超过上限（最大 ${formatBytes(meta.max_size_bytes)}）`);
       return;
     }
     setUploading(true);
@@ -128,6 +142,13 @@ export function SettingsArtifactsPage() {
         上传 Ubuntu 侧 <Typography.Text code>pack-runtime.sh</Typography.Text> 产出的{" "}
         <Typography.Text code>.tar.gz</Typography.Text>
         。在客户端详情页选择版本后可单设备下发 OTA。
+        {meta?.storage_dir ? (
+          <>
+            {" "}
+            存放目录：<Typography.Text code>{meta.storage_dir}</Typography.Text>
+            {meta.max_size_bytes ? <>（单文件上限 {formatBytes(meta.max_size_bytes)}）</> : null}
+          </>
+        ) : null}
       </Typography.Paragraph>
       <Table
         rowKey="id"
@@ -223,6 +244,13 @@ export function SettingsArtifactsPage() {
         okText="上传"
       >
         <Form form={form} layout="vertical" initialValues={{ arch: "amd64" }}>
+          <Form.Item label="制品存放目录">
+            <Input
+              value={meta?.storage_dir || "（加载中…）"}
+              readOnly
+              disabled
+            />
+          </Form.Item>
           <Form.Item label="文件" required>
             <Upload
               beforeUpload={() => false}
