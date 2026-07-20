@@ -149,6 +149,8 @@ export function NodesPage() {
     tproxyIface: string;
     snatIface: string;
   }) => {
+    // Single-quote escape for bash:  'foo'"'"'bar'
+    const shEscape = (value: string) => `'${value.replace(/'/g, `'"'"'`)}'`;
     const repoUrl = v.repoUrl.trim();
     const serverUrl = v.serverUrl.trim();
     const serverUrlFallback = (v.serverUrlFallback || "").trim();
@@ -163,16 +165,18 @@ export function NodesPage() {
     return [
       "sudo apt-get update -qq",
       "sudo apt-get install -y -qq git",
-      `if [ -d /opt/sip-proxy/.git ]; then git -C /opt/sip-proxy pull origin main; else git clone '${repoUrl}' /opt/sip-proxy; fi`,
+      `if [ -d /opt/sip-proxy/.git ]; then git -C /opt/sip-proxy pull origin main; else git clone ${shEscape(repoUrl)} /opt/sip-proxy; fi`,
       "cd /opt/sip-proxy/gfc-platform",
-      `SERVER_URL='${serverUrl}'`,
-      `SERVER_URL_FALLBACK='${serverUrlFallback}'`,
-      `BOOTSTRAP_TOKEN='${bootstrapToken}'`,
-      `NODE_NAME='${nodeName}'`,
-      `REGION='${region}'`,
-      `GFC_TPROXY_IFACE='${tproxyIface}'`,
-      `GFC_SNAT_IFACE='${snatIface}'`,
-      "bash deploy/node/install.sh --yes",
+      [
+        `SERVER_URL=${shEscape(serverUrl)}`,
+        `SERVER_URL_FALLBACK=${shEscape(serverUrlFallback)}`,
+        `BOOTSTRAP_TOKEN=${shEscape(bootstrapToken)}`,
+        `NODE_NAME=${shEscape(nodeName)}`,
+        `REGION=${shEscape(region)}`,
+        `GFC_TPROXY_IFACE=${shEscape(tproxyIface)}`,
+        `GFC_SNAT_IFACE=${shEscape(snatIface)}`,
+        "bash deploy/node/install.sh --yes",
+      ].join(" "),
     ].join(" && ");
   };
 
