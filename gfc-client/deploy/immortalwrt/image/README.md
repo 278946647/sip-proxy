@@ -8,6 +8,7 @@ OpenWrt `prepare_rootfs` copies these into the final rootfs. Primary first-boot 
 
 | Path | Role |
 |------|------|
+| `files/etc/uci-defaults/93-gfc-vga-console` | tty1 askfirst→respawn (belt); GRUB VGA is primary fix |
 | `files/etc/uci-defaults/95-gfc-rootpt-resize` | Grow root **partition**, reboot (OpenWrt expand_root phase 1) |
 | `files/etc/uci-defaults/96-gfc-rootfs-resize` | Grow root **filesystem** with resize2fs, reboot (phase 2) |
 | `files/etc/uci-defaults/99-gfc-firstboot` | One-shot OEM bring-up (fw4 off, dnsmasq port=0, enable GFC services, bootstrap) |
@@ -30,3 +31,13 @@ After flash:
 - DHCP hotplug log: `/tmp/gfc-dnsmasq-hotplug.log`
 
 Expect **1–2 automatic reboots** while disk expand completes. Scripts are removed from `/etc/uci-defaults/` only after each phase succeeds (exit 0).
+
+## VMware / VGA console
+
+Stock ImmortalWrt GRUB enables serial + VGA with cmdline ending in `console=ttyS0`, so
+`/dev/console` (and login) go to serial — VMware window looks stuck after
+`Run /sbin/init`. OEM merges `config/gfc-boot.config` (`CONFIG_GRUB_CONSOLE=y`,
+serial off). **Rebuilding the image is required**; `qemu-img convert` to VMDK cannot fix this.
+
+Until you rebuild: click the VM console and press **Enter** several times (OpenWrt
+`askfirst` on tty1).

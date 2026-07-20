@@ -29,6 +29,30 @@ Patch | Minor | Major | Dataplane-Arch
 
 ---
 
+## [1.1.7] - 2026-07-21
+
+### 级别
+Patch
+
+### 组件钉扎
+- control_plane_api: 0.1.0
+- node_agent: 0.3.1
+- gfc_client: 1.1.0-r22
+
+### 变更
+- OEM：关闭 `CONFIG_GRUB_SERIAL`，VGA 作为 `/dev/console`，避免 VMware 停在 `Run /sbin/init` 假死
+- 镜像打包时将 `tty1` askfirst 改为 respawn；`GRUB_TIMEOUT=5`
+
+### 升级
+- 同 Major 直升：是
+- 跨 Major 路径：无
+- OTA 基线：1.1.0
+
+### 验收探针
+- manifest：`gfc-client - 1.1.0-r22`
+- `.config`：`CONFIG_GRUB_CONSOLE=y` 且无 `CONFIG_GRUB_SERIAL=y`
+- VMware VGA 在 init 后出现 login（无需串口）
+
 ## [1.1.6] - 2026-07-20
 
 ### 级别

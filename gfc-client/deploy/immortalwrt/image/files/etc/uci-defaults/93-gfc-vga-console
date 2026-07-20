@@ -1,0 +1,12 @@
+#!/bin/sh
+# Ensure VGA tty1 shows login without requiring Enter (askfirst).
+# Safe if already respawn; no-op when tty1 line missing.
+set -eu
+[ -f /etc/inittab ] || exit 0
+if grep -q '^tty1::askfirst:' /etc/inittab; then
+	sed -i 's|^tty1::askfirst:|tty1::respawn:|' /etc/inittab
+fi
+if ! grep -qE '^tty1::' /etc/inittab; then
+	echo 'tty1::respawn:/usr/libexec/login.sh' >>/etc/inittab
+fi
+exit 0

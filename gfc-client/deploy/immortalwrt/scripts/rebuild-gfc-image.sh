@@ -49,6 +49,46 @@ scrub_package_config_lines() {
   mv "${file}.new" "$file"
 }
 
+# VGA-first GRUB: ImmortalWrt default puts ttyS0 last → /dev/console=serial;
+# VMware then looks hung after "Run /sbin/init". See config/gfc-boot.config.
+merge_gfc_boot_config() {
+  local fragment="$GFC_DEPLOY/config/gfc-boot.config"
+  [[ -f "$fragment" ]] || return 0
+  cd "$IMT_SRC"
+  scrub_package_config_lines .config "CONFIG_GRUB_CONSOLE"
+  scrub_package_config_lines .config "CONFIG_GRUB_SERIAL"
+  scrub_package_config_lines .config "CONFIG_GRUB_TIMEOUT"
+  # Append force lines (OpenWrt image Gen uses these at target/linux/x86).
+  {
+    echo "CONFIG_GRUB_CONSOLE=y"
+    echo "# CONFIG_GRUB_SERIAL is not set"
+    echo "CONFIG_GRUB_TIMEOUT=5"
+  } >>.config
+  grep -q '^CONFIG_GRUB_CONSOLE=y$' .config || die "CONFIG_GRUB_CONSOLE not set after merge"
+  if grep -qE '^CONFIG_GRUB_SERIAL=y$' .config; then
+    die "CONFIG_GRUB_SERIAL still =y (OEM requires serial off for VGA login)"
+  fi
+  log "merged gfc-boot.config: GRUB console=VGA, serial off, timeout=5"
+}
+
+# Bake tty1 respawn into rootfs so first boot shows login without Enter.
+patch_vga_inittab() {
+  local root="$1"
+  local f="$root/etc/inittab"
+  [[ -f "$f" ]] || {
+    log "WARN: no $f — skip VGA inittab patch"
+    return 0
+  }
+  if grep -q '^tty1::askfirst:' "$f"; then
+    sed -i 's|^tty1::askfirst:|tty1::respawn:|' "$f"
+    log "patched $f: tty1 askfirst → respawn"
+  fi
+  if ! grep -qE '^tty1::' "$f"; then
+    echo 'tty1::respawn:/usr/libexec/login.sh' >>"$f"
+    log "appended tty1::respawn to $f"
+  fi
+}
+
 merge_gfc_config() {
   local fragment="$GFC_DEPLOY/config/gfc-packages.config"
   [[ -f "$IMT_SRC/.config" ]] || die "missing $IMT_SRC/.config"
@@ -123,6 +163,7 @@ merge_gfc_config() {
   grep -q '^CONFIG_PACKAGE_gfc-client=y$' .config || die "CONFIG_PACKAGE_gfc-client not in .config after merge"
   grep -q '^CONFIG_PACKAGE_luci-base=y$' .config || die "CONFIG_PACKAGE_luci-base not in .config after merge"
   log "merged gfc-packages.config (skipped=$skipped); disabled fw4/fullcone/luci-meta/luci-light/realtek-oob"
+  merge_gfc_boot_config
 }
 
 # OpenWrt image install list comes from Kconfig package-y + pkginfo/*.install.
@@ -160,7 +201,11 @@ verify_dotconfig() {
       die ".config still enables CONFIG_PACKAGE_${pkg}=y (must be disabled for GFC OEM)"
     fi
   done
-  log ".config OK: gfc + luci-base stack + tc/bbr; fw4/fullcone/luci-meta/luci-light/realtek-oob off"
+  if grep -qE '^CONFIG_GRUB_SERIAL=y$' .config; then
+    die ".config still has CONFIG_GRUB_SERIAL=y (OEM VGA needs serial off)"
+  fi
+  grep -q '^CONFIG_GRUB_CONSOLE=y$' .config || die ".config missing CONFIG_GRUB_CONSOLE=y"
+  log ".config OK: gfc + luci-base + VGA GRUB; fw4/fullcone/luci-meta/luci-light/realtek-oob off"
 }
 
 # tc-tiny installs binary at /usr/libexec/tc-tiny; /sbin/tc is ALTERNATIVES symlink.
@@ -943,6 +988,15 @@ build_image() {
       "$ROOTFS_ORIG_DIR/etc/uci-defaults/98-gfc-network-ports"
     chmod +x "$ROOTFS_ORIG_DIR/etc/uci-defaults/98-gfc-network-ports"
   fi
+  if [[ -f "$GFC_DEPLOY/image/files/etc/uci-defaults/93-gfc-vga-console" ]]; then
+    mkdir -p "$ROOTFS_ORIG_DIR/etc/uci-defaults"
+    cp -a "$GFC_DEPLOY/image/files/etc/uci-defaults/93-gfc-vga-console" \
+      "$ROOTFS_ORIG_DIR/etc/uci-defaults/93-gfc-vga-console"
+    chmod +x "$ROOTFS_ORIG_DIR/etc/uci-defaults/93-gfc-vga-console"
+  fi
+  # First-boot VGA login: patch inittab in both trees before packing images.
+  patch_vga_inittab "$root"
+  patch_vga_inittab "$ROOTFS_ORIG_DIR"
   build_target_images
 }
 
