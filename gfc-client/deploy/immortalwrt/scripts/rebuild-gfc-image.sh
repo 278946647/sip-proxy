@@ -528,12 +528,16 @@ prepare_package_install_abi() {
     || die "package/kernel/linux/compile failed"
   verify_kernel_ipk_for_install "$hash" "$kernel_ver"
 
-  log "recompile all packages so Depends: kernel (= ${kernel_ver}~${hash}-…) matches"
-  if ! make package/compile -j"$JOBS" V=s; then
-    die "package/compile failed after kernel refresh (patchelf on static gfc-* is OK; re-run with JOBS=1 to find real package). See scripts/recover-package-install.sh"
+  # Do NOT run full `make package/compile` here — it rebuilds the whole tree and
+  # commonly fails on an unrelated package under -jN. Userspace ipks stay in
+  # bin/packages/x86_64/. Opt-in: GFC_FULL_PACKAGE_COMPILE=1
+  if [[ "${GFC_FULL_PACKAGE_COMPILE:-0}" == "1" ]]; then
+    log "GFC_FULL_PACKAGE_COMPILE=1 — make package/compile"
+    if ! BUILD_LOG=1 make package/compile -j"$JOBS" V=s; then
+      die "full package/compile failed — see logs/package/*/compile.txt or recover-package-install.sh"
+    fi
+    make package/index -j1 V=s 2>/dev/null || true
   fi
-  # Regenerate Packages indexes used by some install paths.
-  make package/index -j1 V=s 2>/dev/null || true
   verify_kernel_ipk_for_install "$hash" "$kernel_ver"
   verify_required_gfc_ipks
 
@@ -548,7 +552,7 @@ prepare_package_install_abi() {
       fi
     done < <(find bin -type f -name Packages 2>/dev/null)
   fi
-  log "package/install ABI ready"
+  log "package/install ABI ready (kernel refreshed; full world compile skipped unless GFC_FULL_PACKAGE_COMPILE=1)"
 }
 
 # Ensure GFC OEM runtime packages were actually built (not only kernel).
