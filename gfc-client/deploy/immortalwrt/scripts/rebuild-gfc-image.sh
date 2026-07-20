@@ -147,17 +147,83 @@ link_image_files_overlay() {
   [[ -f "$src/etc/uci-defaults/99-gfc-firstboot" ]] || die "missing 99-gfc-firstboot in $src"
   [[ -f "$src/etc/opkg/distfeeds.conf" ]] || die "missing etc/opkg/distfeeds.conf in $src"
   [[ -f "$src/etc/sysctl.d/12-gfc-bbr.conf" ]] || die "missing etc/sysctl.d/12-gfc-bbr.conf in $src"
-  if ! grep -q 'downloads.immortalwrt.org/releases/24.10.6' "$src/etc/opkg/distfeeds.conf"; then
-    die "distfeeds.conf must point at downloads.immortalwrt.org 24.10.6 (not vsean)"
+  # Only check active feed lines (comments may mention old mirrors).
+  if ! grep -E '^[[:space:]]*src/' "$src/etc/opkg/distfeeds.conf" \
+    | grep -q 'downloads.immortalwrt.org'; then
+    die "distfeeds.conf active src lines must use downloads.immortalwrt.org"
   fi
-  if grep -qi 'vsean' "$src/etc/opkg/distfeeds.conf"; then
-    die "distfeeds.conf still references vsean mirror"
+  if grep -E '^[[:space:]]*src/' "$src/etc/opkg/distfeeds.conf" \
+    | grep -qiE 'vsean|mirrors\.vsean'; then
+    die "distfeeds.conf still has active src line pointing at vsean mirror"
   fi
+  # Copy (not symlink) so kmods URL rewrite does not dirty the sip-proxy tree.
   if [[ -L "$dst" || -e "$dst" ]]; then
     rm -rf "$dst"
   fi
-  ln -sfn "$src" "$dst"
-  log "ImmortalWrt files overlay: $dst -> $src"
+  mkdir -p "$dst"
+  if command -v rsync >/dev/null 2>&1; then
+    rsync -a --delete "$src/" "$dst/"
+  else
+    cp -a "$src/." "$dst/"
+  fi
+  rewrite_distfeeds_kmods_for_build_tree "$dst/etc/opkg/distfeeds.conf" \
+    || log "WARN: keep packaged kmods URL (see comments in distfeeds.conf)"
+  log "ImmortalWrt files overlay: $dst <= $src (copy)"
+}
+
+# Map build-tree kernel vermagic → immortalwrt_kmods URL (or drop the line if CDN has no match).
+# Baked kmods (e.g. kmod-tcp-bbr via gfc-packages.config) do NOT depend on this feed.
+rewrite_distfeeds_kmods_for_build_tree() {
+  local conf=$1
+  local vermagic_file kernel_ver hash kmods_dir url tmp
+  vermagic_file="$(
+    find "$IMT_SRC/build_dir" -path '*/linux-x86_64/linux-*/.vermagic' 2>/dev/null \
+      | head -1
+  )"
+  [[ -n "$vermagic_file" && -f "$vermagic_file" ]] || {
+    log "no .vermagic under build_dir — skip kmods URL rewrite"
+    return 1
+  }
+  hash="$(tr -d '[:space:]' <"$vermagic_file")"
+  [[ -n "$hash" ]] || return 1
+  kernel_ver="$(basename "$(dirname "$vermagic_file")")"
+  kernel_ver="${kernel_ver#linux-}"
+  kmods_dir="${kernel_ver}-1-${hash}"
+  # Prefer same release channel as other feeds; fall back to snapshots if present.
+  for url in \
+    "https://downloads.immortalwrt.org/releases/24.10.6/targets/x86/64/kmods/${kmods_dir}" \
+    "https://downloads.immortalwrt.org/snapshots/targets/x86/64/kmods/${kmods_dir}"
+  do
+    if command -v curl >/dev/null 2>&1; then
+      if curl -fsI -o /dev/null --connect-timeout 5 --max-time 15 "$url/" 2>/dev/null; then
+        tmp="$(mktemp)"
+        awk -v u="$url" '
+          BEGIN { done=0 }
+          /^[[:space:]]*src\/gz[[:space:]]+immortalwrt_kmods[[:space:]]+/ {
+            print "src/gz immortalwrt_kmods " u
+            done=1
+            next
+          }
+          { print }
+          END {
+            if (!done)
+              print "src/gz immortalwrt_kmods " u
+          }
+        ' "$conf" >"$tmp"
+        mv "$tmp" "$conf"
+        log "distfeeds immortalwrt_kmods → $url (from $vermagic_file)"
+        return 0
+      fi
+    fi
+  done
+  # No public kmods for this vermagic (common on custom/snapshot trees).
+  # Drop the feed so LuCI/opkg does not advertise incompatible 6.6.133 kmods.
+  tmp="$(mktemp)"
+  grep -Ev '^[[:space:]]*src/gz[[:space:]]+immortalwrt_kmods[[:space:]]+' "$conf" >"$tmp" || true
+  mv "$tmp" "$conf"
+  log "WARN: no CDN kmods for ${kmods_dir} — removed immortalwrt_kmods from distfeeds"
+  log "      baked packages (kmod-tcp-bbr etc.) still come from this build tree"
+  return 0
 }
 
 make_gfc_package() {
@@ -718,12 +784,12 @@ verify_manifest() {
   grep -i gfc "$manifest" || true
   grep -i gfc-client "$manifest" >/dev/null || die "manifest has no gfc-client"
   grep -i luci-app-gfc "$manifest" >/dev/null || die "manifest has no luci-app-gfc"
-  for pkg in tc-tiny kmod-sched-core kmod-ifb resize2fs parted partx-utils losetup; do
+  for pkg in tc-tiny kmod-sched-core kmod-ifb kmod-tcp-bbr kmod-sched resize2fs parted partx-utils losetup; do
     grep -qE "^${pkg}( |$)" "$manifest" \
       || die "manifest missing ${pkg}"
   done
-  log "manifest tc/htb lines:"
-  grep -E '^(tc-tiny|kmod-sched-core|kmod-ifb) ' "$manifest" || true
+  log "manifest tc/htb/bbr lines:"
+  grep -E '^(tc-tiny|kmod-sched-core|kmod-ifb|kmod-tcp-bbr|kmod-sched) ' "$manifest" || true
   log "manifest expand lines:"
   grep -E '^(resize2fs|parted|partx-utils|losetup) ' "$manifest" || true
   rootfs_has_tc "$orig" \
