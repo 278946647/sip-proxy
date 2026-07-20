@@ -40,8 +40,10 @@ Patch
 - gfc_client: 1.1.0-r20
 
 ### 变更
-- `package/install` 前**强制**刷新 `bin/targets/x86/64/packages` 中的 `kernel_*.ipk`（缺 kernel 会导致全部 kmod 报「找不到依赖 / incompatible architectures」）
-- 关闭更多 Realtek 树外驱动与 `luci-i18n-firewall-*`
+- `package/install` 前刷新 `bin/targets/x86/64/packages` 中的 `kernel_*.ipk`（避免缺 kernel 导致全部 kmod 失败）
+- 恢复脚本默认**不**跑整树 `package/compile`（可用 `GFC_FULL_PACKAGE_COMPILE=1` 选择全量）
+- 关闭 ImmortalWrt `luci` meta / `firewall4` / fullcone / Realtek 树外驱动；LuCI 用 `luci-base` + theme + `luci-mod-admin-full`
+- 强制 `libcap` + `libcap-bin`（`setcap`）；OEM opkg 源走 files overlay；去掉 CN 列表误放的 `google.com`
 - 增加 `scripts/recover-package-install.sh` 一键恢复
 
 ### 升级
