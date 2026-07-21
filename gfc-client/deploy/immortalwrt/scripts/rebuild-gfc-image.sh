@@ -675,55 +675,28 @@ prepare_package_install_abi() {
 
 # base-files is nonshared → lives in bin/targets/.../packages/. Must contain rc.common.
 ensure_base_files_ipk() {
-  local src_rc ipk tmp data
+  local src_rc lib
   cd "$IMT_SRC"
   src_rc="package/base-files/files/etc/rc.common"
   [[ -f "$src_rc" ]] || die "missing $src_rc in ImmortalWrt tree — checkout is broken"
+  lib="$GFC_DEPLOY/scripts/gfc-base-files-lib.sh"
+  [[ -f "$lib" ]] || die "missing $lib"
+  # shellcheck disable=SC1090
+  source "$lib"
 
-  ipk="$(find bin/targets/x86/64/packages -maxdepth 1 -name 'base-files_*.ipk' -type f 2>/dev/null | head -1 || true)"
-  if [[ -n "$ipk" ]]; then
-    tmp="$(mktemp -d /tmp/gfc-bf.XXXXXX)"
-    data=""
-    if ( cd "$tmp" && ar x "$ipk" >/dev/null 2>&1 ); then
-      if [[ -f "$tmp/data.tar.gz" ]]; then
-        data="$tmp/data.tar.gz"
-      elif [[ -f "$tmp/data.tar.zst" ]]; then
-        data="$tmp/data.tar.zst"
-      fi
-    fi
-    if [[ -n "$data" ]] && tar -t -f "$data" 2>/dev/null | grep -qE '^\./etc/rc\.common$|^etc/rc\.common$'; then
-      log "base-files ipk OK: $(basename "$ipk") contains etc/rc.common"
-      rm -rf "$tmp"
+  if find bin/targets/x86/64/packages -maxdepth 1 -name 'base-files_*.ipk' -type f 2>/dev/null | grep -q . \
+    && [[ -f "$(gfc_base_files_staging_rc "$IMT_SRC")" ]]; then
+    if gfc_assert_base_files_built; then
       return 0
     fi
-    log "WARN: $(basename "${ipk:-none}") missing etc/rc.common — rebuilding base-files"
-    rm -rf "$tmp"
-  else
-    log "base-files_*.ipk missing under bin/targets/x86/64/packages — compiling"
   fi
 
+  log "compiling package/base-files (conffile find warnings for network/system are OK)"
   make package/base-files/clean V=s 2>/dev/null || true
   rm -rf build_dir/target-x86_64_musl/linux-x86_64/base-files
   make package/base-files/compile -j"$JOBS" V=s \
     || die "package/base-files/compile failed"
-  ipk="$(find bin/targets/x86/64/packages -maxdepth 1 -name 'base-files_*.ipk' -type f 2>/dev/null | head -1 || true)"
-  [[ -n "$ipk" ]] || die "base-files ipk still missing after compile"
-  tmp="$(mktemp -d /tmp/gfc-bf.XXXXXX)"
-  ( cd "$tmp" && ar x "$ipk" ) || die "cannot ar x $ipk"
-  data=""
-  if [[ -f "$tmp/data.tar.gz" ]]; then
-    data="$tmp/data.tar.gz"
-  elif [[ -f "$tmp/data.tar.zst" ]]; then
-    data="$tmp/data.tar.zst"
-  else
-    die "no data.tar.* in $ipk"
-  fi
-  tar -t -f "$data" | grep -qE '^\./etc/rc\.common$|^etc/rc\.common$' \
-    || die "rebuilt $ipk still lacks etc/rc.common — ImmortalWrt package/base-files tree broken"
-  rm -rf "$tmp"
-  log "base-files rebuilt OK: $(basename "$ipk")"
-  # Note: ipkg-build may warn find: .../etc/config/network missing — those conffiles
-  # are optional at pack time (created on first boot). Harmless if rc.common is present.
+  gfc_assert_base_files_built || die "base-files assert failed after compile"
 }
 
 # Ensure GFC OEM runtime packages were actually built (not only kernel).
