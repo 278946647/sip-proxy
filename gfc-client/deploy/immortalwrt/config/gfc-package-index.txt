@@ -28,6 +28,7 @@ kmod-sched
 #
 # remote-ops (packages feed)
 autossh
+dropbear
 #
 # scene-ops-tools (packages feed)
 curl

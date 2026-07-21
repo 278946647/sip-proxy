@@ -169,7 +169,7 @@ merge_gfc_config() {
     fi
   done <"$fragment"
   # Required bandwidth + expand packages must never be silently skipped.
-  for pkg in tc-tiny kmod-sched-core kmod-ifb resize2fs parted partx-utils losetup kmod-tcp-bbr kmod-sched luci-theme-bootstrap luci-mod-admin-full; do
+  for pkg in tc-tiny kmod-sched-core kmod-ifb resize2fs parted partx-utils losetup kmod-tcp-bbr kmod-sched luci-theme-bootstrap luci-mod-admin-full dropbear; do
     grep -q "^CONFIG_PACKAGE_${pkg}=y$" "$merged" \
       || die "merge skipped required CONFIG_PACKAGE_${pkg}=y (Kconfig missing? feeds install parted/luci?)"
   done
@@ -706,7 +706,7 @@ verify_required_gfc_ipks() {
     gfc-client luci-app-gfc luci-base luci-theme-bootstrap luci-mod-admin-full
     sing-box unbound-daemon unbound-checkconf dnsmasq-full
     tc-tiny kmod-sched-core kmod-sched kmod-ifb kmod-tcp-bbr kmod-tun kmod-nft-core
-    nftables-json curl wget-ssl tcpdump iftop bmon autossh
+    nftables-json curl wget-ssl tcpdump iftop bmon autossh dropbear
     libcap libcap-bin ca-bundle ip-full resize2fs parted partx-utils losetup
   )
   log "verify required GFC ipks under bin/"
