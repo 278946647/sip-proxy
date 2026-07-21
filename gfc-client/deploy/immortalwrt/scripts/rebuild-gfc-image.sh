@@ -738,8 +738,12 @@ install_rootfs() {
   [[ -d "$ROOTFS_ORIG_DIR" ]] || die "missing $ROOTFS_ORIG_DIR after package/install (Image/Manifest uses ORIG)"
   # base-files must be present. Build-time "./etc/rc.common: No such file" is ONLY
   # OK when the file exists in ORIG — if missing, enable failed and image is broken.
-  assert_rootfs_base_files "$ROOTFS_DIR"
-  assert_rootfs_base_files "$ROOTFS_ORIG_DIR"
+  assert_rootfs_base_files "$ROOTFS_DIR" with_rc_d
+  assert_rootfs_base_files "$ROOTFS_ORIG_DIR" no_rc_d
+  # OpenWrt order: CP → ORIG, then prepare_rootfs(Enabling) only on TARGET_DIR.
+  # Images pack ORIG — must copy enabled rc.d (and inittab) back or services stay disabled.
+  sync_prepare_rootfs_into_orig
+  assert_rootfs_base_files "$ROOTFS_ORIG_DIR" with_rc_d
   if grep -qE 'gfc-client_.*\.ipk' "$IMT_SRC/tmp/opkg_install_list" 2>/dev/null; then
     log "opkg_install_list includes gfc-client ipk"
   else
@@ -747,8 +751,24 @@ install_rootfs() {
   fi
 }
 
+# After package/install: TARGET_DIR has Enabling; ORIG is pre-enable snapshot.
+sync_prepare_rootfs_into_orig() {
+  local root="$ROOTFS_DIR" orig="$ROOTFS_ORIG_DIR"
+  [[ -d "$root/etc/rc.d" ]] || die "TARGET_DIR missing etc/rc.d after prepare_rootfs"
+  mkdir -p "$orig/etc"
+  rm -rf "$orig/etc/rc.d"
+  cp -a "$root/etc/rc.d" "$orig/etc/rc.d"
+  [[ -f "$root/etc/inittab" ]] && cp -a "$root/etc/inittab" "$orig/etc/inittab"
+  [[ -f "$root/etc/rc.common" ]] && cp -a "$root/etc/rc.common" "$orig/etc/rc.common"
+  local n
+  n="$(find "$orig/etc/rc.d" -maxdepth 1 -name 'S*' 2>/dev/null | wc -l | tr -d ' ')"
+  log "synced prepare_rootfs → ORIG (rc.d/S*=$n)"
+  [[ "${n:-0}" -ge 5 ]] || die "ORIG still has too few S* after sync ($n)"
+}
+
 assert_rootfs_base_files() {
   local root=$1
+  local mode=${2:-with_rc_d}
   local missing=0
   for f in \
     "$root/etc/rc.common" \
@@ -770,12 +790,16 @@ assert_rootfs_base_files() {
   make package/install -j1 V=s
 Then re-run rebuild-gfc-image.sh. Do NOT flash images built without /etc/rc.common."
   fi
-  local n
-  n="$(find "$root/etc/rc.d" -maxdepth 1 -name 'S*' 2>/dev/null | wc -l | tr -d ' ')"
-  if [[ "${n:-0}" -lt 5 ]]; then
-    die "rootfs $root has almost no /etc/rc.d/S* ($n) — service enable failed (often because rc.common missing). Rebuild base-files + package/install."
+  if [[ "$mode" == "with_rc_d" ]]; then
+    local n
+    n="$(find "$root/etc/rc.d" -maxdepth 1 -name 'S*' 2>/dev/null | wc -l | tr -d ' ')"
+    if [[ "${n:-0}" -lt 5 ]]; then
+      die "rootfs $root has almost no /etc/rc.d/S* ($n) — service enable missing. If this is ORIG, sync from TARGET_DIR after prepare_rootfs."
+    fi
+    log "rootfs base OK: rc.common + init + inittab + busybox; rc.d/S*=$n ($root)"
+  else
+    log "rootfs base OK: rc.common + init + inittab + busybox ($root, rc.d check skipped — pre-enable ORIG snapshot)"
   fi
-  log "rootfs base OK: rc.common + init + inittab + busybox; rc.d/S*=$n ($root)"
 }
 
 # Manifest + images come from TARGET_DIR_ORIG. Inject must update BOTH trees.

@@ -57,10 +57,17 @@ make package/install -j1 V=s || die "package/install failed"
 for root in "$ROOT" "$ORIG"; do
   [[ -f "$root/etc/rc.common" ]] || die "missing $root/etc/rc.common — base-files not installed into rootfs"
   [[ -e "$root/sbin/init" || -L "$root/sbin/init" ]] || die "missing $root/sbin/init"
-  n="$(find "$root/etc/rc.d" -maxdepth 1 -name 'S*' 2>/dev/null | wc -l | tr -d ' ')"
-  [[ "${n:-0}" -ge 5 ]] || die "$root has too few /etc/rc.d/S* ($n)"
-  log "OK $root (rc.d/S*=$n)"
 done
+# TARGET_DIR has Enabling; ORIG is pre-enable — sync rc.d before requiring S* on ORIG
+n_root="$(find "$ROOT/etc/rc.d" -maxdepth 1 -name 'S*' 2>/dev/null | wc -l | tr -d ' ')"
+[[ "${n_root:-0}" -ge 5 ]] || die "$ROOT has too few /etc/rc.d/S* ($n_root)"
+log "OK $ROOT (rc.d/S*=$n_root)"
+rm -rf "$ORIG/etc/rc.d"
+cp -a "$ROOT/etc/rc.d" "$ORIG/etc/rc.d"
+[[ -f "$ROOT/etc/inittab" ]] && cp -a "$ROOT/etc/inittab" "$ORIG/etc/inittab"
+n_orig="$(find "$ORIG/etc/rc.d" -maxdepth 1 -name 'S*' 2>/dev/null | wc -l | tr -d ' ')"
+[[ "${n_orig:-0}" -ge 5 ]] || die "$ORIG still too few S* after sync ($n_orig)"
+log "OK $ORIG (rc.d/S*=$n_orig, synced from TARGET_DIR)"
 
 log "rebuild-gfc-image.sh"
 export IMT_SRC GFC_REPO
