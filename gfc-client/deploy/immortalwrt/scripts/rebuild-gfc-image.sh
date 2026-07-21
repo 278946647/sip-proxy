@@ -699,11 +699,46 @@ install_rootfs() {
   make package/install -j1 V=s
   require_rootfs_populated "$ROOTFS_DIR"
   [[ -d "$ROOTFS_ORIG_DIR" ]] || die "missing $ROOTFS_ORIG_DIR after package/install (Image/Manifest uses ORIG)"
+  # base-files must be present. Build-time "./etc/rc.common: No such file" is ONLY
+  # OK when the file exists in ORIG — if missing, enable failed and image is broken.
+  assert_rootfs_base_files "$ROOTFS_DIR"
+  assert_rootfs_base_files "$ROOTFS_ORIG_DIR"
   if grep -qE 'gfc-client_.*\.ipk' "$IMT_SRC/tmp/opkg_install_list" 2>/dev/null; then
     log "opkg_install_list includes gfc-client ipk"
   else
     log "WARN: gfc-client still missing from opkg_install_list — will inject into TARGET_DIR + ORIG"
   fi
+}
+
+assert_rootfs_base_files() {
+  local root=$1
+  local missing=0
+  for f in \
+    "$root/etc/rc.common" \
+    "$root/sbin/init" \
+    "$root/etc/inittab" \
+    "$root/bin/busybox"
+  do
+    if [[ ! -e "$f" ]]; then
+      log "ERROR: missing required rootfs file: $f"
+      missing=1
+    fi
+  done
+  if [[ "$missing" -ne 0 ]]; then
+    die "rootfs incomplete under $root (base-files not installed). Fix:
+  cd $IMT_SRC
+  ls bin/packages/*/base/base-files_*.ipk bin/targets/*/packages/base-files_*.ipk 2>/dev/null
+  make package/base-files/clean package/base-files/compile -j\${JOBS:-$(nproc)} V=s
+  rm -rf build_dir/target-*/root-* build_dir/target-*/stamp/.rootfs_installed
+  make package/install -j1 V=s
+Then re-run rebuild-gfc-image.sh. Do NOT flash images built without /etc/rc.common."
+  fi
+  local n
+  n="$(find "$root/etc/rc.d" -maxdepth 1 -name 'S*' 2>/dev/null | wc -l | tr -d ' ')"
+  if [[ "${n:-0}" -lt 5 ]]; then
+    die "rootfs $root has almost no /etc/rc.d/S* ($n) — service enable failed (often because rc.common missing). Rebuild base-files + package/install."
+  fi
+  log "rootfs base OK: rc.common + init + inittab + busybox; rc.d/S*=$n ($root)"
 }
 
 # Manifest + images come from TARGET_DIR_ORIG. Inject must update BOTH trees.
