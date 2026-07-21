@@ -30,14 +30,30 @@ bash gfc-client/deploy/immortalwrt/scripts/recover-package-install.sh
 bash gfc-client/deploy/immortalwrt/scripts/rebuild-gfc-image.sh
 ```
 
-### base-files `find: .../etc/config/network` warnings
+## One-shot repair (missing `/etc/rc.common` in ORIG)
 
-Harmless at pack time: those paths are listed as conffiles but often created on
-first boot. What matters:
+Cause: older recover/rebuild wiped **all** of `bin/targets/x86/64/packages/`,
+deleting **base-files** (nonshared). Then only kernel was rebuilt.
 
 ```bash
-ar x bin/targets/x86/64/packages/base-files_*.ipk
-tar tzf data.tar.gz | grep rc.common   # must exist
+# As gfcbuild — ONE command (fixes detached HEAD + base-files + image)
+sudo -u gfcbuild -H bash -lc '
+  git -C /opt/gfc/sip-proxy fetch origin
+  # script is on main after fetch; if still detached, checkout main first:
+  cd /opt/gfc/sip-proxy && git checkout -B main origin/main
+  chmod +x gfc-client/deploy/immortalwrt/scripts/repair-oem-rootfs.sh
+  bash gfc-client/deploy/immortalwrt/scripts/repair-oem-rootfs.sh
+'
+```
+
+Or manually (absolute paths — do not `cd` away before `ar`):
+
+```bash
+cd /opt/gfc/sip-proxy && git checkout -B main origin/main && git pull --ff-only
+BF=$(ls /opt/gfc/immortalwrt/bin/targets/x86/64/packages/base-files_*.ipk | head -1)
+echo "BF=$BF"
+TMP=$(mktemp -d) && cp -f "$BF" "$TMP/bf.ipk" && cd "$TMP" && ar x bf.ipk
+tar tzf data.tar.gz | grep rc.common
 ```
 
 Only if required userspace ipks are missing and selective compile is not enough:
