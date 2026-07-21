@@ -430,6 +430,67 @@ build_packages() {
     || die "partx-utils ipk not produced — use CONFIG_PACKAGE_partx-utils=y (not partx)"
   find bin -name 'losetup_*.ipk' -print | grep -q . \
     || die "losetup ipk not produced — use CONFIG_PACKAGE_losetup=y"
+  compile_r16_service_baseline
+}
+
+# r16-necessary services newly pinned in gfc-packages.config — must be compiled
+# explicitly (incremental build does NOT run full package/compile).
+compile_r16_service_baseline() {
+  local openssh_tgt="" cand
+  cd "$IMT_SRC"
+  log "compile dropbear / openssh / uhttpd / rpcd / odhcpd (r16 service baseline)"
+
+  [[ -d package/network/services/dropbear ]] \
+    || die "dropbear source missing (expected package/network/services/dropbear)"
+  make package/network/services/dropbear/compile -j"$JOBS" V=s \
+    || die "dropbear compile failed"
+
+  for cand in package/feeds/packages/openssh package/feeds/packages/net/openssh; do
+    [[ -d "$cand" ]] && openssh_tgt=$cand && break
+  done
+  if [[ -z "$openssh_tgt" ]]; then
+    log "openssh feed path missing — feeds install -f openssh-client openssh-keygen"
+    ./scripts/feeds install -f openssh-client openssh-keygen \
+      || die "feeds install openssh-client/openssh-keygen failed"
+    for cand in package/feeds/packages/openssh package/feeds/packages/net/openssh; do
+      [[ -d "$cand" ]] && openssh_tgt=$cand && break
+    done
+  fi
+  [[ -n "$openssh_tgt" ]] || die "openssh still missing under package/feeds/packages after feeds install"
+  make "${openssh_tgt}/compile" -j"$JOBS" V=s \
+    || die "openssh compile failed (target=${openssh_tgt})"
+
+  [[ -d package/network/services/uhttpd ]] \
+    || die "uhttpd source missing"
+  make package/network/services/uhttpd/compile -j"$JOBS" V=s \
+    || die "uhttpd compile failed"
+
+  [[ -d package/system/rpcd ]] \
+    || die "rpcd source missing"
+  make package/system/rpcd/compile -j"$JOBS" V=s \
+    || die "rpcd compile failed"
+
+  if [[ -d package/network/services/odhcpd ]]; then
+    make package/network/services/odhcpd/compile -j"$JOBS" V=s \
+      || die "odhcpd compile failed"
+  else
+    die "odhcpd source missing (expected package/network/services/odhcpd)"
+  fi
+
+  find bin -name 'dropbear_*.ipk' -print | grep -q . \
+    || die "dropbear ipk not produced — check CONFIG_PACKAGE_dropbear=y"
+  find bin -name 'openssh-client_*.ipk' -print | grep -q . \
+    || die "openssh-client ipk not produced — check CONFIG_PACKAGE_openssh-client=y"
+  find bin -name 'openssh-keygen_*.ipk' -print | grep -q . \
+    || die "openssh-keygen ipk not produced — check CONFIG_PACKAGE_openssh-keygen=y"
+  find bin -name 'uhttpd_*.ipk' -print | grep -q . \
+    || die "uhttpd ipk not produced"
+  find bin -name 'rpcd_*.ipk' -print | grep -q . \
+    || die "rpcd ipk not produced"
+  find bin -name 'odhcpd-ipv6only_*.ipk' -print | grep -q . \
+    || find bin -name 'odhcpd_*.ipk' -print | grep -q . \
+    || die "odhcpd(-ipv6only) ipk not produced"
+  log "r16 service baseline ipks present"
 }
 
 ensure_gfc_client_pkginfo() {
