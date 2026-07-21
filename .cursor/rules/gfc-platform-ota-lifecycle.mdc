@@ -16,13 +16,14 @@ alwaysApply: true
 ## 权威文档
 
 1. `docs/SESSION_HANDOFF_2026-07_OTA_LIFECYCLE.md` — **本批任务完成态、验收、踩坑**
-2. `docs/VERSION_AND_RELEASE.md` + `docs/releases/VERSION_MATRIX.json` — **产品版本 / 同 Major 直升 / 发版**
+2. `docs/SESSION_HANDOFF_2026-07_FIRMWARE_BUILD_FIXES.md` — **固件构建 r23 / reclaim 绑线 / ORIG 踩坑**
+3. `docs/VERSION_AND_RELEASE.md` + `docs/releases/VERSION_MATRIX.json` — **产品版本 / 同 Major 直升 / 发版**
 3. `gfc-client/deploy/immortalwrt/FIRMWARE-BUILD-HANDOFF.md` + `BUILD-FIRMWARE.md` — 固件构建
 4. `docs/NFT_ARCHITECTURE.md` / `UNBOUND_ARCHITECTURE.md` / `SINGBOX_ARCHITECTURE.md` — 数据面（仍须批准）
 
 ## 已完成（禁止当「未做」重开需求）
 
-- 线路绑定守卫；设备名 admin 权威；软重置 / 硬退役 + reclaim
+- 线路绑定守卫；设备名 admin 权威；软重置 / 硬退役 + reclaim（**reclaim 后须平台绑线路再激活**，见 FIRMWARE BUILD FIXES handoff）
 - Runtime OTA 一期：制品库、单设备下发、心跳 `runtime_upgrade`、LuCI/Vue 升级页（平台+本地上传+进度）
 - VLESS 出口检测：国内直联探测 + SOCKS/节点双期望比对
 - Auth Secret：保留密钥；**不宜**日常 UI 手填（后续可做一键轮换）

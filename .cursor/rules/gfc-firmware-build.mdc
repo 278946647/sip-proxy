@@ -1,5 +1,5 @@
 ---
-description: GFC x86 ImmortalWrt OEM 固件构建 — 状态、禁令、踩坑记忆固化（新会话必读）
+description: GFC x86 ImmortalWrt OEM 固件构建 — 2026-07-21 会话固化（r23 / r16 基线 / ORIG / 激活认领）
 globs:
   - "**/deploy/immortalwrt/**"
   - "**/gfc-os/**"
@@ -7,111 +7,127 @@ globs:
   - "**/FIRMWARE-BUILD-HANDOFF.md"
   - "**/gfc-packages.config"
   - "**/gfc-package-index.txt"
+  - "**/gfc-initd-baseline.txt"
   - "**/setup-immortalwrt-feed.sh"
   - "**/rebuild-gfc-image.sh"
   - "**/ensure-gfc-package-index.sh"
+  - "**/repair-oem-rootfs.sh"
+  - "**/recover-package-install.sh"
   - "**/99-gfc-firstboot"
   - "**/98-gfc-network-ports"
   - "**/97-gfc-oem-root-password"
   - "**/configure-dropbear-ssh.sh"
-  - "**/configure-network-ports.sh"
-  - "**/configure-dnsmasq-dhcp.sh"
-  - "**/99-gfc-tun"
-  - "**/99-gfc-dnsmasq"
-alwaysApply: false
+  - "**/SESSION_HANDOFF*FIRMWARE*"
+alwaysApply: true
 ---
 
-# GFC 固件构建协议（ImmortalWrt OEM）
+# GFC 固件构建协议（ImmortalWrt OEM · 2026-07-21 更新）
 
 ## 权威文档（优先级从高到低）
 
-1. `gfc-client/deploy/immortalwrt/FIRMWARE-BUILD-HANDOFF.md` — **会话状态、本会话任务、卡点、踩坑全集**
-2. `gfc-client/deploy/immortalwrt/BUILD-FIRMWARE.md` — **操作手册**（命令、目录、模块、验收）
-3. 根目录 `HANDOFF.md` — 产品背景（细节以 1–2 为准）
-4. `docs/NFT_ARCHITECTURE.md` / `UNBOUND_ARCHITECTURE.md` / `SINGBOX_ARCHITECTURE.md` — 数据面（改 deploy 时不得违反）
+1. `docs/SESSION_HANDOFF_2026-07_FIRMWARE_BUILD_FIXES.md` — **本批完成态、r16 基线、ORIG/openssh、激活认领、踩坑**
+2. `gfc-client/deploy/immortalwrt/FIRMWARE-BUILD-HANDOFF.md` — 历史任务与累计能力
+3. `gfc-client/deploy/immortalwrt/BUILD-FIRMWARE.md` — 操作手册（命令、验收）
+4. `docs/VERSION_AND_RELEASE.md` §1.5 + `.cursor/rules/gfc-version-release.mdc` — **试编不升产品号**
+5. `docs/SESSION_HANDOFF_2026-07_OTA_LIFECYCLE.md` — reclaim / 硬退役 / OTA（平台侧）
+6. `docs/NFT_ARCHITECTURE.md` / `UNBOUND_ARCHITECTURE.md` / `SINGBOX_ARCHITECTURE.md` — 数据面（须批准）
 
-## 当前状态摘要（2026-07-17 / `PKG_RELEASE:=15`）
+## 当前状态摘要（2026-07-21 / `PKG_RELEASE:=23`）
 
-- **源码包版本：** `gfc-client` **1.1.0-r15**（含 Runtime OTA API/agent、VLESS SOCKS 感知诊断；LuCI 升级页随 `luci-app-gfc` git 描述）
-- **平台侧 OTA/生命周期：** 见 `docs/SESSION_HANDOFF_2026-07_OTA_LIFECYCLE.md` 与 `gfc-platform-ota-lifecycle.mdc`
-- **构建机：** Ubuntu 22.04，`/opt/gfc/{sip-proxy,immortalwrt}`，用户 **gfcbuild**，Go **1.22+** `/usr/local/go`
-- **验收：** manifest `gfc-client - 1.1.0-r15` + `luci-app-gfc`；功能探针 `/api/v1/upgrade/status`、`/diagnostics/vless`
-- **产品契约：** 未激活也要 DHCP+NAT+DNS hijack；策略路由等 `gfctun`；SSH **212**；OEM 密码 **`Wgh@125434`**；WAN=首块 NIC、LAN=末块
+- **已验证构建：** `437d990` → `gfc-build-437d990-client-1.1.0-r23-x86-64-ext4-combined-efi.img.gz`
+- **manifest 必含：** `gfc-client 1.1.0-r23` + `dropbear` + `openssh-client` + `openssh-keygen` + `uhttpd` + `rpcd` + `odhcpd-ipv6only`（或 odhcpd）
+- **r16 init.d 基线：** `config/gfc-initd-baseline.txt`；ORIG 缺则 build fail
+- **构建机：** Ubuntu，`/opt/gfc/{sip-proxy,immortalwrt}`，用户 **gfcbuild**，Go 1.22+，`GOFLAGS=-buildvcs=false`
+- **刷盘镜像：** `*ext4*combined*efi*.img.gz`（分发用 `gfc-build-<gitsha>-*` 命名）
+- **SSH：** dropbear **212**；反向 SSH 需 openssh-client/keygen
+- **激活：** hard-retired → admin reclaim → **平台绑线路** → 设备再激活（reclaim  alone 不上线）
 
 ## 新会话第一步
 
-1. 读 `FIRMWARE-BUILD-HANDOFF.md` §0–§5 与 `BUILD-FIRMWARE.md` §1–§6；OTA 读 `docs/SESSION_HANDOFF_2026-07_OTA_LIFECYCLE.md`
-2. 构建机：`git pull` → `rebuild-gfc-image.sh` → 确认 manifest **`1.1.0-r15`** + **`tc-tiny`**
-3. 刷最新 `*ext4*combined*efi*.img.gz`，按 HANDOFF / BUILD-FIRMWARE E2E 验收；并验升级页与 VLESS 诊断新字段
+1. 读 `SESSION_HANDOFF_2026-07_FIRMWARE_BUILD_FIXES.md` §0–§5
+2. 构建机设环境并 rebuild（见下）
+3. 验收 manifest + ORIG 基线；分发前在镜像目录 `sha256sum -c`
+4. 刷机后验 dropbear + gfc 服务；激活问题查 agent log 与平台绑定状态
 
-## 修改前必须做的事
-
-1. 若改 `package/Makefile`、feed/rebuild 脚本、选包、firstboot/网卡脚本：先输出 **差异说明**，等用户 **「确认修改」**（用户已点名文件除外）
-2. 未获批准：**只读分析**，不写 feed/镜像脚本
-3. 改 nft/unbound/sing-box 行为：走对应 **no-change-without-approval** 规则，不得借口「固件首启方便」
-
-## 构建入口
+## 构建入口（必须 export GFC_REPO）
 
 ```bash
 export PATH=/usr/local/go/bin:$PATH
-export IMT_SRC=/opt/gfc/immortalwrt GFC_REPO=/opt/gfc/sip-proxy/gfc-client
+export IMT_SRC=/opt/gfc/immortalwrt
+export GFC_REPO=/opt/gfc/sip-proxy/gfc-client
 export GOFLAGS=-buildvcs=false
 bash "$GFC_REPO/deploy/immortalwrt/scripts/rebuild-gfc-image.sh"
-grep -i gfc "$IMT_SRC/bin/targets/x86/64/"*.manifest   # 必须通过
+cd "$IMT_SRC/bin/targets/x86/64"
+grep -E '^(gfc-client|dropbear|openssh-client|uhttpd|rpcd)' *.manifest
+sha256sum -c gfc-build-*.img.gz.sha256   # 须在含 img 的目录
 ```
 
 Feed setup：**v4** — `feeds update -i gfc` + `feeds install -f`（禁止 plain `feeds update gfc` / `feeds install -a`）。
 
-## 绝对禁止
+## 已完成（禁止当「未做」重开）
+
+- disable default-settings / fw4 / luci-light；LuCI = base + theme + mod-admin-full + luci-app-gfc
+- VGA 末位 console（`GFC_VGA_CONSOLE_LAST`）；inittab 无 tty1 respawn
+- kernel ABI 恢复**不删** base-files；ORIG 同步 rc.d；staging 断言 rc.common
+- r16 服务基线选包 + `build_packages` **显式 compile** + ORIG **openssh symlink**
+- §1.5：试编/排错 **不 bump** PKG_RELEASE / 产品 tag；`gfc-os-v*` 仅 `GFC_PUBLISH_RELEASE=1`
+
+## 修改前必须做的事
+
+1. 改选包 / rebuild 脚本 / firstboot：先 **差异说明**，等用户 **「确认修改」**（用户点名文件除外）
+2. 新增 `CONFIG_PACKAGE_*=y`：同步 **gfc-package-index.txt**、**ensure-gfc-package-index.sh**、**build_packages compile**、**verify_required_gfc_ipks**
+3. 未获批准：只读分析，不写 feed/镜像脚本
+4. 数据面：走 **no-change-without-approval**
+
+## 绝对禁止（再踩即 bug）
+
+### 构建 / rootfs
 
 - 合并 GFC 选包后跑 **`make defconfig`** / **`make oldconfig`**
-- 保留或依赖 legacy **`package/gfc/`**（必须 **`package/feeds/gfc/`**）
-- 给 `gfc-client` 加非空 **`DEPENDS`**（未索引依赖 → 整包从 Kconfig 消失）
-- 用 **`CONFIG_PACKAGE_nftables`**（应 **`nftables-json`** + **`kmod-nft-core`**）
-- 用 **`CONFIG_PACKAGE_kmod-sched-htb`**（应 **`kmod-sched-core`**，内含 sch_htb；另加 `tc-tiny` + `kmod-ifb`）
-- 以 **ipk 存在**代替 **manifest 含 gfc-client**
-- ipk 安装 **`/www/index.html`**（与 **luci-base** clash；由 firstboot 覆盖）
-- deploy `*.sh` 保持 **0644**（须 install `chmod 0755`；调用优先 **`sh script`**）
-- 只注入 **`root-x86`** 不同步 **`root.orig-x86`**
-- **`gfc-client.default.install`** 写成文件列表（必须单行包名 `gfc-client`）
-- opkg offline 使用 arch **`x86`**（必须 **`x86_64`**）
-- 删 `root-*` 后只跑 **`make target/install`**（须先 **`package/install`**）
-- **`dd of=/dev/sdX`** 字面量；用 apt **golang 1.18**；无 **`GOFLAGS=-buildvcs=false`**
-- 认定「刷码后立刻无 `ip rule`」为 bug（无 `gfctun` 时延迟是设计；另查脚本 +x）
-- 只改 `GFC_SSH_PORT` 就认为 SSH 已是 212（必须改 **dropbear**）
-- 仅用 `chpasswd` 设 OEM 密码（OpenWrt 常无此命令 → 用 **`passwd`**）
-- 假定 ImmortalWrt stock「lan=eth0/wan=eth1」即产品口序（OEM **WAN=首块 / LAN=末块**）
-- 未经批准改数据面表名/mark/hook/DNS 架构
+- ABI 恢复 **`rm -rf bin/targets/x86/64/packages`**（会抹 **base-files** / rc.common）
+- 只刷新 kernel 却假定 userspace 新包已进 bin（须 **build_packages 显式 compile**）
+- 禁用 **default-settings** 却假设 **dropbear/uhttpd/rpcd** 仍会进镜像
+- 只验 `/usr/bin/ssh` 不验 **`/usr/libexec/ssh-openssh`**（ORIG 打包在 prepare_rootfs 之前）
+- 依赖全量 **`make package/compile`** 作为默认路径（脚本默认 incremental；全量仅 `GFC_FULL_PACKAGE_COMPILE=1`）
+- legacy **`package/gfc/`**；非空 **`DEPENDS`**；**`CONFIG_PACKAGE_nftables`**；**`CONFIG_PACKAGE_kmod-sched-htb`**
+- ipk 装 **`/www/index.html`**；deploy `*.sh` 保持 0644
+- 只同步 **root-x86** 不同步 **root.orig-x86** / rc.d
+- 试编成功就 **bump PKG_RELEASE 或切 tag**（违反 §1.5）
 
-## 必须遵守的包/路径契约
+### LuCI / 防火墙
 
-| 项 | 要求 |
-|----|------|
-| Feed | `src-link gfc` → `deploy/immortalwrt/feed/`；删除 legacy `package/gfc*` |
-| packageinfo | `Source-Makefile: package/feeds/gfc/gfc-client/Makefile` |
-| .config | `CONFIG_PACKAGE_gfc-client=y`、`luci-app-gfc=y` + `gfc-packages.config` |
-| DEPENDS | **空**；运行时包仅 fragment / ensure-index |
-| 验收 | `*.manifest` 含 **gfc-client**、**luci-app-gfc** |
-| ORIG | `package/install` 快照 → 镜像读 **root.orig-x86** |
-| 刷盘镜像 | **ext4** `*combined-efi*.img.gz` |
-| 首启 | `97` 密码 → `98` 网卡 → **`99-gfc-firstboot`** |
-| 网卡 | **WAN=首块物理 NIC**；**LAN(br-lan)=末块**；同步 `GFC_WAN_IFACE` |
-| SSH | dropbear Port **212** |
-| 策略路由 | `gfc-routing` + **`99-gfc-tun`** + sing-box post-start（`sh` 调用） |
-| DHCP | dnsmasq `port=0`、`force=1`、option `6` + **lan ifup hotplug** |
-| 限速 | `tc-tiny` + `kmod-sched-core` + `kmod-ifb`；验收 manifest + ORIG `/usr/libexec/tc-tiny`（`/sbin/tc`=ALTERNATIVES） |
-| OEM 密码 | **`Wgh@125434`**（`passwd` / `97-gfc-oem-root-password`） |
+- 启用 **`luci-light`** / **`luci`** meta / **`luci-app-firewall`** / **firewall4**
+
+### 激活 / 生命周期（排障时）
+
+- 把 **hard-retired** 当「线路码未存储」（看 log 是否已有 POST /activate）
+- **reclaim 后**不绑线路就期望在线（须 **assign line** + 再激活）
+- 未经批准改 nft/unbound/sing-box
+
+## r16 必要包契约（`gfc-packages.config`）
+
+| 类别 | 包 |
+|------|-----|
+| GFC | gfc-client, luci-app-gfc, luci-base, luci-theme-bootstrap, luci-mod-admin-full |
+| SSH/远程 | dropbear, autossh, openssh-client, openssh-keygen |
+| Web/LuCI | uhttpd, rpcd |
+| LAN | dnsmasq-full, odhcpd-ipv6only |
+| 数据面 | sing-box, unbound-daemon, nftables-json, kmod-tun, …（见 config 全文） |
+
+**不强制：** autocore, gpio_switch, led, lm-sensors, packet_steering, sysfsutils, firewall4。
+
+**动态 init.d：** `gfc-reverse-ssh` 由 agent 在平台开隧道时写入，不在静态基线列表。
 
 ## 允许的无须批准操作
 
-- 只读：`grep gfc *.manifest`、对照 HANDOFF / BUILD-FIRMWARE 做 gap
-- 用户已授权固件任务时：构建机跑 `rebuild-gfc-image.sh`
-- 用户要求时：更新 `FIRMWARE-BUILD-HANDOFF.md` / `BUILD-FIRMWARE.md` / 本规则
+- 只读：manifest / ORIG / `logread -e gfc-agent` / gap 对照 SESSION_HANDOFF
+- 用户授权时：构建机跑 `rebuild-gfc-image.sh`
+- 用户要求时：更新 SESSION_HANDOFF / BUILD-FIRMWARE / 本规则
 
 ## 固件任务固定口令
 
-> 严格按 `FIRMWARE-BUILD-HANDOFF.md` 与 `BUILD-FIRMWARE.md`，构建机 `git pull` 后跑 `rebuild-gfc-image.sh`；以 **manifest 含 gfc** 为进镜像唯一标准；刷最新 img.gz 做 E2E；改 package/脚本前先给 diff，确认后再写代码。
+> 读 `SESSION_HANDOFF_2026-07_FIRMWARE_BUILD_FIXES.md`；`export GFC_REPO` 后 rebuild；以 manifest **gfc-client rN + dropbear/openssh** 与 **gfc-build-* img** 为准；试编不升号（§1.5）；激活：reclaim → 绑线路 → 再激活；数据面改前先 diff 等确认。
 
 ## 违规处理
 
-若文档与「manifest 必须含 gfc-client / ORIG 同步 / DEPENDS 为空 / 无 kmod-sched-htb」冲突，以 **构建机实测** 报告 bug，不得用无 GFC 镜像或只改文档迁就错误实现。
+文档与构建机实测（manifest、ORIG init.d、dropbear 二进制、rc.common）冲突时，以 **构建机/刷机实测** 报 bug，不得用无 SSH 或无 GFC 的镜像迁就错误实现。
