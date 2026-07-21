@@ -7,7 +7,7 @@ alwaysApply: true
 
 ## 权威来源
 
-1. `docs/VERSION_AND_RELEASE.md`
+1. `docs/VERSION_AND_RELEASE.md`（含 **§1.5 何时升版本**）
 2. `docs/releases/VERSION_MATRIX.json`（机器权威；已发布行之组件钉扎 **禁止改写**）
 3. `docs/releases/CHANGELOG.md`
 
@@ -17,16 +17,32 @@ alwaysApply: true
 - **跨 Major 禁止直跳**；必须矩阵中的 `upgrade_path.bridge` 或 `migration_doc`
 - 旧代码靠 **immutable annotated git tag** 找回；禁止 `tag -f` / force-push tag；禁止用目录拷贝存旧版
 
-## 改功能 / 发版前必须
+## 何时升版本（强制 — 用户已定）
 
-1. 定级：Patch / Minor / Major / Dataplane-Arch
-2. 更新 `VERSION_MATRIX.json`（同步 yaml 摘要）+ `CHANGELOG.md`
-3. 对齐 `PKG_VERSION-rPKG_RELEASE`、`AGENT_VERSION`、产品 `product.current`
-4. 跑 `scripts/version/check_release.ps1` 或 `.py`
-5. 查询路径：`show_compat.ps1 -From A -To B`（或 py 等价）
+**只有正式发布才动产品版本；看到「编译 / 排错」不得自动生产新版本号。**
+
+| 用户意图 | 是否 bump `vX.Y.Z` / 矩阵 / tag / `PKG_RELEASE` |
+|----------|--------------------------------------------------|
+| 「发版」「切 tag」「发布 vX.Y.Z」 | **是**（走发版流程） |
+| 「新功能正式交付」 | **是**（通常 Minor；定级后发版） |
+| 「编译 / 重编 / 再刷一盘 / 试试」 | **否** |
+| 「排错、修构建、修控制台假死」未宣布发版 | **否**（可改代码 + commit，不升产品号） |
+
+- `PKG_RELEASE`：**仅**在「正式发版且本版含固件内容变更」时 +1  
+- 禁止：每次 commit / 每次 `rebuild-gfc-image` 就 +r 或新切 `v1.1.x`  
+- 版本化镜像文件名 `gfc-os-v…`：仅 `GFC_PUBLISH_RELEASE=1` 时生成
+
+## 正式发版前必须
+
+1. 定级：Patch / Minor / Major / Dataplane-Arch  
+2. 更新 `VERSION_MATRIX.json`（同步 yaml 摘要）+ `CHANGELOG.md`  
+3. 对齐 `PKG_VERSION-rPKG_RELEASE`（若含固件）、`AGENT_VERSION`、`product.current`  
+4. 跑 `scripts/version/check_release.ps1` 或 `.py`  
+5. 查询路径：`show_compat.ps1 -From A -To B`（或 py 等价）  
 6. 切 tag：`cut_release.ps1 -Version X.Y.Z`（默认不 push；禁止覆盖已有 tag）
 
-未更新矩阵就改协议/配置契约 = **违规**。
+未更新矩阵就改协议/配置契约 = **违规**。  
+未宣布发版却 bump 版本 / 切 tag = **违规**。
 
 ## 与数据面
 
@@ -34,4 +50,4 @@ nft / unbound / sing-box 变更仍须「确认修改」；级别至少 Major 或
 
 ## 固定口令（建议）
 
-> 严格按 `docs/VERSION_AND_RELEASE.md` 与 `VERSION_MATRIX.json`；同 Major 才直升；发版前跑 `check_release`；用 tag 留旧版，禁止改写 tag。
+> 严格按 `docs/VERSION_AND_RELEASE.md` §1.5：正式发版才升版本；试编排错不升号。同 Major 才直升；发版前跑 `check_release`；禁止改写 tag。

@@ -33,12 +33,60 @@
 | 控制面 API | `cp` 字段 | 矩阵 + 发布说明 | 与 Docker/部署同发；勿只升 web |
 | 控制面 Web | 随产品 tag | 与 API **同发** | |
 | 节点 Agent | `node_agent` | `gfc-platform/node-agent/node_agent/version.py` | 心跳上报 |
-| 客户端运行时 | `gfc-client` = `PKG_VERSION-rPKG_RELEASE` | `gfc-client/deploy/immortalwrt/package/Makefile` | **进固件必 bump `PKG_RELEASE`** |
+| 客户端运行时 | `gfc-client` = `PKG_VERSION-rPKG_RELEASE` | `gfc-client/deploy/immortalwrt/package/Makefile` | **仅正式发版且含固件变更时** bump `PKG_RELEASE`（见 §1.5） |
 | LuCI | `luci-app-gfc ~git` | OpenWrt manifest | **辅证**；≠ `gfc-client` rN |
 | 协议契约 | `client_proto` / `node_proto` | 矩阵 + 配置/心跳根字段（演进中） | 决定「能否吃新配置」 |
 | 配置内容 | `config_version` | 控制面生成的内容指纹 | **只表示内容变了，不表示契约兼容** |
 
 **禁止**用 LuCI git 哈希单独宣称「盒子已是最新」。
+
+---
+
+## 1.5 何时升版本 / 何时不升（强制门禁）
+
+> **原则：只有「正式发布」才动产品版本号与矩阵；排错、试编、日常修 bug 默认不动版本。**
+
+### 必须升产品版本（`vX.Y.Z` + 矩阵 + CHANGELOG + annotated tag）
+
+同时满足：
+
+1. 用户（或发布负责人）**明确说要发版**（如「发 v1.2.0」「正式发布」）；**不是**「帮我编译一下」「再刷一盘试试」  
+2. 变更属于对外可交付能力，且已定级（§2.3）：  
+   - **Minor / Major**：新功能、新契约、不兼容变更  
+   - **Patch**：已决定合入正式渠道的缺陷修复（含固件关键 bug），且要发给客户/产线  
+3. 走完 §4 流程后再 `cut_release`
+
+### 禁止升产品版本（下列情况 AI / 开发者不得擅自 bump）
+
+| 场景 | 做法 |
+|------|------|
+| 只为验证编译 / 再打一盘镜像 | **不改** `product.current`、不改矩阵、不切新 tag |
+| 排错、定位（控制台、依赖、构建脚本） | 可改代码并 commit；**不发**新 `vX.Y.Z` |
+| 同一功能未宣布发布前的多次迭代 | 继续用当前开发分支；版本号保持不动 |
+| `rebuild-gfc-image.sh` 跑成功 | **不**等于发版；产物可用 git short hash / 日期区分 |
+| 文档小改、注释、脚本提示文案 | 不升产品版本 |
+
+### `PKG_RELEASE`（`gfc-client` rN）规则
+
+| 何时 | 规则 |
+|------|------|
+| **正式发版且本次发布含固件内容变更** | 才允许 `PKG_RELEASE+1`，并与矩阵该行 `gfc_client` 钉扎一致 |
+| 仅构建机重编、换盘验证、未宣布发版 | **禁止**为「编过一次」就 +r |
+| 仅 Runtime OTA 应用层包、不改 OEM 镜像契约 | 可不碰 `PKG_RELEASE`（按 OTA 制品版本策略） |
+
+**禁止**把「每次 commit / 每次编译」默认绑定一次 `PKG_RELEASE` 或一次产品 Patch。
+
+### 构建产物命名（与发版解耦）
+
+- ImmortalWrt 默认名：`immortalwrt-*-ext4-combined-efi.img.gz`（始终保留）  
+- **正式发布包名**（含产品版本）：仅当 `GFC_PUBLISH_RELEASE=1` 时由 rebuild 生成 `gfc-os-v…`  
+- **日常试编**：可用 `gfc-build-<git短哈希>-….img.gz`（可选），**不得**冒充新的 `vX.Y.Z`
+
+### AI / 协作默认行为
+
+1. 用户说「编译 / 重编 / 再刷」→ 只改构建与代码，**不**改矩阵、`product.current`、不 `cut_release`  
+2. 用户说「发版 / 切 tag / 发布 vX.Y.Z」→ 才走 §4  
+3. 排错过程中若曾误开过多 Patch tag，已推送的 tag **禁止改写**；后续合并进下一次正式发布说明即可  
 
 ---
 
@@ -134,20 +182,23 @@ scripts/version/
 
 ---
 
-## 4. 每次迭代的强制流程（人 + 脚本）
+## 4. 每次**正式发版**的强制流程（人 + 脚本）
 
-开发新功能 / 发版前：
+> 仅适用于 §1.5「必须升产品版本」的场合。日常开发 / 试编 **跳过本节约**。
+
+开发新功能并准备对外发布时：
 
 1. **定级**：Patch / Minor / Major / Dataplane-Arch（§2.3）  
 2. **改矩阵**：在 `VERSION_MATRIX.json` 增加或更新目标版本行与 `upgrade_path`（并同步 yaml 摘要）  
 3. **改 CHANGELOG**：`docs/releases/CHANGELOG.md` 追加条目  
-4. **对齐组件号**：`PKG_RELEASE` / `AGENT_VERSION` / 产品 tag 与矩阵一致  
+4. **对齐组件号**：若本版含固件，才 bump `PKG_RELEASE`；`AGENT_VERSION` / 产品 tag 与矩阵一致  
 5. **跑校验**：`python scripts/version/check_release.py` 或 `.\scripts\version\check_release.ps1`  
 6. **切发布**（代码已合入目标 commit）：`cut_release.py --version 1.2.0` / `cut_release.ps1 -Version 1.2.0`  
 7. **部署顺序（默认）**：控制面 api+web → 转发节点 → 客户端（或矩阵声明可并行）  
-8. **验收**：矩阵中的 `probes` + 固件 manifest（若涉及镜像）
+8. **验收**：矩阵中的 `probes` + 固件 manifest（若涉及镜像）；固件发布包用 `GFC_PUBLISH_RELEASE=1` 生成版本化文件名  
 
-未完成 1–5 就写破坏性协议代码 = **流程违规**。
+未完成 1–5 就写破坏性协议代码 = **流程违规**。  
+未宣布发版却 bump `product.current` / 切 tag = **同样违规**。
 
 ---
 
@@ -205,6 +256,7 @@ scripts/version/
 ## 8. 违规处理
 
 - 无矩阵行、无 CHANGELOG 的「口头发版」→ 无效  
+- **试编 / 排错就 bump `product.current` 或切新 tag** → 违规（见 §1.5）  
 - 改写已发布 tag / 矩阵历史组件钉扎 → **事故**  
 - 跨 Major 无 `upgrade_path` 却对客户宣称可升级 → **缺陷**  
 - 只升 api 或只升 web → 按 OTA 交接文档视为部署错误  
@@ -214,5 +266,6 @@ scripts/version/
 ## 9. 新会话开场白（建议）
 
 > 严格按 `docs/VERSION_AND_RELEASE.md` 与 `docs/releases/VERSION_MATRIX.json`。  
+> **只有正式发版才升 `vX.Y.Z` / 矩阵 / tag**；试编与排错不升版本。  
 > 仅同 Major 内直升；跨 Major 须桥接路径。  
 > 发版前跑 `scripts/version/check_release.ps1`（或 .py）；用 tag 保留旧版，禁止改写 tag。

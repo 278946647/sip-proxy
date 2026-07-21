@@ -15,8 +15,10 @@
 |----|------|
 | 目标 | ImmortalWrt x86_64 OEM 镜像，刷盘即用：DHCP/NAT/DNS、Web 激活、代理数据面 |
 | 主产物 | `immortalwrt-x86-64-generic-ext4-combined-efi.img.gz` |
+| GFC 试编副本 | `gfc-build-<gitsha>-client-…img.gz`（默认；**不是**产品版本） |
+| GFC 正式发布副本 | 仅 `GFC_PUBLISH_RELEASE=1` 时：`gfc-os-v{产品}-client-{ver}-r{N}-….img.gz` + `.sha256` |
 | 清单 | `immortalwrt-x86-64-generic.manifest`（**必须含** `gfc-client`、`luci-app-gfc`） |
-| 刷机介质 | **仅用**最新时间戳的 `*ext4*combined*efi*.img.gz`（勿用旧未压缩 `.img`） |
+| 刷机介质 | **仅用**最新时间戳的 `*ext4*combined*efi*.img.gz`（勿用旧未压缩 `.img`）；对外发货用 `gfc-os-v*` |
 
 ---
 

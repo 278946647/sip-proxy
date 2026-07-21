@@ -1088,7 +1088,49 @@ verify_manifest() {
     || die "ORIG missing /etc/init.d/gfc-lan-dhcp"
   [[ -f "$orig/etc/uci-defaults/99-gfc-firstboot" ]] \
     || die "ORIG missing /etc/uci-defaults/99-gfc-firstboot"
+  # prepare_rootfs may print "./etc/rc.common: No such file" while Enabling *;
+  # that is a known OpenWrt offline-enable quirk. The file must still exist in ORIG.
+  [[ -f "$orig/etc/rc.common" ]] \
+    || die "ORIG missing /etc/rc.common — rootfs is broken (not the Enabling noise)"
+  log "ORIG /etc/rc.common present (Enabling rc.common noise during build is OK)"
   ls -lh bin/targets/x86/64/*ext4*combined*efi*.img.gz
+}
+
+# Versioned image names are for formal releases only (see docs/VERSION_AND_RELEASE.md §1.5).
+#   GFC_PUBLISH_RELEASE=1  →  gfc-os-v{product}-client-{ver}-r{N}-….img.gz
+#   otherwise              →  optional gfc-build-<gitsha>-….img.gz (not a product version)
+publish_versioned_image() {
+  local src dest pkg_ver pkg_rel product outdir gitsha
+  outdir="$IMT_SRC/bin/targets/x86/64"
+  src="$(ls -1t "$outdir"/*ext4*combined*efi*.img.gz 2>/dev/null | grep -vE '/gfc-(os|build)-' | head -1 || true)"
+  [[ -n "$src" && -f "$src" ]] || die "no stock combined-efi img.gz to copy"
+  pkg_ver="$(grep -E '^PKG_VERSION:=' "$GFC_DEPLOY/package/Makefile" | head -1 | cut -d= -f2-)"
+  pkg_rel="$(grep -E '^PKG_RELEASE:=' "$GFC_DEPLOY/package/Makefile" | head -1 | cut -d= -f2-)"
+  [[ -n "$pkg_ver" && -n "$pkg_rel" ]] || die "cannot read PKG_VERSION/RELEASE from Makefile"
+  gitsha="$(git -C "${GFC_REPO}/.." rev-parse --short HEAD 2>/dev/null || echo nogit)"
+
+  if [[ "${GFC_PUBLISH_RELEASE:-0}" == "1" ]]; then
+    product="unknown"
+    local matrix=""
+    [[ -f "$GFC_REPO/../docs/releases/VERSION_MATRIX.json" ]] \
+      && matrix="$GFC_REPO/../docs/releases/VERSION_MATRIX.json"
+    [[ -z "$matrix" && -f "$(dirname "$GFC_REPO")/docs/releases/VERSION_MATRIX.json" ]] \
+      && matrix="$(dirname "$GFC_REPO")/docs/releases/VERSION_MATRIX.json"
+    if [[ -n "$matrix" ]]; then
+      product="$(grep -E '"current"' "$matrix" | head -1 \
+        | sed -E 's/.*"current"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')"
+    fi
+    dest="$outdir/gfc-os-v${product}-client-${pkg_ver}-r${pkg_rel}-x86-64-ext4-combined-efi.img.gz"
+    log "GFC_PUBLISH_RELEASE=1 → formal release artifact"
+  else
+    dest="$outdir/gfc-build-${gitsha}-client-${pkg_ver}-r${pkg_rel}-x86-64-ext4-combined-efi.img.gz"
+    log "dev/build artifact (not a product release). Formal name: GFC_PUBLISH_RELEASE=1"
+  fi
+
+  cp -f "$src" "$dest"
+  ( cd "$outdir" && sha256sum "$(basename "$dest")" >"$(basename "$dest").sha256" )
+  log "image copy: $dest"
+  ls -lh "$dest" "$dest.sha256"
 }
 
 main() {
@@ -1105,6 +1147,7 @@ main() {
   build_image
   verify_manifest
   verify_image_grub_vga_console
+  publish_versioned_image
   log "GFC firmware build OK"
 }
 
