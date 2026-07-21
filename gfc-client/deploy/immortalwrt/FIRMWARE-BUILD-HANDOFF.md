@@ -1,10 +1,11 @@
 # GFC x86 固件构建 — 会话交接（FIRMWARE BUILD HANDOFF）
 
 > 写给**完全没有本对话上下文**的新会话。  
-> 最后更新：**2026-07-17**（**r15**：Runtime OTA + VLESS SOCKS 感知诊断进包；此前 r14 扩盘/DHCP）  
+> 最后更新：**2026-07-21**（**r23**：r16 服务基线、dropbear/openssh、ORIG/rc.d、VGA；验证 **`437d990`**）  
+> **本批详述：** [`docs/SESSION_HANDOFF_2026-07_FIRMWARE_BUILD_FIXES.md`](../../../docs/SESSION_HANDOFF_2026-07_FIRMWARE_BUILD_FIXES.md)  
 > 仓库：`sip-proxy` / `gfc-client/deploy/immortalwrt/`  
 > 构建机：`/opt/gfc/{sip-proxy,immortalwrt}`（Ubuntu 22.04，用户 `gfcbuild`）  
-> Cursor 规则：[`gfc-firmware-build.mdc`](../../../.cursor/rules/gfc-firmware-build.mdc)、[`gfc-platform-ota-lifecycle.mdc`](../../../.cursor/rules/gfc-platform-ota-lifecycle.mdc)  
+> Cursor 规则：[`gfc-firmware-build.mdc`](../../../.cursor/rules/gfc-firmware-build.mdc)（**alwaysApply**）、[`gfc-platform-ota-lifecycle.mdc`](../../../.cursor/rules/gfc-platform-ota-lifecycle.mdc)  
 > 平台/OTA 交接：[`docs/SESSION_HANDOFF_2026-07_OTA_LIFECYCLE.md`](../../../docs/SESSION_HANDOFF_2026-07_OTA_LIFECYCLE.md)
 
 **操作手册（命令/目录/模块）：** [`BUILD-FIRMWARE.md`](BUILD-FIRMWARE.md)  
@@ -14,7 +15,10 @@
 
 ## 0. 新会话开场白（直接粘贴）
 
-> 我们在做 **GFC x86 ImmortalWrt OEM 固件**。源码已到 **`PKG_RELEASE:=15`**（OTA 升级页 + VLESS 诊断修复进 `gfc-client`）。构建机 `git pull` 后跑 `rebuild-gfc-image.sh`，验收 manifest **`gfc-client - 1.1.0-r15`**，并用 `/api/v1/upgrade/status` 与 diagnostics/vless 探针确认功能。
+> 读 **`docs/SESSION_HANDOFF_2026-07_FIRMWARE_BUILD_FIXES.md`** 与 **`.cursor/rules/gfc-firmware-build.mdc`**。  
+> GFC x86 OEM：**`gfc-client 1.1.0-r23`**；镜像 **`gfc-build-437d990-*ext4*combined*efi*.img.gz`**。  
+> 构建：`export GFC_REPO=/opt/gfc/sip-proxy/gfc-client` 后 `rebuild-gfc-image.sh`；试编不 bump rN（§1.5）。  
+> 激活：hard-retired → reclaim → **平台绑线路** → 再激活。
 
 ---
 
