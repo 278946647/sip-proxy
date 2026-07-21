@@ -8,15 +8,50 @@
     "deploy_order_default": ["control_plane", "forward_node", "client"]
   },
   "product": {
-    "current": "1.1.7",
+    "current": "1.1.8",
     "major": 1,
     "ota_baseline": "1.1.0",
     "ota_baseline_notes": "Boxes without Runtime OTA must bootstrap via install.sh / OEM image, then use platform OTA."
   },
   "releases": [
     {
-      "version": "1.1.7",
+      "version": "1.1.8",
       "status": "current",
+      "git_tag": "v1.1.8",
+      "released": "2026-07-21",
+      "components": {
+        "control_plane_api": "0.1.0",
+        "node_agent": "0.3.1",
+        "gfc_client": "1.1.0-r23",
+        "client_proto": 1,
+        "node_proto": 1
+      },
+      "floors": {
+        "gfc_client": "1.1.0-r14",
+        "node_agent": "0.3.0",
+        "client_proto": 1,
+        "node_proto": 1
+      },
+      "upgrade_path": {
+        "from_any_in_major": true,
+        "from_majors": [1],
+        "bridge": null,
+        "migration_doc": null
+      },
+      "channels": {
+        "client_runtime": "ota",
+        "dataplane_arch": "firmware"
+      },
+      "probes": [
+        "opkg/manifest gfc-client == 1.1.0-r23 when OEM image claim",
+        "grep GFC_VGA_CONSOLE_LAST target/linux/x86/image/Makefile",
+        "zcat *combined*efi*.img.gz | strings | grep 'console=ttyS0.*console=tty1'"
+      ],
+      "notes": "Patch: ImmortalWrt 24.10 always appends ttyS0 last; inject console=tty1 after it (r22 GRUB_SERIAL was a no-op)."
+    },
+    {
+      "version": "1.1.7",
+      "status": "supported",
       "git_tag": "v1.1.7",
       "released": "2026-07-21",
       "components": {
@@ -47,7 +82,7 @@
         "grep CONFIG_GRUB_SERIAL .config → is not set",
         "VMware VGA shows login after init without serial port"
       ],
-      "notes": "Patch: OEM GRUB VGA-only (disable serial-last console) so VMware is not stuck after init."
+      "notes": "Patch: OEM GRUB VGA-only (disable serial-last console) so VMware is not stuck after init. INEFFECTIVE on 24.10 — superseded by 1.1.8."
     },
     {
       "version": "1.1.6",

@@ -49,26 +49,55 @@ scrub_package_config_lines() {
   mv "${file}.new" "$file"
 }
 
-# VGA-first GRUB: ImmortalWrt default puts ttyS0 last → /dev/console=serial;
-# VMware then looks hung after "Run /sbin/init". See config/gfc-boot.config.
+# ImmortalWrt 24.10 always appends console=ttyS0 last (CONFIG_GRUB_SERIAL gone).
+# Force an extra console=tty1 *after* that so /dev/console = VGA.
+patch_immortalwrt_x86_grub_vga() {
+  local mk="$IMT_SRC/target/linux/x86/image/Makefile"
+  [[ -f "$mk" ]] || die "missing $mk (not an x86 ImmortalWrt tree?)"
+  if grep -q 'GFC_VGA_CONSOLE_LAST' "$mk"; then
+    log "x86 GRUB Makefile already has GFC_VGA_CONSOLE_LAST"
+    return 0
+  fi
+  # Insert after the unconditional serial cmdline line (24.10+).
+  if grep -q 'GRUB_CONSOLE_CMDLINE += console=\$(GRUB_SERIAL)' "$mk"; then
+    # Portable: write patched file (GNU sed -i works on build host Linux).
+    local tmp
+    tmp="$(mktemp)"
+    awk '
+      { print }
+      /GRUB_CONSOLE_CMDLINE \+= console=\$\(GRUB_SERIAL\)/ && !done {
+        print ""
+        print "# GFC_VGA_CONSOLE_LAST: /dev/console must be VGA (tty1), not serial-last."
+        print "GRUB_CONSOLE_CMDLINE += console=tty1"
+        done=1
+      }
+    ' "$mk" >"$tmp"
+    grep -q 'GFC_VGA_CONSOLE_LAST' "$tmp" \
+      || die "failed to inject GFC_VGA_CONSOLE_LAST into $mk"
+    mv "$tmp" "$mk"
+    log "patched $mk: append console=tty1 after serial (GFC_VGA_CONSOLE_LAST)"
+    return 0
+  fi
+  die "cannot patch $mk — GRUB_SERIAL cmdline line not found (ImmortalWrt layout changed?)"
+}
+
+# Merge GRUB-related .config knobs (timeout / console). Does NOT remove serial —
+# serial is hard-wired in 24.10 Makefile; see patch_immortalwrt_x86_grub_vga.
 merge_gfc_boot_config() {
   local fragment="$GFC_DEPLOY/config/gfc-boot.config"
   [[ -f "$fragment" ]] || return 0
   cd "$IMT_SRC"
   scrub_package_config_lines .config "CONFIG_GRUB_CONSOLE"
-  scrub_package_config_lines .config "CONFIG_GRUB_SERIAL"
   scrub_package_config_lines .config "CONFIG_GRUB_TIMEOUT"
-  # Append force lines (OpenWrt image Gen uses these at target/linux/x86).
+  scrub_package_config_lines .config "CONFIG_TARGET_SERIAL"
   {
     echo "CONFIG_GRUB_CONSOLE=y"
-    echo "# CONFIG_GRUB_SERIAL is not set"
     echo "CONFIG_GRUB_TIMEOUT=5"
+    echo 'CONFIG_TARGET_SERIAL="ttyS0"'
   } >>.config
   grep -q '^CONFIG_GRUB_CONSOLE=y$' .config || die "CONFIG_GRUB_CONSOLE not set after merge"
-  if grep -qE '^CONFIG_GRUB_SERIAL=y$' .config; then
-    die "CONFIG_GRUB_SERIAL still =y (OEM requires serial off for VGA login)"
-  fi
-  log "merged gfc-boot.config: GRUB console=VGA, serial off, timeout=5"
+  patch_immortalwrt_x86_grub_vga
+  log "merged gfc-boot.config + x86 GRUB VGA-last patch"
 }
 
 # Bake tty1 respawn into rootfs so first boot shows login without Enter.
@@ -87,6 +116,25 @@ patch_vga_inittab() {
     echo 'tty1::respawn:/usr/libexec/login.sh' >>"$f"
     log "appended tty1::respawn to $f"
   fi
+}
+
+# After image pack: cmdline in grub.cfg must end with console=tty1 (not ttyS0).
+verify_image_grub_vga_console() {
+  local gz img tmpdir esp_loop root_dev
+  gz="$(ls -1t "$IMT_SRC"/bin/targets/x86/64/*ext4*combined*efi*.img.gz 2>/dev/null | head -1 || true)"
+  [[ -n "$gz" && -f "$gz" ]] || {
+    log "WARN: no combined-efi img.gz — skip grub cmdline verify"
+    return 0
+  }
+  # Fast path: strings on gzip often still finds grub.cfg text.
+  if zcat "$gz" 2>/dev/null | strings | grep -E 'console=ttyS0[^ ]* console=tty1' >/dev/null; then
+    log "grub cmdline OK (tty1 after ttyS0) in $(basename "$gz")"
+    return 0
+  fi
+  if zcat "$gz" 2>/dev/null | strings | grep -E 'console=tty1[^ ]* console=ttyS0' >/dev/null; then
+    die "grub cmdline still serial-last in $(basename "$gz") — GFC_VGA_CONSOLE_LAST patch missing; rebuild after patch"
+  fi
+  log "WARN: could not confirm grub console order via strings — check manually after flash: cat /proc/cmdline"
 }
 
 merge_gfc_config() {
@@ -201,11 +249,10 @@ verify_dotconfig() {
       die ".config still enables CONFIG_PACKAGE_${pkg}=y (must be disabled for GFC OEM)"
     fi
   done
-  if grep -qE '^CONFIG_GRUB_SERIAL=y$' .config; then
-    die ".config still has CONFIG_GRUB_SERIAL=y (OEM VGA needs serial off)"
-  fi
   grep -q '^CONFIG_GRUB_CONSOLE=y$' .config || die ".config missing CONFIG_GRUB_CONSOLE=y"
-  log ".config OK: gfc + luci-base + VGA GRUB; fw4/fullcone/luci-meta/luci-light/realtek-oob off"
+  grep -q 'GFC_VGA_CONSOLE_LAST' "$IMT_SRC/target/linux/x86/image/Makefile" \
+    || die "x86 image Makefile missing GFC_VGA_CONSOLE_LAST — merge_gfc_boot_config did not patch"
+  log ".config OK: gfc + luci-base + GRUB VGA-last patch; fw4/fullcone/luci-meta/luci-light/realtek-oob off"
 }
 
 # tc-tiny installs binary at /usr/libexec/tc-tiny; /sbin/tc is ALTERNATIVES symlink.
@@ -1057,6 +1104,7 @@ main() {
   force_rootfs
   build_image
   verify_manifest
+  verify_image_grub_vga_console
   log "GFC firmware build OK"
 }
 

@@ -32,12 +32,19 @@ After flash:
 
 Expect **1–2 automatic reboots** while disk expand completes. Scripts are removed from `/etc/uci-defaults/` only after each phase succeeds (exit 0).
 
-## VMware / VGA console
+## VMware / VGA / bare-metal console
 
-Stock ImmortalWrt GRUB enables serial + VGA with cmdline ending in `console=ttyS0`, so
-`/dev/console` (and login) go to serial — VMware window looks stuck after
-`Run /sbin/init`. OEM merges `config/gfc-boot.config` (`CONFIG_GRUB_CONSOLE=y`,
-serial off). **Rebuilding the image is required**; `qemu-img convert` to VMDK cannot fix this.
+ImmortalWrt **24.10** x86 `image/Makefile` *always* appends `console=ttyS0` last
+(`CONFIG_GRUB_SERIAL` no longer exists). Linux then uses serial as `/dev/console`,
+so the monitor looks stuck after `Run /sbin/init`.
 
-Until you rebuild: click the VM console and press **Enter** several times (OpenWrt
-`askfirst` on tty1).
+OEM fix (r23+): `rebuild-gfc-image.sh` injects `GFC_VGA_CONSOLE_LAST` so cmdline ends
+with `console=tty1`. Verify:
+
+```bash
+zcat bin/targets/x86/64/*combined*efi*.img.gz | strings | grep -E 'console=tty'
+# GOOD: ... console=ttyS0,... console=tty1
+# BAD:  ... console=tty1 console=ttyS0,...   (serial last)
+```
+
+`qemu-img convert` / Rufus **cannot** fix this — must rebuild.

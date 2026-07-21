@@ -29,6 +29,30 @@ Patch | Minor | Major | Dataplane-Arch
 
 ---
 
+## [1.1.8] - 2026-07-21
+
+### 级别
+Patch
+
+### 组件钉扎
+- control_plane_api: 0.1.0
+- node_agent: 0.3.1
+- gfc_client: 1.1.0-r23
+
+### 变更
+- **根因：** ImmortalWrt 24.10 `target/linux/x86/image/Makefile` **无条件**追加 `console=ttyS0`（已无 `CONFIG_GRUB_SERIAL`）；r22 关 serial 无效
+- **修复：** rebuild 注入 `GFC_VGA_CONSOLE_LAST`，cmdline 以 `console=tty1` 结尾，VGA 为 `/dev/console`
+- 镜像验收：`strings` 检查 tty1 在 ttyS0 之后
+
+### 升级
+- 同 Major 直升：是
+- OTA 基线：1.1.0
+
+### 验收探针
+- `gfc-client - 1.1.0-r23`
+- `grep GFC_VGA_CONSOLE_LAST target/linux/x86/image/Makefile`
+- `zcat *combined*efi*.img.gz | strings | grep 'console=ttyS0.*console=tty1'`
+
 ## [1.1.7] - 2026-07-21
 
 ### 级别
