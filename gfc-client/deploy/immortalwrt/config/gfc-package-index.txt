@@ -26,9 +26,18 @@ kmod-ifb
 kmod-tcp-bbr
 kmod-sched
 #
-# remote-ops (packages feed)
+# remote-ops / SSH (r16 baseline)
 autossh
 dropbear
+openssh-client
+openssh-keygen
+#
+# LuCI HTTP + ubus (r16: uhttpd / rpcd)
+uhttpd
+rpcd
+#
+# LAN IPv6 (r16: odhcpd)
+odhcpd-ipv6only
 #
 # scene-ops-tools (packages feed)
 curl

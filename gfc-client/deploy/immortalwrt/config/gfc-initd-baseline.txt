@@ -1,0 +1,25 @@
+# Required /etc/init.d scripts that must exist in OEM ORIG rootfs (r16 必要对照).
+# Format: one name per line (basename under /etc/init.d/).
+# Lines starting with # are comments.
+#
+# Base / OpenWrt
+dropbear
+dnsmasq
+network
+uhttpd
+rpcd
+odhcpd
+#
+# GFC (shipped by gfc-client package)
+gfc-api
+gfc-agent
+gfc-unbound
+gfc-sing-box
+gfc-routing
+gfc-lan-dhcp
+#
+# Intentionally NOT listed:
+#   gfc-reverse-ssh — agent writes it when platform opens reverse tunnel
+#   firewall — fw4 disabled / not installed
+#   unbound — stock script may exist but must stay disabled (gfc-unbound owns DNS)
+#   autocore gpio_switch led lm-sensors packet_steering sysfsutils — ImmortalWrt cosmetics

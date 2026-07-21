@@ -12,6 +12,8 @@ BASE_TREE_PACKAGES=(
   nftables-json nftables-nojson
   tc-tiny kmod-sched-core kmod-ifb
   kmod-tcp-bbr kmod-sched
+  # r16 baseline (base tree; not via default-settings)
+  dropbear uhttpd rpcd odhcpd-ipv6only
   # resize2fs is a separate OpenWrt package (not e2fsprogs);
   # partx binary is in partx-utils (util-linux); losetup for wiki resize path
   resize2fs partx-utils losetup
@@ -24,6 +26,7 @@ GFC_FEED_PACKAGES=(gfc-client luci-app-gfc)
 FEED_PACKAGES=(
   sing-box unbound-daemon unbound-checkconf autossh libcap libcap-bin luci-base
   luci-theme-bootstrap luci-mod-admin-full
+  openssh-client openssh-keygen
   curl wget-ssl tcpdump iftop bmon
   # GNU parted lives in packages feed (not package/utils/parted)
   parted
@@ -49,6 +52,8 @@ resolve_package_candidates() {
     kmod-sched-htb) printf '%s\n' kmod-sched-core ;;
     # util-linux subpackage name is partx-utils (provides partx binary).
     partx) printf '%s\n' partx-utils ;;
+    # OpenWrt ships odhcpd-ipv6only; init script remains /etc/init.d/odhcpd.
+    odhcpd) printf '%s\n' odhcpd-ipv6only odhcpd ;;
     *) printf '%s\n' "$name" ;;
   esac
 }

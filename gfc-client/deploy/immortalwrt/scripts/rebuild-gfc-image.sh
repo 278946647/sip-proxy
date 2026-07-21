@@ -168,10 +168,12 @@ merge_gfc_config() {
       skipped=$((skipped + 1))
     fi
   done <"$fragment"
-  # Required bandwidth + expand packages must never be silently skipped.
-  for pkg in tc-tiny kmod-sched-core kmod-ifb resize2fs parted partx-utils losetup kmod-tcp-bbr kmod-sched luci-theme-bootstrap luci-mod-admin-full dropbear; do
+  # Required bandwidth + expand + r16 baseline services must never be silently skipped.
+  for pkg in tc-tiny kmod-sched-core kmod-ifb resize2fs parted partx-utils losetup \
+    kmod-tcp-bbr kmod-sched luci-theme-bootstrap luci-mod-admin-full \
+    dropbear openssh-client openssh-keygen uhttpd rpcd odhcpd-ipv6only; do
     grep -q "^CONFIG_PACKAGE_${pkg}=y$" "$merged" \
-      || die "merge skipped required CONFIG_PACKAGE_${pkg}=y (Kconfig missing? feeds install parted/luci?)"
+      || die "merge skipped required CONFIG_PACKAGE_${pkg}=y (Kconfig missing? feeds install parted/luci/openssh?)"
   done
   while IFS= read -r line; do
     [[ "$line" =~ ^CONFIG_PACKAGE_ ]] || continue
@@ -245,7 +247,8 @@ verify_dotconfig() {
   cd "$IMT_SRC"
   grep -q '^CONFIG_PACKAGE_gfc-client=y$' .config || die ".config missing CONFIG_PACKAGE_gfc-client=y"
   grep -q '^CONFIG_PACKAGE_luci-app-gfc=y$' .config || die ".config missing CONFIG_PACKAGE_luci-app-gfc=y"
-  for pkg in tc-tiny kmod-sched-core kmod-ifb kmod-tcp-bbr kmod-sched resize2fs parted partx-utils losetup luci-theme-bootstrap luci-mod-admin-full; do
+  for pkg in tc-tiny kmod-sched-core kmod-ifb kmod-tcp-bbr kmod-sched resize2fs parted partx-utils losetup \
+    luci-theme-bootstrap luci-mod-admin-full dropbear openssh-client openssh-keygen uhttpd rpcd odhcpd-ipv6only; do
     grep -q "^CONFIG_PACKAGE_${pkg}=y$" .config || die ".config missing CONFIG_PACKAGE_${pkg}=y"
     # Must use if/then: under set -e, "grep -q && die" returns 1 when absent and aborts the script.
     if grep -qE "^# CONFIG_PACKAGE_${pkg} is not set$" .config; then
@@ -707,6 +710,7 @@ verify_required_gfc_ipks() {
     sing-box unbound-daemon unbound-checkconf dnsmasq-full
     tc-tiny kmod-sched-core kmod-sched kmod-ifb kmod-tcp-bbr kmod-tun kmod-nft-core
     nftables-json curl wget-ssl tcpdump iftop bmon autossh dropbear
+    openssh-client openssh-keygen uhttpd rpcd odhcpd-ipv6only
     libcap libcap-bin ca-bundle ip-full resize2fs parted partx-utils losetup
   )
   log "verify required GFC ipks under bin/"
@@ -720,6 +724,27 @@ verify_required_gfc_ipks() {
   done
   [[ "$missing" -eq 0 ]] || die "required GFC packages missing after package/compile — check .config / feeds"
   log "required GFC ipks present"
+}
+
+# r16 必要 init.d must exist in ORIG (see config/gfc-initd-baseline.txt).
+verify_orig_initd_baseline() {
+  local orig="$1"
+  local baseline="$GFC_DEPLOY/config/gfc-initd-baseline.txt"
+  local name missing=0
+  [[ -f "$baseline" ]] || die "missing init.d baseline: $baseline"
+  [[ -d "$orig/etc/init.d" ]] || die "ORIG missing /etc/init.d"
+  log "verify ORIG init.d against r16 baseline"
+  while IFS= read -r name || [[ -n "$name" ]]; do
+    name="${name%%#*}"
+    name="$(echo "$name" | tr -d '[:space:]')"
+    [[ -n "$name" ]] || continue
+    if [[ ! -x "$orig/etc/init.d/$name" && ! -f "$orig/etc/init.d/$name" ]]; then
+      log "MISSING init.d: $name"
+      missing=1
+    fi
+  done <"$baseline"
+  [[ "$missing" -eq 0 ]] || die "ORIG missing required init.d from gfc-initd-baseline.txt (r16 parity)"
+  log "ORIG init.d baseline OK"
 }
 
 require_rootfs_populated() {
@@ -831,7 +856,7 @@ sync_gfc_into_orig() {
       fi
     done
   fi
-  [[ -d "$root/etc/init.d" ]] && for s in gfc-api gfc-agent gfc-unbound gfc-sing-box gfc-routing; do
+  [[ -d "$root/etc/init.d" ]] && for s in gfc-api gfc-agent gfc-unbound gfc-sing-box gfc-routing gfc-lan-dhcp; do
     [[ -f "$root/etc/init.d/$s" ]] && cp -a "$root/etc/init.d/$s" "$orig/etc/init.d/$s"
   done
   if [[ -f "$root/usr/lib/opkg/info/gfc-client.control" ]]; then
@@ -1192,6 +1217,13 @@ verify_manifest() {
     || die "ORIG missing /etc/uci-defaults/96-gfc-rootfs-resize"
   [[ -x "$orig/etc/init.d/gfc-lan-dhcp" ]] \
     || die "ORIG missing /etc/init.d/gfc-lan-dhcp"
+  verify_orig_initd_baseline "$orig"
+  [[ -x "$orig/usr/sbin/dropbear" || -x "$orig/usr/bin/dropbear" ]] \
+    || die "ORIG missing dropbear binary (r16 SSH baseline)"
+  [[ -x "$orig/usr/bin/ssh" || -x "$orig/bin/ssh" ]] \
+    || die "ORIG missing ssh client (openssh-client — reverse SSH)"
+  [[ -x "$orig/usr/bin/ssh-keygen" || -x "$orig/bin/ssh-keygen" ]] \
+    || die "ORIG missing ssh-keygen (openssh-keygen — reverse SSH)"
   [[ -f "$orig/etc/uci-defaults/99-gfc-firstboot" ]] \
     || die "ORIG missing /etc/uci-defaults/99-gfc-firstboot"
   # prepare_rootfs may print "./etc/rc.common: No such file" while Enabling *;
