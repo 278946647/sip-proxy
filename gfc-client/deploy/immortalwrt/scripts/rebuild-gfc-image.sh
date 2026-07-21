@@ -808,6 +808,50 @@ verify_orig_initd_baseline() {
   log "ORIG init.d baseline OK"
 }
 
+# OpenWrt openssh-* install binaries under /usr/libexec and register ALTERNATIVES
+# for /usr/bin/ssh. ORIG is snapshotted BEFORE prepare_rootfs, so alternatives
+# may be absent — create the runtime symlinks explicitly (image is packed from ORIG).
+ensure_openssh_runtime_paths() {
+  local root="$1"
+  local ssh_bin keygen_bin
+  ssh_bin=""
+  keygen_bin=""
+  if [[ -x "$root/usr/libexec/ssh-openssh" ]]; then
+    ssh_bin="$root/usr/libexec/ssh-openssh"
+  elif [[ -x "$root/usr/bin/ssh" ]]; then
+    ssh_bin="$root/usr/bin/ssh"
+  elif [[ -x "$root/bin/ssh" ]]; then
+    ssh_bin="$root/bin/ssh"
+  fi
+  if [[ -x "$root/usr/libexec/ssh-keygen-openssh" ]]; then
+    keygen_bin="$root/usr/libexec/ssh-keygen-openssh"
+  elif [[ -x "$root/usr/bin/ssh-keygen" ]]; then
+    keygen_bin="$root/usr/bin/ssh-keygen"
+  elif [[ -x "$root/bin/ssh-keygen" ]]; then
+    keygen_bin="$root/bin/ssh-keygen"
+  fi
+  if [[ -z "$ssh_bin" || -z "$keygen_bin" ]]; then
+    log "openssh probe in $root:"
+    ls -la "$root/usr/bin/ssh" "$root/usr/bin/ssh-keygen" \
+      "$root/usr/libexec/ssh-openssh" "$root/usr/libexec/ssh-keygen-openssh" 2>/dev/null || true
+    grep -E '^Package: openssh-(client|keygen)$' "$root/usr/lib/opkg/status" 2>/dev/null || true
+    die "rootfs missing openssh-client/keygen files under $root (not installed into image)"
+  fi
+  mkdir -p "$root/usr/bin"
+  if [[ ! -e "$root/usr/bin/ssh" ]]; then
+    ln -sfn /usr/libexec/ssh-openssh "$root/usr/bin/ssh"
+    log "created $root/usr/bin/ssh -> /usr/libexec/ssh-openssh"
+  fi
+  if [[ ! -e "$root/usr/bin/ssh-keygen" ]]; then
+    ln -sfn /usr/libexec/ssh-keygen-openssh "$root/usr/bin/ssh-keygen"
+    log "created $root/usr/bin/ssh-keygen -> /usr/libexec/ssh-keygen-openssh"
+  fi
+  [[ -x "$root/usr/bin/ssh" || -L "$root/usr/bin/ssh" ]] \
+    || die "failed to provide /usr/bin/ssh in $root"
+  [[ -x "$root/usr/bin/ssh-keygen" || -L "$root/usr/bin/ssh-keygen" ]] \
+    || die "failed to provide /usr/bin/ssh-keygen in $root"
+}
+
 require_rootfs_populated() {
   local root="$1"
   [[ -d "$root" ]] || die "rootfs dir missing: $root (run make package/install first)"
@@ -1236,6 +1280,9 @@ build_image() {
   # First-boot VGA login: patch inittab in both trees before packing images.
   patch_vga_inittab "$root"
   patch_vga_inittab "$ROOTFS_ORIG_DIR"
+  # ORIG is packed into the image; apply openssh PATH symlinks before target/linux/install.
+  ensure_openssh_runtime_paths "$ROOTFS_ORIG_DIR"
+  ensure_openssh_runtime_paths "$root"
   build_target_images
 }
 
@@ -1281,10 +1328,17 @@ verify_manifest() {
   verify_orig_initd_baseline "$orig"
   [[ -x "$orig/usr/sbin/dropbear" || -x "$orig/usr/bin/dropbear" ]] \
     || die "ORIG missing dropbear binary (r16 SSH baseline)"
-  [[ -x "$orig/usr/bin/ssh" || -x "$orig/bin/ssh" ]] \
-    || die "ORIG missing ssh client (openssh-client — reverse SSH)"
-  [[ -x "$orig/usr/bin/ssh-keygen" || -x "$orig/bin/ssh-keygen" ]] \
-    || die "ORIG missing ssh-keygen (openssh-keygen — reverse SSH)"
+  ensure_openssh_runtime_paths "$orig"
+  ensure_openssh_runtime_paths "$root"
+  for pkg in dropbear openssh-client openssh-keygen uhttpd rpcd; do
+    grep -qE "^${pkg}( |$)" "$manifest" \
+      || die "manifest missing ${pkg} (r16 baseline — check CONFIG_PACKAGE_${pkg}=y)"
+  done
+  if ! grep -qE '^odhcpd(-ipv6only)?( |$)' "$manifest"; then
+    die "manifest missing odhcpd / odhcpd-ipv6only"
+  fi
+  log "manifest SSH/LuCI baseline:"
+  grep -E '^(dropbear|openssh-client|openssh-keygen|uhttpd|rpcd|odhcpd)' "$manifest" || true
   [[ -f "$orig/etc/uci-defaults/99-gfc-firstboot" ]] \
     || die "ORIG missing /etc/uci-defaults/99-gfc-firstboot"
   # prepare_rootfs may print "./etc/rc.common: No such file" while Enabling *;
