@@ -8,7 +8,7 @@ OpenWrt `prepare_rootfs` copies these into the final rootfs. Primary first-boot 
 
 | Path | Role |
 |------|------|
-| `files/etc/uci-defaults/93-gfc-vga-console` | tty1 askfirst→respawn (belt); GRUB VGA is primary fix |
+| `files/etc/uci-defaults/93-gfc-vga-console` | Disable ttyS*/hvc* getty; keep tty1 askfirst (not respawn) |
 | `files/etc/uci-defaults/95-gfc-rootpt-resize` | Grow root **partition**, reboot (OpenWrt expand_root phase 1) |
 | `files/etc/uci-defaults/96-gfc-rootfs-resize` | Grow root **filesystem** with resize2fs, reboot (phase 2) |
 | `files/etc/uci-defaults/99-gfc-firstboot` | One-shot OEM bring-up (fw4 off, dnsmasq port=0, enable GFC services, bootstrap) |

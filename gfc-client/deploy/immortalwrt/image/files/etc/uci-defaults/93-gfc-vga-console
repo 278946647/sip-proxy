@@ -1,12 +1,15 @@
 #!/bin/sh
-# Ensure VGA tty1 shows login without requiring Enter (askfirst).
-# Safe if already respawn; no-op when tty1 line missing.
+# Align runtime inittab with OEM VGA policy (idempotent).
+# - Do not use respawn on tty (causes "open: No such file" spam if tty missing)
+# - Disable ttyS* / hvc* gettys on display-only appliances
 set -eu
 [ -f /etc/inittab ] || exit 0
-if grep -q '^tty1::askfirst:' /etc/inittab; then
-	sed -i 's|^tty1::askfirst:|tty1::respawn:|' /etc/inittab
-fi
+sed -i -E \
+	-e 's|^ttyS[0-9]+::|# &|' \
+	-e 's|^hvc[0-9]+::|# &|' \
+	/etc/inittab
+sed -i 's|^tty1::respawn:|tty1::askfirst:|' /etc/inittab
 if ! grep -qE '^tty1::' /etc/inittab; then
-	echo 'tty1::respawn:/usr/libexec/login.sh' >>/etc/inittab
+	echo 'tty1::askfirst:/usr/libexec/login.sh' >>/etc/inittab
 fi
 exit 0

@@ -100,7 +100,10 @@ merge_gfc_boot_config() {
   log "merged gfc-boot.config + x86 GRUB VGA-last patch"
 }
 
-# Bake tty1 respawn into rootfs so first boot shows login without Enter.
+# OEM inittab for display-attached boxes (VMware / physical VGA).
+# Do NOT convert askfirst→respawn: respawn loops "open: No such file" when the
+# tty is missing (classic VMware without serial / before tty1 appears).
+# Drop ttyS0 + hvc0 gettys — no serial / Hyper-V console on typical GFC VMs.
 patch_vga_inittab() {
   local root="$1"
   local f="$root/etc/inittab"
@@ -108,14 +111,21 @@ patch_vga_inittab() {
     log "WARN: no $f — skip VGA inittab patch"
     return 0
   }
-  if grep -q '^tty1::askfirst:' "$f"; then
-    sed -i 's|^tty1::askfirst:|tty1::respawn:|' "$f"
-    log "patched $f: tty1 askfirst → respawn"
+  # Comment serial / hv console lines (keep for docs; procd ignores #).
+  sed -i -E \
+    -e 's|^ttyS[0-9]+::|# &|' \
+    -e 's|^hvc[0-9]+::|# &|' \
+    "$f"
+  # Ensure tty1 getty exists as askfirst (not respawn).
+  if grep -qE '^#?tty1::' "$f"; then
+    sed -i -E 's|^#?tty1::.*|tty1::askfirst:/usr/libexec/login.sh|' "$f"
+  else
+    echo 'tty1::askfirst:/usr/libexec/login.sh' >>"$f"
   fi
-  if ! grep -qE '^tty1::' "$f"; then
-    echo 'tty1::respawn:/usr/libexec/login.sh' >>"$f"
-    log "appended tty1::respawn to $f"
-  fi
+  # Undo any older OEM respawn mistake.
+  sed -i 's|^tty1::respawn:|tty1::askfirst:|' "$f"
+  log "patched $f: disable ttyS*/hvc*; tty1=askfirst"
+  grep -E '^(# )?tty|^hvc|^::' "$f" || true
 }
 
 # After image pack: cmdline in grub.cfg must end with console=tty1 (not ttyS0).
@@ -1093,6 +1103,15 @@ verify_manifest() {
   [[ -f "$orig/etc/rc.common" ]] \
     || die "ORIG missing /etc/rc.common — rootfs is broken (not the Enabling noise)"
   log "ORIG /etc/rc.common present (Enabling rc.common noise during build is OK)"
+  [[ -x "$orig/usr/libexec/login.sh" || -x "$orig/bin/login" ]] \
+    || die "ORIG missing login helper — inittab getty will fail with open errors"
+  if grep -qE '^tty1::respawn:' "$orig/etc/inittab" 2>/dev/null; then
+    die "ORIG inittab still has tty1::respawn (causes open spam) — patch_vga_inittab failed"
+  fi
+  if grep -qE '^ttyS[0-9]+::' "$orig/etc/inittab" 2>/dev/null; then
+    die "ORIG inittab still has active ttyS* getty — patch_vga_inittab failed"
+  fi
+  log "ORIG inittab OK (no ttyS* getty, no tty1 respawn)"
   ls -lh bin/targets/x86/64/*ext4*combined*efi*.img.gz
 }
 
