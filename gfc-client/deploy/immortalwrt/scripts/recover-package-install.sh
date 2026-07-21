@@ -164,9 +164,12 @@ HASH="$(find build_dir -path '*/linux-x86_64/linux-*/.vermagic' 2>/dev/null | he
 KVER="$(find build_dir -path '*/linux-x86_64/linux-*/.vermagic' 2>/dev/null | head -1 | xargs dirname | xargs basename | sed 's/^linux-//')"
 log "kernel=$KVER vermagic=$HASH"
 
-log "wipe ONLY bin/targets/x86/64/packages (kernel+kmods); keep bin/packages/x86_64/*"
-rm -rf bin/targets/x86/64/packages
+log "refresh kernel/kmod ipks only (preserve base-files and other nonshared in target packages)"
 mkdir -p bin/targets/x86/64/packages
+find bin/targets/x86/64/packages -maxdepth 1 -type f \( \
+  -name 'kernel_*.ipk' -o -name 'kmod-*.ipk' \
+  -o -name 'Packages' -o -name 'Packages.gz' -o -name 'Packages.sig' -o -name 'Packages.manifest' \
+\) -delete 2>/dev/null || true
 find bin -type f \( \
   -name 'kmod-r8101_*.ipk' -o -name 'kmod-r8125_*.ipk' -o -name 'kmod-r8126_*.ipk' \
   -o -name 'kmod-r8168_*.ipk' -o -name 'kmod-usb-net-rtl8152-vendor_*.ipk' \
@@ -182,6 +185,23 @@ make target/linux/compile -j"$JOBS" V=s || die "target/linux/compile failed"
 make package/kernel/linux/compile -j"$JOBS" V=s || die "package/kernel/linux/compile failed"
 ls -la bin/targets/x86/64/packages/kernel_"${KVER}~${HASH}"*.ipk \
   || die "kernel ipk not in bin/targets/x86/64/packages/"
+
+# base-files is nonshared — must remain after kernel refresh
+if [[ ! -f package/base-files/files/etc/rc.common ]]; then
+  die "missing package/base-files/files/etc/rc.common"
+fi
+if ! find bin/targets/x86/64/packages -maxdepth 1 -name 'base-files_*.ipk' | grep -q .; then
+  log "base-files ipk missing — compiling"
+  make package/base-files/clean V=s 2>/dev/null || true
+  make package/base-files/compile -j"$JOBS" V=s || die "base-files compile failed"
+fi
+BF="$(find bin/targets/x86/64/packages -maxdepth 1 -name 'base-files_*.ipk' | head -1)"
+TMP=$(mktemp -d)
+( cd "$TMP" && ar x "$BF" && tar -t -f data.tar.gz 2>/dev/null || tar -t -f data.tar.zst ) \
+  | grep -qE 'etc/rc\.common' \
+  || die "$BF lacks etc/rc.common"
+rm -rf "$TMP"
+log "base-files OK: $(basename "$BF")"
 
 if [[ "$FULL" == "1" ]]; then
   log "GFC_FULL_PACKAGE_COMPILE=1 — full package/compile"

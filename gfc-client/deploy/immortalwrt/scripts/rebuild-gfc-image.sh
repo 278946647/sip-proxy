@@ -618,9 +618,16 @@ prepare_package_install_abi() {
     fi
   done < <(find bin -type f -name Packages 2>/dev/null)
 
-  log "refresh bin/targets/x86/64/packages for single vermagic ${hash}"
-  rm -rf "$pkgdir"
+  # CRITICAL: do NOT wipe the whole target packages dir.
+  # OpenWrt puts nonshared packages there (base-files, etc.). Wiping it then only
+  # rebuilding kernel left package/install without base-files → no /etc/rc.common
+  # and bogus "./etc/rc.common: No such file" during enable (and broken images).
   mkdir -p "$pkgdir"
+  log "refresh kernel/kmod ipks only under $pkgdir (preserve base-files and other nonshared)"
+  find "$pkgdir" -maxdepth 1 -type f \( \
+    -name 'kernel_*.ipk' -o -name 'kmod-*.ipk' \
+    -o -name 'Packages' -o -name 'Packages.gz' -o -name 'Packages.sig' -o -name 'Packages.manifest' \
+  \) -delete 2>/dev/null || true
   # Drop out-of-tree Realtek leftovers that often pin an old vermagic.
   find bin -type f \( \
     -name 'kmod-r8101_*.ipk' -o -name 'kmod-r8125_*.ipk' -o -name 'kmod-r8126_*.ipk' \
@@ -635,6 +642,9 @@ prepare_package_install_abi() {
     || die "package/kernel/linux/compile failed"
   verify_kernel_ipk_for_install "$hash" "$kernel_ver"
 
+  # Always ensure base-files ipk exists and contains /etc/rc.common.
+  ensure_base_files_ipk
+
   # Do NOT run full `make package/compile` here — it rebuilds the whole tree and
   # commonly fails on an unrelated package under -jN. Userspace ipks stay in
   # bin/packages/x86_64/. Opt-in: GFC_FULL_PACKAGE_COMPILE=1
@@ -647,6 +657,7 @@ prepare_package_install_abi() {
   fi
   verify_kernel_ipk_for_install "$hash" "$kernel_ver"
   verify_required_gfc_ipks
+  ensure_base_files_ipk
 
   if [[ "$mixed" -eq 1 ]]; then
     log "note: had mixed ABI indexes before refresh; re-check for leftover stale hashes"
@@ -659,7 +670,60 @@ prepare_package_install_abi() {
       fi
     done < <(find bin -type f -name Packages 2>/dev/null)
   fi
-  log "package/install ABI ready (kernel refreshed; full world compile skipped unless GFC_FULL_PACKAGE_COMPILE=1)"
+  log "package/install ABI ready (kernel refreshed; base-files preserved/rebuilt)"
+}
+
+# base-files is nonshared → lives in bin/targets/.../packages/. Must contain rc.common.
+ensure_base_files_ipk() {
+  local src_rc ipk tmp data
+  cd "$IMT_SRC"
+  src_rc="package/base-files/files/etc/rc.common"
+  [[ -f "$src_rc" ]] || die "missing $src_rc in ImmortalWrt tree — checkout is broken"
+
+  ipk="$(find bin/targets/x86/64/packages -maxdepth 1 -name 'base-files_*.ipk' -type f 2>/dev/null | head -1 || true)"
+  if [[ -n "$ipk" ]]; then
+    tmp="$(mktemp -d /tmp/gfc-bf.XXXXXX)"
+    data=""
+    if ( cd "$tmp" && ar x "$ipk" >/dev/null 2>&1 ); then
+      if [[ -f "$tmp/data.tar.gz" ]]; then
+        data="$tmp/data.tar.gz"
+      elif [[ -f "$tmp/data.tar.zst" ]]; then
+        data="$tmp/data.tar.zst"
+      fi
+    fi
+    if [[ -n "$data" ]] && tar -t -f "$data" 2>/dev/null | grep -qE '^\./etc/rc\.common$|^etc/rc\.common$'; then
+      log "base-files ipk OK: $(basename "$ipk") contains etc/rc.common"
+      rm -rf "$tmp"
+      return 0
+    fi
+    log "WARN: $(basename "${ipk:-none}") missing etc/rc.common — rebuilding base-files"
+    rm -rf "$tmp"
+  else
+    log "base-files_*.ipk missing under bin/targets/x86/64/packages — compiling"
+  fi
+
+  make package/base-files/clean V=s 2>/dev/null || true
+  rm -rf build_dir/target-x86_64_musl/linux-x86_64/base-files
+  make package/base-files/compile -j"$JOBS" V=s \
+    || die "package/base-files/compile failed"
+  ipk="$(find bin/targets/x86/64/packages -maxdepth 1 -name 'base-files_*.ipk' -type f 2>/dev/null | head -1 || true)"
+  [[ -n "$ipk" ]] || die "base-files ipk still missing after compile"
+  tmp="$(mktemp -d /tmp/gfc-bf.XXXXXX)"
+  ( cd "$tmp" && ar x "$ipk" ) || die "cannot ar x $ipk"
+  data=""
+  if [[ -f "$tmp/data.tar.gz" ]]; then
+    data="$tmp/data.tar.gz"
+  elif [[ -f "$tmp/data.tar.zst" ]]; then
+    data="$tmp/data.tar.zst"
+  else
+    die "no data.tar.* in $ipk"
+  fi
+  tar -t -f "$data" | grep -qE '^\./etc/rc\.common$|^etc/rc\.common$' \
+    || die "rebuilt $ipk still lacks etc/rc.common — ImmortalWrt package/base-files tree broken"
+  rm -rf "$tmp"
+  log "base-files rebuilt OK: $(basename "$ipk")"
+  # Note: ipkg-build may warn find: .../etc/config/network missing — those conffiles
+  # are optional at pack time (created on first boot). Harmless if rc.common is present.
 }
 
 # Ensure GFC OEM runtime packages were actually built (not only kernel).

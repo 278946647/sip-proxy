@@ -10,9 +10,14 @@ One unrelated package failing aborts with Error 2; the last lines may show a
 
 ## Correct recovery (kernel + kmods only)
 
-Userspace ipks stay in `bin/packages/x86_64/`. Only refresh:
+Userspace ipks stay in `bin/packages/x86_64/`. Refresh **only** kernel/kmod
+ipks under `bin/targets/x86/64/packages/` — **never delete the whole directory**
+(that removes **base-files**, which also lives there as a nonshared package).
 
-`bin/targets/x86/64/packages/` → `kernel_*.ipk` + kmods.
+Wiping the whole `packages/` dir then only rebuilding kernel was the root cause of:
+
+- missing `/etc/rc.common` in `root.orig-x86`
+- `bash: ./etc/rc.common: No such file` during Enabling (and broken images)
 
 ```bash
 cd /opt/gfc/sip-proxy && git pull
@@ -23,6 +28,16 @@ bash gfc-client/deploy/immortalwrt/scripts/recover-package-install.sh
 
 # Then build image (also skips full world compile unless you set the env)
 bash gfc-client/deploy/immortalwrt/scripts/rebuild-gfc-image.sh
+```
+
+### base-files `find: .../etc/config/network` warnings
+
+Harmless at pack time: those paths are listed as conffiles but often created on
+first boot. What matters:
+
+```bash
+ar x bin/targets/x86/64/packages/base-files_*.ipk
+tar tzf data.tar.gz | grep rc.common   # must exist
 ```
 
 Only if required userspace ipks are missing and selective compile is not enough:
