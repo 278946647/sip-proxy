@@ -3,7 +3,7 @@
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 # shellcheck source=deploy/node/_common.sh
 source "$(cd "$(dirname "$0")" && pwd)/_common.sh"
-if gfc_fix_crlf_file "$0"; then exec bash "$0" "$@"; fi
+if ! gfc_fix_crlf_file "$0"; then exec bash "$0" "$@"; fi
 gfc_fix_crlf_tree "$REPO_ROOT"
 set -euo pipefail
 

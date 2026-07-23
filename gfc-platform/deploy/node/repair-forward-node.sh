@@ -23,7 +23,7 @@ sys.exit(0)
 PY
 }
 
-if gfc_fix_crlf_file "$_self"; then exec bash "$_self" "$@"; fi
+if ! gfc_fix_crlf_file "$_self"; then exec bash "$_self" "$@"; fi
 
 _PY_REPAIR="$(cd "$(dirname "$_self")" && pwd)/repair_forward_node.py"
 if [[ -f "$_PY_REPAIR" && -f "$(dirname "$_PY_REPAIR")/_repair_impl.py" ]]; then
