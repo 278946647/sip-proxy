@@ -47,6 +47,7 @@ export function LineDetailPage() {
   const [bandwidthDraft, setBandwidthDraft] = useState<number | null>(null);
   const [bandwidthSaving, setBandwidthSaving] = useState(false);
   const [enableSaving, setEnableSaving] = useState(false);
+  const [udpOverTcpSaving, setUdpOverTcpSaving] = useState(false);
   const [flowStats, setFlowStats] = useState<FlowStat[]>([]);
   const [flowUpdatedAt, setFlowUpdatedAt] = useState(nowDisplay().format("YYYY-MM-DD HH:mm:ss"));
   const perms = permissionsFromUser(getUser());
@@ -107,6 +108,26 @@ export function LineDetailPage() {
         setEnableSaving(false);
       }
     });
+  };
+
+  const toggleSocksUdpOverTcp = async (checked: boolean) => {
+    if (!id) return;
+    setUdpOverTcpSaving(true);
+    try {
+      await apiPatch(`/admin/lines/${id}?operator=${localStorage.getItem("gfc_user") || "admin"}`, {
+        socks_udp_over_tcp: checked,
+      });
+      message.success(
+        checked
+          ? "已启用 UDP over TCP，适用于不支持 UDP 穿透的 SOCKS 节点"
+          : "已关闭 UDP over TCP，将使用 SOCKS 原生 UDP（适用于 L2TP/IPsec 等 VPN 场景）"
+      );
+      await load();
+    } catch (e) {
+      message.error(String(e));
+    } finally {
+      setUdpOverTcpSaving(false);
+    }
   };
 
   const saveBandwidth = async () => {
@@ -290,6 +311,26 @@ export function LineDetailPage() {
         <div className="line-detail-value" style={{ wordBreak: "break-all" }}>
           {socksUri}
         </div>
+        {line.socksProfileId != null && (
+          <div style={{ marginTop: 16 }}>
+            <Space align="start">
+              <Switch
+                checked={line.socksUdpOverTcp}
+                loading={udpOverTcpSaving}
+                checkedChildren="UDP over TCP"
+                unCheckedChildren="原生 UDP"
+                onChange={(checked) => void toggleSocksUdpOverTcp(checked)}
+              />
+              <div>
+                <Typography.Text strong>SOCKS UDP 传输模式</Typography.Text>
+                <div style={{ color: "var(--ant-color-text-secondary)", maxWidth: 520 }}>
+                  默认开启 UDP over TCP，兼容不支持 UDP 穿透的 SOCKS 节点。
+                  若需通过 SOCKS 拨号 L2TP/IPsec 等原生 UDP VPN，且上游 SOCKS 已开启 UDP 穿透，请关闭此项。
+                </div>
+              </div>
+            </Space>
+          </div>
+        )}
         <div style={{ marginTop: 12 }}>
           <Link to="/proxies">在代理配置中编辑 SOCKS →</Link>
         </div>

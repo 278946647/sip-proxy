@@ -159,6 +159,12 @@ def _client_ingress_route_block(
     return block
 
 
+def _apply_socks_udp_over_tcp(ob: dict[str, Any], socks: dict[str, Any]) -> None:
+    # Default True for backward compat when bundle omits the flag.
+    if socks.get("udpOverTcp", True):
+        ob["udp_over_tcp"] = {"enabled": True}
+
+
 def render_singbox_config(
     dataplane: dict[str, Any],
     *,
@@ -193,8 +199,6 @@ def render_singbox_config(
             "server": socks["host"],
             "server_port": int(socks["port"]),
             "version": "5",
-            # Many SOCKS5 providers reject UDP ASSOCIATE (code=7); tunnel UDP in TCP.
-            "udp_over_tcp": {"enabled": True},
         }
         user = (socks.get("username") or "").strip()
         pw = (socks.get("password") or "").strip()
@@ -202,6 +206,7 @@ def render_singbox_config(
             ob["username"] = user
             ob["password"] = pw
         ob["domain_resolver"] = "local-dns"
+        _apply_socks_udp_over_tcp(ob, socks)
         outbounds.append(ob)
 
         dns_tag = f"dns-{tag}"
@@ -382,7 +387,6 @@ def _build_client_socks_outbound(tag: str, socks: dict[str, Any]) -> dict[str, A
         "server": socks["host"],
         "server_port": int(socks["port"]),
         "version": "5",
-        "udp_over_tcp": {"enabled": True},
         "domain_resolver": "local-dns",
     }
     user = (socks.get("username") or "").strip()
@@ -390,6 +394,7 @@ def _build_client_socks_outbound(tag: str, socks: dict[str, Any]) -> dict[str, A
     if user:
         ob["username"] = user
         ob["password"] = pw
+    _apply_socks_udp_over_tcp(ob, socks)
     return ob
 
 

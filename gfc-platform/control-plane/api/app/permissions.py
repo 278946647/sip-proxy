@@ -44,6 +44,7 @@ OPERATOR_LINE_PATCH_FIELDS = frozenset(
         "bandwidth_mbps",
         "is_enabled",
         "status",
+        "socks_udp_over_tcp",
     }
 )
 

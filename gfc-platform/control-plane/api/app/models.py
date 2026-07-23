@@ -125,6 +125,7 @@ class Line(Base):
     status: Mapped[str] = mapped_column(String(32), default="active")
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     flow_stats_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    socks_udp_over_tcp: Mapped[bool] = mapped_column(Boolean, default=True)
     created_by: Mapped[str] = mapped_column(String(64), default="admin")
     created_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: dt.datetime.now(dt.timezone.utc)

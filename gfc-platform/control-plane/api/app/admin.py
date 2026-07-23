@@ -799,6 +799,7 @@ async def get_line(line_id: int, session: AsyncSession = Depends(get_session)) -
         client_uuid=line.client_uuid,
         line_code_b32=line.line_code_b32,
         flow_stats_enabled=line.flow_stats_enabled,
+        socks_udp_over_tcp=line.socks_udp_over_tcp,
     )
 
 

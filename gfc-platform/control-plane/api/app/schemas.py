@@ -196,6 +196,7 @@ class LineUpdateIn(BaseModel):
     node_id: int | None = None
     name: str | None = None
     flow_stats_enabled: bool | None = None
+    socks_udp_over_tcp: bool | None = None
 
 
 class LineListItem(BaseModel):
@@ -230,6 +231,7 @@ class LineDetailOut(LineListItem):
     client_uuid: str | None = None
     line_code_b32: str | None = None
     flow_stats_enabled: bool = True
+    socks_udp_over_tcp: bool = True
 
 
 class LineOut(BaseModel):

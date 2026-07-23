@@ -83,6 +83,7 @@ def _build_forward_rules(
                     "port": sp.port,
                     "username": ((sp.username or "").strip() or None),
                     "password": ((sp.password or "").strip() or None),
+                    "udpOverTcp": line.socks_udp_over_tcp,
                 },
             }
         )
@@ -111,6 +112,7 @@ def _build_client_ingress(
                     "port": sp.port,
                     "username": ((sp.username or "").strip() or None),
                     "password": ((sp.password or "").strip() or None),
+                    "udpOverTcp": line.socks_udp_over_tcp,
                 }
         users.append(
             {

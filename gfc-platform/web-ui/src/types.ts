@@ -63,6 +63,7 @@ export type LineDetail = LineListItem & {
   clientUuid: string | null;
   lineCodeB32: string | null;
   flowStatsEnabled: boolean;
+  socksUdpOverTcp: boolean;
 };
 
 export type DeviceProxyMode = "gateway" | "bypass" | "transparent";
@@ -332,6 +333,7 @@ export function mapLineDetail(raw: Record<string, unknown>): LineDetail {
     clientUuid: (raw.client_uuid as string | null) ?? null,
     lineCodeB32: (raw.line_code_b32 as string | null) ?? null,
     flowStatsEnabled: raw.flow_stats_enabled !== false,
+    socksUdpOverTcp: raw.socks_udp_over_tcp !== false,
   };
 }
 

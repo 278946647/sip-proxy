@@ -42,6 +42,7 @@ def _migrate_sync(sync_conn: Connection) -> None:
         "client_uuid": "ALTER TABLE lines ADD COLUMN client_uuid VARCHAR(64)",
         "line_code_b32": "ALTER TABLE lines ADD COLUMN line_code_b32 TEXT",
         "flow_stats_enabled": "ALTER TABLE lines ADD COLUMN flow_stats_enabled BOOLEAN DEFAULT 1",
+        "socks_udp_over_tcp": "ALTER TABLE lines ADD COLUMN socks_udp_over_tcp BOOLEAN DEFAULT 1",
     }
     node_traffic_cols = {
         "traffic_monitor_iface": "ALTER TABLE nodes ADD COLUMN traffic_monitor_iface VARCHAR(64)",
