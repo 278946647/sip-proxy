@@ -16,6 +16,9 @@ DNS_DOH_PATH = "/dns-query"
 REALITY_DEFAULT_SNI = "www.cloudflare.com"
 REALITY_DEFAULT_PORT = 8443
 REALITY_DEFAULT_DEST = "www.cloudflare.com:443"
+HY2_DEFAULT_PORT = 18443
+HY2_DEFAULT_SNI = "www.cloudflare.com"
+HY2_DEFAULT_MASQUERADE = "https://www.cloudflare.com/"
 
 
 def _intl_dns_server(dataplane: dict[str, Any]) -> str:
@@ -140,6 +143,65 @@ def _vless_auth_user_route(
     if server is not None:
         rule["server"] = server
     return rule
+
+
+def _hy2_auth_user_route(name: str, *, outbound: str) -> dict[str, Any]:
+    """Per-line route for hysteria2-in — same auth_user → SOCKS/direct as VLESS."""
+    return {
+        "inbound": "hysteria2-in",
+        "auth_user": [name],
+        "action": "route",
+        "outbound": outbound,
+    }
+
+
+def _build_hysteria2_inbound(
+    client_ingress: dict[str, Any],
+    users_cfg: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Build hysteria2-in when TLS material + at least one hy2 password exist."""
+    hy2 = client_ingress.get("hysteria2") or {}
+    if hy2.get("enabled") is False:
+        return None
+    cert = (hy2.get("certificate") or "").strip()
+    key = (hy2.get("key") or "").strip()
+    if not cert or not key:
+        return None
+
+    hy2_users: list[dict[str, Any]] = []
+    for user in users_cfg:
+        line_id = user.get("lineId")
+        password = (user.get("hy2Password") or "").strip()
+        if not password:
+            continue
+        hy2_users.append({"name": f"client-{line_id}", "password": password})
+    if not hy2_users:
+        return None
+
+    server_name = (hy2.get("serverName") or HY2_DEFAULT_SNI).strip() or HY2_DEFAULT_SNI
+    listen_port = int(hy2.get("listenPort") or HY2_DEFAULT_PORT)
+    masquerade = (hy2.get("masquerade") or HY2_DEFAULT_MASQUERADE).strip() or HY2_DEFAULT_MASQUERADE
+    inbound: dict[str, Any] = {
+        "type": "hysteria2",
+        "tag": "hysteria2-in",
+        "listen": "0.0.0.0",
+        "listen_port": listen_port,
+        "users": hy2_users,
+        "masquerade": masquerade,
+        "ignore_client_bandwidth": False,
+        "tls": {
+            "enabled": True,
+            "server_name": server_name,
+            "certificate": [cert],
+            "key": [key],
+        },
+    }
+    if hy2.get("salamanderEnabled") and (hy2.get("salamanderPassword") or "").strip():
+        inbound["obfs"] = {
+            "type": "salamander",
+            "password": (hy2.get("salamanderPassword") or "").strip(),
+        }
+    return inbound
 
 
 def _client_ingress_route_block(
@@ -315,6 +377,7 @@ def _render_client_ingress_only(
     outbounds: list[dict[str, Any]] = [{"type": "direct", "tag": "direct"}]
     route_rules: list[dict[str, Any]] = []
     vless_users: list[dict[str, Any]] = []
+    user_route_out: dict[str, str] = {}
 
     for user in client_ingress.get("users") or []:
         line_id = user.get("lineId")
@@ -334,34 +397,47 @@ def _render_client_ingress_only(
             if not any(o.get("tag") == tag for o in outbounds):
                 outbounds.append(_build_client_socks_outbound(tag, outbound))
             route_out = tag
+        user_route_out[name] = route_out
         route_rules.append(_vless_auth_user_route(name, outbound=route_out))
+
+    inbounds: list[dict[str, Any]] = [
+        {
+            "type": "vless",
+            "tag": "vless-reality-in",
+            "listen": "0.0.0.0",
+            "listen_port": listen_port,
+            "users": vless_users,
+            "tls": {
+                "enabled": True,
+                "server_name": server_name,
+                "reality": {
+                    "enabled": True,
+                    "handshake": {
+                        "server": dest_host,
+                        "server_port": dest_port,
+                    },
+                    "private_key": private_key,
+                    "short_id": short_ids,
+                },
+            },
+        }
+    ]
+
+    hy2_inbound = _build_hysteria2_inbound(
+        client_ingress, list(client_ingress.get("users") or [])
+    )
+    if hy2_inbound:
+        inbounds.append(hy2_inbound)
+        for name, route_out in user_route_out.items():
+            # Only emit Hy2 route when that user is present in hy2 inbound.
+            if any(u.get("name") == name for u in hy2_inbound.get("users") or []):
+                route_rules.append(_hy2_auth_user_route(name, outbound=route_out))
 
     _prepend_bypass_rules(route_rules, _collect_bypass_cidrs(dataplane, client_ingress))
 
     cfg: dict[str, Any] = {
         "log": {"level": "info"},
-        "inbounds": [
-            {
-                "type": "vless",
-                "tag": "vless-reality-in",
-                "listen": "0.0.0.0",
-                "listen_port": listen_port,
-                "users": vless_users,
-                "tls": {
-                    "enabled": True,
-                    "server_name": server_name,
-                    "reality": {
-                        "enabled": True,
-                        "handshake": {
-                            "server": dest_host,
-                            "server_port": dest_port,
-                        },
-                        "private_key": private_key,
-                        "short_id": short_ids,
-                    },
-                },
-            }
-        ],
+        "inbounds": inbounds,
         "outbounds": outbounds,
         "route": _client_ingress_route_block(route_rules),
         "dns": {"strategy": "prefer_ipv4"},
@@ -496,6 +572,21 @@ def _append_client_ingress(
             dns_rules.append(_vless_auth_user_route(name, server=primary_dns))
 
         route_rules.append(_vless_auth_user_route(name, outbound=route_out))
+
+    hy2_inbound = _build_hysteria2_inbound(client_ingress, users_cfg)
+    if hy2_inbound:
+        cfg["inbounds"].append(hy2_inbound)
+        for user in users_cfg:
+            line_id = user.get("lineId")
+            name = f"client-{line_id}"
+            if not any(u.get("name") == name for u in hy2_inbound.get("users") or []):
+                continue
+            outbound = user.get("outbound") or {"mode": "direct"}
+            mode = (outbound.get("mode") or "direct").strip().lower()
+            route_out = "direct"
+            if mode == "socks" and outbound.get("host"):
+                route_out = name
+            route_rules.append(_hy2_auth_user_route(name, outbound=route_out))
 
     if not any(r.get("action") == "hijack-dns" for r in route_rules):
         hijack_at = min(2, len(route_rules))

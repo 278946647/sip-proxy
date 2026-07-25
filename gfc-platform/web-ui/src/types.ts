@@ -34,6 +34,8 @@ export type LineListItem = {
   nodeName: string;
   country: string;
   bandwidthMbps: number;
+  liveMode: "standard" | "live_all_hy2" | "live_catalog";
+  hy2BrutalEnabled: boolean;
   remark: string | null;
   isEnabled: boolean;
   status: string;
@@ -305,6 +307,8 @@ export function mapLineItem(raw: Record<string, unknown>): LineListItem {
     nodeName: raw.node_name as string,
     country: raw.country as string,
     bandwidthMbps: raw.bandwidth_mbps as number,
+    liveMode: ((raw.live_mode as string) || "standard") as LineListItem["liveMode"],
+    hy2BrutalEnabled: raw.hy2_brutal_enabled !== false,
     remark: raw.remark as string | null,
     isEnabled: raw.is_enabled as boolean,
     status: raw.status as string,

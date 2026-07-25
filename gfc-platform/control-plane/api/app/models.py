@@ -43,6 +43,7 @@ class Node(Base):
     agent_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
     static_routes_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     reality_config_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    hysteria2_config_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     traffic_monitor_iface: Mapped[str | None] = mapped_column(String(64), nullable=True)
     traffic_billing_start_at: Mapped[dt.datetime | None] = mapped_column(
@@ -126,6 +127,10 @@ class Line(Base):
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     flow_stats_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     socks_udp_over_tcp: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Line live transport mode (NOT device.proxy_mode gateway|bypass|transparent).
+    live_mode: Mapped[str] = mapped_column(String(32), default="standard")
+    hy2_password: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    hy2_brutal_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_by: Mapped[str] = mapped_column(String(64), default="admin")
     created_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: dt.datetime.now(dt.timezone.utc)

@@ -179,6 +179,8 @@ class LineCreateIn(BaseModel):
     line_type: str = Field(default="client", pattern="^(client|forward)$")
     country: str = ""
     bandwidth_mbps: int = Field(default=5, ge=1, le=10000)
+    live_mode: str = Field(default="standard", pattern="^(standard|live_all_hy2|live_catalog)$")
+    hy2_brutal_enabled: bool = True
     remark: str | None = None
     socks_remark: str | None = None
     created_by: str = "admin"
@@ -190,6 +192,10 @@ class LineUpdateIn(BaseModel):
     status: str | None = None
     is_enabled: bool | None = None
     bandwidth_mbps: int | None = Field(default=None, ge=1, le=10000)
+    live_mode: str | None = Field(
+        default=None, pattern="^(standard|live_all_hy2|live_catalog)$"
+    )
+    hy2_brutal_enabled: bool | None = None
     country: str | None = None
     source_cidrs: list[str] | None = None
     socks_profile_id: int | None = None
@@ -207,6 +213,8 @@ class LineListItem(BaseModel):
     node_name: str
     country: str
     bandwidth_mbps: int
+    live_mode: str = "standard"
+    hy2_brutal_enabled: bool = True
     remark: str | None
     is_enabled: bool
     status: str
@@ -232,6 +240,7 @@ class LineDetailOut(LineListItem):
     line_code_b32: str | None = None
     flow_stats_enabled: bool = True
     socks_udp_over_tcp: bool = True
+    hy2_port: int = 18443
 
 
 class LineOut(BaseModel):
@@ -449,6 +458,10 @@ class ClientHeartbeatRequest(BaseModel):
 class ClientRuntimeUpdateIn(BaseModel):
     proxy_mode: str | None = Field(default=None, pattern="^(gateway|bypass|transparent)$")
     routing_scheme: str | None = Field(default=None, pattern="^(split|global)$")
+    # Bound line live transport mode (authoritative on Line.live_mode).
+    live_mode: str | None = Field(
+        default=None, pattern="^(standard|live_all_hy2|live_catalog)$"
+    )
 
 
 class ReverseSSHPortsOut(BaseModel):

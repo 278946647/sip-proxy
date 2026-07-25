@@ -25,6 +25,9 @@ var intlDNS = []string{
 }
 
 const preferProxyTag = "proxy-prefer"
+const hy2ProxyTag = "proxy-hy2"
+const liveModeStandard = "standard"
+const liveModeAllHy2 = "live_all_hy2"
 
 type Renderer struct {
 	cfg *config.Config
@@ -163,12 +166,34 @@ func (r *Renderer) RenderActive(payload map[string]any, ruleSets []map[string]an
 		proxyOutbound = "proxy-group"
 	}
 
-	// TUN/international traffic always uses VLESS (see preferProxyGroup).
+	// TUN/international traffic: standard → proxy-prefer (VLESS urltest);
+	// live_all_hy2 → proxy-hy2 directly (no urltest).
 	preferTag := preferProxyTag
+	liveMode := normalizeLiveMode(payload["liveMode"])
+	hy2Payload, _ := payload["hysteria2"].(map[string]any)
+	hy2Port := 18443
+	if p, ok := node["hy2Port"].(float64); ok && int(p) > 0 {
+		hy2Port = int(p)
+	}
+	// Insert proxy-hy2 before proxy-prefer (and before optional proxy-group already appended).
+	hy2Outbound := buildHysteria2FromPayload(address, hy2Port, hy2Payload, wan)
+	if hy2Outbound != nil {
+		// Keep order: … proxy [| proxy-group] → proxy-hy2 → proxy-prefer
+		outbounds = append(outbounds, hy2Outbound)
+	}
+
 	if scheme != "byst-redirect" {
 		outbounds = append(outbounds, preferProxyGroup(proxyOutbound))
 	} else {
 		preferTag = proxyOutbound
+	}
+
+	intlTag := preferTag
+	if liveMode == liveModeAllHy2 {
+		if hy2Outbound == nil {
+			return nil, fmt.Errorf("live_all_hy2 requires hysteria2 credentials in bundle")
+		}
+		intlTag = hy2ProxyTag
 	}
 
 	inbounds := r.buildInbounds(proxyMode)
@@ -181,18 +206,21 @@ func (r *Renderer) RenderActive(payload map[string]any, ruleSets []map[string]an
 		// BYST-compatible dataplane: nft decides split/redirect, sing-box only carries traffic out.
 		routeRules = []map[string]any{}
 		finalOutbound = proxyOutbound
+		if liveMode == liveModeAllHy2 && hy2Outbound != nil {
+			finalOutbound = hy2ProxyTag
+		}
 	} else if scheme == "kernel-split" {
 		// CN/intl split is done in kernel nft. Inside TUN:
-		// bypass_ip → direct; intl DNS + other → prefer proxy; final → direct.
-		routeRules = r.preferProxyRouteRules(address, payload, preferTag, true)
+		// bypass_ip → direct; intl DNS + other → prefer/hy2; final → direct.
+		routeRules = r.preferProxyRouteRules(address, payload, intlTag, true)
 	} else {
-		routeRules = r.preferProxyRouteRules(address, payload, preferTag, false)
+		routeRules = r.preferProxyRouteRules(address, payload, intlTag, false)
 		if routingMode != "global" {
 			activeRuleSets = ruleSets
-			r.appendSplitRules(&routeRules, len(ruleSets) > 0, preferTag)
+			r.appendSplitRules(&routeRules, len(ruleSets) > 0, intlTag)
 		}
-		// Other traffic uses VLESS (proxy-prefer is proxy-only).
-		routeRules = append(routeRules, map[string]any{"outbound": preferTag})
+		// Other traffic uses selected international outbound.
+		routeRules = append(routeRules, map[string]any{"outbound": intlTag})
 	}
 
 	route := map[string]any{
@@ -299,6 +327,70 @@ func buildVLESSFromPayload(address string, port int, vless map[string]any, tag, 
 				"short_id":   sid,
 			},
 		},
+	}
+	return ob
+}
+
+func normalizeLiveMode(raw any) string {
+	mode := strings.ToLower(strings.TrimSpace(fmt.Sprint(raw)))
+	switch mode {
+	case liveModeAllHy2, "live_catalog":
+		return mode
+	default:
+		return liveModeStandard
+	}
+}
+
+func buildHysteria2FromPayload(address string, port int, hy2 map[string]any, wan string) map[string]any {
+	if hy2 == nil {
+		return nil
+	}
+	password, _ := hy2["password"].(string)
+	password = strings.TrimSpace(password)
+	if password == "" || strings.TrimSpace(address) == "" {
+		return nil
+	}
+	sni, _ := hy2["serverName"].(string)
+	if sni == "" {
+		sni = "www.cloudflare.com"
+	}
+	insecure := true
+	if v, ok := hy2["insecure"].(bool); ok {
+		insecure = v
+	}
+	up := 0
+	down := 0
+	if v, ok := hy2["upMbps"].(float64); ok {
+		up = int(v)
+	}
+	if v, ok := hy2["downMbps"].(float64); ok {
+		down = int(v)
+	}
+	ob := map[string]any{
+		"type":           "hysteria2",
+		"tag":            hy2ProxyTag,
+		"server":         address,
+		"server_port":    port,
+		"password":       password,
+		"bind_interface": wan,
+		"tls": map[string]any{
+			"enabled":     true,
+			"server_name": sni,
+			"insecure":    insecure,
+		},
+	}
+	if up > 0 {
+		ob["up_mbps"] = up
+	}
+	if down > 0 {
+		ob["down_mbps"] = down
+	}
+	if sal, _ := hy2["salamander"].(bool); sal {
+		salPass, _ := hy2["salamanderPassword"].(string)
+		salPass = strings.TrimSpace(salPass)
+		if salPass != "" {
+			ob["obfs"] = map[string]any{"type": "salamander", "password": salPass}
+		}
 	}
 	return ob
 }

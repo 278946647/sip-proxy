@@ -17,6 +17,7 @@ import (
 type Runtime struct {
 	RoutingScheme string
 	ProxyMode     string
+	LiveMode      string
 }
 
 // SyncRuntime pushes local runtime mode to control plane so agent pulls stay aligned.
@@ -38,7 +39,8 @@ func SyncRuntime(cfg *config.Config, st *store.Store, rt Runtime) error {
 		routing = payload.NormalizeRoutingMode(rt.RoutingScheme)
 	}
 	proxy := strings.ToLower(strings.TrimSpace(rt.ProxyMode))
-	return client.UpdateRuntime(routing, proxy)
+	live := strings.ToLower(strings.TrimSpace(rt.LiveMode))
+	return client.UpdateRuntime(routing, proxy, live)
 }
 
 func clientToken(cfg *config.Config, st *store.Store) string {

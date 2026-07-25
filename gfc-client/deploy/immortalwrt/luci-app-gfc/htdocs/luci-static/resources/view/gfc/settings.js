@@ -65,6 +65,7 @@ return view.extend({
 		var routing = ((data[1] || {}).data || {});
 		var proxyMode = settings.proxy_mode || 'gateway';
 		var routeMode = routing.mode || settings.routing_mode || 'split';
+		var liveMode = settings.live_mode || 'standard';
 		var logLevel = settings.singbox_log_level || 'error';
 		var result = E('pre', { 'style': 'white-space: pre-wrap; max-height: 260px; overflow: auto' }, []);
 
@@ -76,6 +77,11 @@ return view.extend({
 		var routeSelect = E('select', { 'class': 'cbi-input-select' }, [
 			option('split', '分流模式', routeMode),
 			option('global', '全局模式', routeMode)
+		]);
+		var liveSelect = E('select', { 'class': 'cbi-input-select' }, [
+			option('standard', '标准（国际走 VLESS）', liveMode),
+			option('live_all_hy2', '直播模式 B · 全国际 Hysteria2', liveMode),
+			option('live_catalog', '直播模式 A · 目录分流（P1）', liveMode, true)
 		]);
 		var logSelect = E('select', { 'class': 'cbi-input-select' }, [
 			option('error', 'error', logLevel),
@@ -109,6 +115,20 @@ return view.extend({
 				ui.addNotification(null, E('p', {}, result.textContent), 'danger');
 			}).finally(function() {
 				routeBtn.disabled = false;
+			});
+		});
+
+		var liveBtn = E('button', { 'class': 'btn cbi-button cbi-button-apply' }, [ '应用直播模式' ]);
+		liveBtn.addEventListener('click', function() {
+			liveBtn.disabled = true;
+			result.textContent = 'applying live mode...';
+			request('/settings', { live_mode: liveSelect.value }).then(function(res) {
+				showResult(result, res, '直播模式');
+			}).catch(function(err) {
+				result.textContent = err.message || String(err);
+				ui.addNotification(null, E('p', {}, result.textContent), 'danger');
+			}).finally(function() {
+				liveBtn.disabled = false;
 			});
 		});
 
@@ -149,6 +169,15 @@ return view.extend({
 						' ',
 						routeBtn,
 						E('div', { 'class': 'hint' }, [ '设置流量代理策略：国内直连+国际代理，或全局走代理' ])
+					])
+				]),
+				E('div', { 'class': 'cbi-value' }, [
+					E('label', { 'class': 'cbi-value-title' }, [ '直播模式' ]),
+					E('div', { 'class': 'cbi-value-field' }, [
+						liveSelect,
+						' ',
+						liveBtn,
+						E('div', { 'class': 'hint' }, [ '与控制平台线路 live_mode 同步；全国际 Hy2 不经 urltest' ])
 					])
 				]),
 				E('div', { 'class': 'cbi-value' }, [

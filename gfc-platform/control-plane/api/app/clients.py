@@ -480,12 +480,26 @@ async def client_update_runtime(
         device.proxy_mode = data["proxy_mode"]
     if "routing_scheme" in data:
         device.routing_scheme = data["routing_scheme"]
+    live_mode_out = "standard"
+    if "live_mode" in data and device.line_id:
+        from .hy2_util import normalize_live_mode
+
+        line = await session.get(Line, device.line_id)
+        if line:
+            line.live_mode = normalize_live_mode(data["live_mode"])
+            session.add(line)
+            live_mode_out = line.live_mode
+    elif device.line_id:
+        line = await session.get(Line, device.line_id)
+        if line:
+            live_mode_out = getattr(line, "live_mode", None) or "standard"
     session.add(device)
     await session.commit()
     return {
         "ok": True,
         "proxy_mode": device.proxy_mode or "gateway",
         "routing_scheme": device.routing_scheme or "split",
+        "live_mode": live_mode_out,
     }
 
 
@@ -517,6 +531,11 @@ async def client_config(
 
     payload = build_client_payload(device, line, line.node, line.socks_profile)
     version = client_payload_version(payload)
+
+    # Persist generated Hy2 secrets / node TLS if ensure_* filled them.
+    session.add(line)
+    session.add(line.node)
+    await session.commit()
 
     bundle = (
         await session.execute(

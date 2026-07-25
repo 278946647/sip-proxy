@@ -45,6 +45,8 @@ OPERATOR_LINE_PATCH_FIELDS = frozenset(
         "is_enabled",
         "status",
         "socks_udp_over_tcp",
+        "live_mode",
+        "hy2_brutal_enabled",
     }
 )
 

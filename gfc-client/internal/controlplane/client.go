@@ -183,13 +183,16 @@ func (c *Client) AckConfig(version, status, message string) error {
 	return c.requestJSON("POST", "/clients/me/config/ack", body, true, nil)
 }
 
-func (c *Client) UpdateRuntime(routingScheme, proxyMode string) error {
+func (c *Client) UpdateRuntime(routingScheme, proxyMode, liveMode string) error {
 	body := map[string]any{}
 	if strings.TrimSpace(routingScheme) != "" {
 		body["routing_scheme"] = strings.ToLower(strings.TrimSpace(routingScheme))
 	}
 	if strings.TrimSpace(proxyMode) != "" {
 		body["proxy_mode"] = strings.ToLower(strings.TrimSpace(proxyMode))
+	}
+	if strings.TrimSpace(liveMode) != "" {
+		body["live_mode"] = strings.ToLower(strings.TrimSpace(liveMode))
 	}
 	if len(body) == 0 {
 		return nil

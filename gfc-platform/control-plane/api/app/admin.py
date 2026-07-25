@@ -314,6 +314,8 @@ def _line_to_list_item(line: Line) -> LineListItem:
         node_name=line.node.name if line.node else "",
         country=line.country,
         bandwidth_mbps=line.bandwidth_mbps,
+        live_mode=getattr(line, "live_mode", None) or "standard",
+        hy2_brutal_enabled=bool(getattr(line, "hy2_brutal_enabled", True)),
         remark=line.remark,
         is_enabled=line.is_enabled,
         status=line.status,
@@ -800,6 +802,7 @@ async def get_line(line_id: int, session: AsyncSession = Depends(get_session)) -
         line_code_b32=line.line_code_b32,
         flow_stats_enabled=line.flow_stats_enabled,
         socks_udp_over_tcp=line.socks_udp_over_tcp,
+        hy2_port=18443,
     )
 
 
@@ -830,6 +833,14 @@ async def create_line(
     if line_type == "client" and not node.reality_config_json:
         node.reality_config_json = json.dumps(default_reality_config(), ensure_ascii=False)
         session.add(node)
+    if line_type == "client" and not getattr(node, "hysteria2_config_json", None):
+        from .hy2_util import default_hy2_config
+
+        try:
+            node.hysteria2_config_json = json.dumps(default_hy2_config(), ensure_ascii=False)
+            session.add(node)
+        except Exception:
+            pass
 
     line = Line(
         tid=tid,
@@ -841,6 +852,8 @@ async def create_line(
         client_uuid=client_uuid,
         country=body.country or (node.country or node.region),
         bandwidth_mbps=body.bandwidth_mbps,
+        live_mode=getattr(body, "live_mode", None) or "standard",
+        hy2_brutal_enabled=bool(getattr(body, "hy2_brutal_enabled", True)),
         remark=body.remark,
         socks_remark=body.socks_remark,
         status="active",

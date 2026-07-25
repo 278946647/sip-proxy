@@ -5,6 +5,14 @@ import hashlib
 import json
 from typing import Any
 
+from .hy2_util import (
+    HY2_DEFAULT_PORT,
+    HY2_DEFAULT_SNI,
+    brutal_mbps,
+    ensure_line_hy2_password,
+    ensure_node_hy2_config,
+    normalize_live_mode,
+)
 from .line_code import encode_line_code
 from .models import ClientDevice, Line, Node, SocksProfile
 from .reality_util import REALITY_DEFAULT_PORT, REALITY_DEFAULT_SNI, ensure_node_reality_config
@@ -79,6 +87,7 @@ def build_client_disabled_payload(
         "reason": reason,
         "proxyMode": device.proxy_mode or "gateway",
         "routingScheme": scheme,
+        "liveMode": "standard",
         "node": {"address": ""},
     }
 
@@ -90,6 +99,19 @@ def build_client_payload(
     socks: SocksProfile | None,
 ) -> dict[str, Any]:
     reality = ensure_node_reality_config(node.reality_config_json)
+    hy2 = ensure_node_hy2_config(node.hysteria2_config_json)
+    live_mode = normalize_live_mode(getattr(line, "live_mode", None))
+    hy2_password = ensure_line_hy2_password(getattr(line, "hy2_password", None))
+    # Persist generated secrets onto ORM objects when callers flush/commit.
+    if getattr(line, "hy2_password", None) != hy2_password:
+        line.hy2_password = hy2_password
+    try:
+        old_hy2 = json.loads(node.hysteria2_config_json or "{}")
+    except (json.JSONDecodeError, TypeError):
+        old_hy2 = {}
+    if not (isinstance(old_hy2, dict) and old_hy2.get("certificate") and old_hy2.get("key")):
+        node.hysteria2_config_json = json.dumps(hy2, ensure_ascii=False)
+
     outbound: dict[str, Any] | None = None
     if socks:
         outbound = {
@@ -106,6 +128,10 @@ def build_client_payload(
     if scheme not in ("split", "global"):
         scheme = "split"
 
+    brutal_on = bool(getattr(line, "hy2_brutal_enabled", True))
+    bw = int(line.bandwidth_mbps or 5)
+    hy2_mbps = brutal_mbps(bw, enabled=brutal_on)
+
     return {
         "deviceId": device.id,
         "deviceName": device.name,
@@ -114,12 +140,14 @@ def build_client_payload(
         "dataplaneMode": "proxy",
         "proxyMode": device.proxy_mode or "gateway",
         "routingScheme": scheme,
+        "liveMode": live_mode,
         "controlPlaneServers": public_server_urls(),
         "node": {
             "id": node.id,
             "name": node.name,
             "address": (node.public_ip or "").strip() or None,
             "port": int(reality.get("listenPort") or REALITY_DEFAULT_PORT),
+            "hy2Port": int(hy2.get("listenPort") or HY2_DEFAULT_PORT),
         },
         "vless": {
             "uuid": line.client_uuid,
@@ -127,6 +155,16 @@ def build_client_payload(
             "serverName": (reality.get("serverNames") or [REALITY_DEFAULT_SNI])[0],
             "publicKey": reality.get("publicKey"),
             "shortId": (reality.get("shortIds") or [""])[0],
+        },
+        "hysteria2": {
+            "password": hy2_password,
+            "serverName": hy2.get("serverName") or HY2_DEFAULT_SNI,
+            "insecure": True,
+            "brutal": brutal_on,
+            "upMbps": hy2_mbps if brutal_on else bw,
+            "downMbps": hy2_mbps if brutal_on else bw,
+            "salamander": bool(hy2.get("salamanderEnabled")),
+            "salamanderPassword": (hy2.get("salamanderPassword") or "").strip() or None,
         },
         "outbound": outbound,
         "bandwidthMbps": line.bandwidth_mbps,

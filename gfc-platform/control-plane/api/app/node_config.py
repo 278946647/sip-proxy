@@ -9,6 +9,11 @@ from typing import Any
 from .models import Line, Node, SocksProfile
 from .platform_secrets import get_primary_bootstrap_token
 from .reality_util import ensure_node_reality_config
+from .hy2_util import (
+    ensure_line_hy2_password,
+    ensure_node_hy2_config,
+    normalize_live_mode,
+)
 
 
 def _collect_line_cidrs(lines: list[Line]) -> list[str]:
@@ -114,6 +119,9 @@ def _build_client_ingress(
                     "password": ((sp.password or "").strip() or None),
                     "udpOverTcp": line.socks_udp_over_tcp,
                 }
+        hy2_password = ensure_line_hy2_password(getattr(line, "hy2_password", None))
+        if getattr(line, "hy2_password", None) != hy2_password:
+            line.hy2_password = hy2_password
         users.append(
             {
                 "lineId": line.id,
@@ -122,6 +130,9 @@ def _build_client_ingress(
                 "uuid": line.client_uuid,
                 "flow": "xtls-rprx-vision",
                 "bandwidthMbps": line.bandwidth_mbps,
+                "liveMode": normalize_live_mode(getattr(line, "live_mode", None)),
+                "hy2Password": hy2_password,
+                "hy2Brutal": bool(getattr(line, "hy2_brutal_enabled", True)),
                 "outbound": outbound,
             }
         )
@@ -174,6 +185,13 @@ def build_node_payload(
     rules = _build_forward_rules(lines, socks_by_id)
     client_ingress = _build_client_ingress(lines, socks_by_id)
     reality = ensure_node_reality_config(node.reality_config_json)
+    hy2 = ensure_node_hy2_config(node.hysteria2_config_json)
+    try:
+        old_hy2 = json.loads(node.hysteria2_config_json or "{}")
+    except (json.JSONDecodeError, TypeError):
+        old_hy2 = {}
+    if not (isinstance(old_hy2, dict) and old_hy2.get("certificate") and old_hy2.get("key")):
+        node.hysteria2_config_json = json.dumps(hy2, ensure_ascii=False)
     bypass_cidrs = _collect_bypass_cidrs_for_node(node, lines, socks_by_id)
 
     connect_mode = node.connect_mode or "ethernet"
@@ -217,6 +235,7 @@ def build_node_payload(
         "clientIngress": {
             "enabled": bool(client_ingress["users"]),
             "reality": reality,
+            "hysteria2": hy2,
             "users": client_ingress["users"],
         },
         "dataplane": {

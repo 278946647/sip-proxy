@@ -223,10 +223,18 @@ async def pull_config(
     payload = build_node_payload(node, lines, socks_by_id)
     reality = payload.get("clientIngress", {}).get("reality") or {}
     reality_json = json.dumps(reality, ensure_ascii=False, separators=(",", ":"))
+    hy2 = payload.get("clientIngress", {}).get("hysteria2") or {}
+    hy2_json = json.dumps(hy2, ensure_ascii=False, separators=(",", ":"))
     if payload.get("clientIngress", {}).get("enabled"):
         if node.reality_config_json != reality_json:
             node.reality_config_json = reality_json
             session.add(node)
+        if getattr(node, "hysteria2_config_json", None) != hy2_json:
+            node.hysteria2_config_json = hy2_json
+            session.add(node)
+    # Persist any newly generated per-line hy2 passwords.
+    for line in lines:
+        session.add(line)
     version = payload_version(payload)
 
     cached_ok = node.current_config_version == version

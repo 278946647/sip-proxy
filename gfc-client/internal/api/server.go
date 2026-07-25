@@ -727,6 +727,13 @@ func (s *Server) getSettings(c *gin.Context) {
 	settings["device_name"] = s.cfg.DeviceName
 	settings["proxy_mode"] = s.cfg.ProxyMode
 	settings["routing_mode"] = singbox.NewRenderer(s.cfg).RoutingMode()
+	liveMode := "standard"
+	if bundle := s.engine.LoadBundle(); bundle != nil {
+		if v := strings.TrimSpace(fmt.Sprint(bundle["liveMode"])); v != "" && v != "<nil>" {
+			liveMode = strings.ToLower(v)
+		}
+	}
+	settings["live_mode"] = liveMode
 	s.ok(c, settings)
 }
 
@@ -966,6 +973,37 @@ func (s *Server) putSettings(c *gin.Context) {
 			result["network_error"] = err.Error()
 		}
 		proxyChanged = true
+	}
+
+	if mode, ok := body["live_mode"].(string); ok && strings.TrimSpace(mode) != "" {
+		mode = strings.ToLower(strings.TrimSpace(mode))
+		switch mode {
+		case "standard", "live_all_hy2", "live_catalog":
+		default:
+			s.fail(c, 400, "live_mode must be standard|live_all_hy2|live_catalog")
+			return
+		}
+		if syncErr := cpsync.SyncRuntime(s.cfg, s.store, cpsync.Runtime{LiveMode: mode}); syncErr != nil {
+			result["synced"] = false
+			result["sync_error"] = syncErr.Error()
+		} else {
+			result["synced"] = true
+		}
+		result["live_mode"] = mode
+		// Pull fresh bundle (liveMode bumps version) and re-apply dataplane.
+		if client, err := s.controlPlaneClient(); err == nil {
+			if bundle, err := client.PullConfig(); err == nil && bundle != nil {
+				ok, msg := s.engine.ApplyPayload(bundle.Payload, bundle.Version, true)
+				result["dataplane"] = map[string]any{"ok": ok, "message": msg}
+				if !ok {
+					result["live_mode_apply_error"] = msg
+				}
+			} else if err != nil {
+				result["live_mode_pull_error"] = err.Error()
+			}
+		} else {
+			result["live_mode_pull_error"] = err.Error()
+		}
 	}
 
 	if proxyChanged {

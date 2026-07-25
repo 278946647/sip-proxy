@@ -127,9 +127,18 @@ WAN interface: **runtime discovery** — `GFC_WAN_IFACE` / netlink. Never hardco
 | 2 | `direct` | `direct` | `bind_interface: <wan>` — bypass & handshake path |
 | 3 | `proxy` | `vless` | Primary VLESS Reality |
 | 4 | `proxy-group` | `selector` | **Only if** multiple nodes in bundle |
-| 5 | `proxy-prefer` | `urltest` | Health-check wrapper for TUN traffic |
+| 5 | `proxy-hy2` | `hysteria2` | Parallel Hysteria2 to same node IP (`:18443`) when bundle has credentials |
+| 6 | `proxy-prefer` | `urltest` | Health-check wrapper for **VLESS** TUN traffic (`standard` mode) |
 
-Route rules reference `direct`, `proxy`, or `proxy-prefer` — **not** `direct-local` except implicit.
+Route rules reference `direct`, `proxy`, `proxy-prefer`, or `proxy-hy2` — **not** `direct-local` except implicit.
+
+**`live_mode` (line field, not device `proxyMode`):**
+
+| Value | International catch-all | sniff |
+|-------|-------------------------|-------|
+| `standard` (default) | `proxy-prefer` → VLESS only | off |
+| `live_all_hy2` | **`proxy-hy2` directly** (no urltest) | off |
+| `live_catalog` | P1 — catalog → hy2; else VLESS | on demand |
 
 ### VLESS outbound (`proxy`) — mandatory shape
 
@@ -156,6 +165,34 @@ Route rules reference `direct`, `proxy`, or `proxy-prefer` — **not** `direct-l
 ```
 
 Must match Forward Node inbound Reality keys (control plane contract).
+
+### Hysteria2 outbound (`proxy-hy2`) — mandatory shape (P0)
+
+```json
+{
+  "type": "hysteria2",
+  "tag": "proxy-hy2",
+  "server": "<forward-node-ip>",
+  "server_port": 18443,
+  "password": "<from-bundle>",
+  "bind_interface": "<wan-iface>",
+  "up_mbps": "<floor(line_bandwidth_mbps * 0.93) when brutal>",
+  "down_mbps": "<same>",
+  "tls": {
+    "enabled": true,
+    "server_name": "www.cloudflare.com",
+    "insecure": true
+  }
+}
+```
+
+| Rule | Value |
+|------|-------|
+| Server IP | Same as VLESS (`node.address`) — nft `bypass_ip` already covers |
+| Port | **18443** |
+| Brutal default | On; bandwidth = **93%** of `line.bandwidth_mbps` |
+| Salamander | Default **off** |
+| Mode B routing | catch-all / ext_const → **`proxy-hy2`** (no urltest wrapper) |
 
 ### `proxy-prefer` — mandatory semantics (validated behavior)
 
@@ -191,8 +228,8 @@ Override env: `GFC_PROXY_HEALTH_URL`, `GFC_PROXY_HEALTH_INTERVAL`.
 | 1 | `ip_cidr` bypass set | `direct` | Node IP + control plane + `GFC_*_BYPASS` env |
 | 2 | `ip_is_private: true` | `direct` | RFC1918 inside TUN path |
 | 3 | `ip_cidr` domestic DNS + `port: [53]` | `direct` | 223.5.5.5, 223.6.6.6, 119.29.29.29, 114.114.114.114 |
-| 4 | `ip_cidr` intl DNS (`ext_const`) | `proxy-prefer` | Default 1.1.1.1, 1.0.0.1, 8.8.8.8, 8.8.4.4; env `GFC_EXT_CONST_IPS` |
-| 5 | catch-all | `proxy-prefer` | All other TUN traffic |
+| 4 | `ip_cidr` intl DNS (`ext_const`) | `proxy-prefer` **or** `proxy-hy2` | `standard` → prefer; `live_all_hy2` → hy2 |
+| 5 | catch-all | `proxy-prefer` **or** `proxy-hy2` | Same as #4 for active `live_mode` |
 
 ### `route` block
 
@@ -260,15 +297,19 @@ Production layout when the forward node serves **GFC Client gateways** via VLESS
 | Tag | Type | Purpose |
 |-----|------|---------|
 | `vless-reality-in` | `vless` | Client gateway connects here |
-| `client-{lineId}` | `socks` | Per client line with `socks_profile_id` (tag equals VLESS `users[].name`) |
+| `hysteria2-in` | `hysteria2` | Parallel Hy2 ingress (`:18443`); same `client-{lineId}` identity |
+| `client-{lineId}` | `socks` | Per client line with `socks_profile_id` (tag equals VLESS/Hy2 `users[].name`) |
 | `direct` | `direct` | Node WAN egress / bypass |
 
 | Constant | Default |
 |----------|---------|
-| `listen_port` | `8443` |
+| VLESS `listen_port` | `8443` |
+| Hy2 `listen_port` | **`18443`** |
 | `server_name` | `www.cloudflare.com` |
-| `flow` | `xtls-rprx-vision` |
+| VLESS `flow` | `xtls-rprx-vision` |
 | Reality `dest` | `www.cloudflare.com:443` |
+| Hy2 masquerade | **on** (`https://www.cloudflare.com/`) |
+| Hy2 Salamander | **off** by default |
 
 #### VLESS user identity (control plane → sing-box)
 
@@ -288,6 +329,7 @@ Client device binding (`device.line_id`) selects which `uuid` the gateway uses; 
 |---|-------|----------|-------|
 | 1 | `ip_cidr` bypass set | `direct` | Node public IP + SOCKS host IPs from bundle |
 | 2 | `inbound: vless-reality-in` + `auth_user: [client-{lineId}]` | `client-{lineId}` or `direct` | Per-line egress; `action: route` required (sing-box ≥ 1.11) |
+| 3 | `inbound: hysteria2-in` + `auth_user: [client-{lineId}]` | **same** as #2 | VLESS/Hy2 must land on the **same** SOCKS/`direct` |
 
 #### Mandatory `route` block (client-ingress-only)
 
@@ -367,9 +409,12 @@ Generator: `gfc-platform/node-agent/node_agent/singbox.py` (`_vless_auth_user_ro
 | Contract | Client | Forward Node |
 |----------|--------|--------------|
 | VLESS port | outbound `server_port: 8443` | inbound `listen_port: 8443` |
+| Hy2 port | outbound `server_port: 18443` | inbound `listen_port: 18443` (`hysteria2-in`) |
 | Reality SNI | `www.cloudflare.com` | `server_name` / `serverNames[0]` |
 | UUID / keys | From control plane bundle | `clientIngress.users` (`name` = `client-{lineId}`) |
-| Per-line egress | N/A (always VLESS to node) | `auth_user` → `client-{lineId}` SOCKS or `direct` |
+| Hy2 password | From bundle `hysteria2.password` | Same user name + password on `hysteria2-in` |
+| Per-line egress | N/A (always tunnel to node) | `auth_user` → `client-{lineId}` SOCKS or `direct` (VLESS **and** Hy2) |
+| Line `live_mode` | Bundle `liveMode` selects catch-all outbound | Node accepts both protocols regardless of mode |
 | Forward node IP | In nft `bypass_ip` + route bypass | In sing-box bypass `ip_cidr` + nft `bypass_ip` |
 | Intl DNS IPs | nft `ext_const` + route rule #4 | N/A (node uses DoH in sing-box dns) |
 

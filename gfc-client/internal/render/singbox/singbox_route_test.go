@@ -83,6 +83,50 @@ func TestPreferProxyRouteRulesOrder(t *testing.T) {
 	}
 }
 
+func TestLiveAllHy2CatchAllUsesProxyHy2(t *testing.T) {
+	r := NewRenderer(&config.Config{})
+	rules := r.preferProxyRouteRules("1.2.3.4", map[string]any{}, hy2ProxyTag, true)
+	last := rules[len(rules)-1]
+	if last["outbound"] != hy2ProxyTag {
+		t.Fatalf("catch-all outbound=%v want %s", last["outbound"], hy2ProxyTag)
+	}
+}
+
+func TestBuildHysteria2FromPayload(t *testing.T) {
+	ob := buildHysteria2FromPayload("9.9.9.9", 18443, map[string]any{
+		"password":   "secret",
+		"serverName": "www.cloudflare.com",
+		"insecure":   true,
+		"upMbps":     float64(93),
+		"downMbps":   float64(93),
+	}, "eth0")
+	if ob == nil {
+		t.Fatal("expected hy2 outbound")
+	}
+	if ob["tag"] != hy2ProxyTag || ob["type"] != "hysteria2" {
+		t.Fatalf("unexpected outbound: %#v", ob)
+	}
+	if ob["server_port"] != 18443 {
+		t.Fatalf("port=%v", ob["server_port"])
+	}
+	if ob["up_mbps"] != 93 || ob["down_mbps"] != 93 {
+		t.Fatalf("bandwidth %#v", ob)
+	}
+	tls, _ := ob["tls"].(map[string]any)
+	if tls["insecure"] != true {
+		t.Fatalf("tls=%#v", tls)
+	}
+}
+
+func TestNormalizeLiveMode(t *testing.T) {
+	if normalizeLiveMode("") != liveModeStandard {
+		t.Fatal("default")
+	}
+	if normalizeLiveMode("live_all_hy2") != liveModeAllHy2 {
+		t.Fatal("all hy2")
+	}
+}
+
 func TestIntlDNSCidrsFromEnv(t *testing.T) {
 	t.Setenv("GFC_EXT_CONST_IPS", "1.1.1.1,8.8.8.8")
 	got := intlDNSCidrs()

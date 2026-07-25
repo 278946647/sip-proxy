@@ -26,6 +26,7 @@ def _migrate_sync(sync_conn: Connection) -> None:
         "agent_version": "ALTER TABLE nodes ADD COLUMN agent_version VARCHAR(32)",
         "static_routes_json": "ALTER TABLE nodes ADD COLUMN static_routes_json TEXT",
         "reality_config_json": "ALTER TABLE nodes ADD COLUMN reality_config_json TEXT",
+        "hysteria2_config_json": "ALTER TABLE nodes ADD COLUMN hysteria2_config_json TEXT",
     }
     line_cols = {
         "tid": "ALTER TABLE lines ADD COLUMN tid VARCHAR(64)",
@@ -43,6 +44,9 @@ def _migrate_sync(sync_conn: Connection) -> None:
         "line_code_b32": "ALTER TABLE lines ADD COLUMN line_code_b32 TEXT",
         "flow_stats_enabled": "ALTER TABLE lines ADD COLUMN flow_stats_enabled BOOLEAN DEFAULT 1",
         "socks_udp_over_tcp": "ALTER TABLE lines ADD COLUMN socks_udp_over_tcp BOOLEAN DEFAULT 1",
+        "live_mode": "ALTER TABLE lines ADD COLUMN live_mode VARCHAR(32) DEFAULT 'standard'",
+        "hy2_password": "ALTER TABLE lines ADD COLUMN hy2_password VARCHAR(128)",
+        "hy2_brutal_enabled": "ALTER TABLE lines ADD COLUMN hy2_brutal_enabled BOOLEAN DEFAULT 1",
     }
     node_traffic_cols = {
         "traffic_monitor_iface": "ALTER TABLE nodes ADD COLUMN traffic_monitor_iface VARCHAR(64)",

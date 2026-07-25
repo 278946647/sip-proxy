@@ -6,6 +6,7 @@ import {
   Input,
   InputNumber,
   Row,
+  Select,
   Space,
   Switch,
   Tag,
@@ -46,6 +47,7 @@ export function LineDetailPage() {
   const [saving, setSaving] = useState(false);
   const [bandwidthDraft, setBandwidthDraft] = useState<number | null>(null);
   const [bandwidthSaving, setBandwidthSaving] = useState(false);
+  const [liveModeSaving, setLiveModeSaving] = useState(false);
   const [enableSaving, setEnableSaving] = useState(false);
   const [udpOverTcpSaving, setUdpOverTcpSaving] = useState(false);
   const [flowStats, setFlowStats] = useState<FlowStat[]>([]);
@@ -151,6 +153,22 @@ export function LineDetailPage() {
     }
   };
 
+  const saveLiveMode = async (mode: LineDetail["liveMode"]) => {
+    if (!id) return;
+    setLiveModeSaving(true);
+    try {
+      await apiPatch(`/admin/lines/${id}?operator=${localStorage.getItem("gfc_user") || "admin"}`, {
+        live_mode: mode,
+      });
+      message.success("直播模式已保存，绑定设备将在下次拉取配置后生效");
+      await load();
+    } catch (e) {
+      message.error(String(e));
+    } finally {
+      setLiveModeSaving(false);
+    }
+  };
+
   const saveRemarks = async () => {
     const v = await form.validateFields();
     setSaving(true);
@@ -250,6 +268,21 @@ export function LineDetailPage() {
               </Button>
             </Space>
           </Descriptions.Item>
+          {line.lineType === "client" && (
+            <Descriptions.Item label="直播模式" span={2}>
+              <Select
+                style={{ minWidth: 320 }}
+                loading={liveModeSaving}
+                value={line.liveMode || "standard"}
+                onChange={(v) => void saveLiveMode(v)}
+                options={[
+                  { value: "standard", label: "标准 / Reality（国际 → VLESS）" },
+                  { value: "live_all_hy2", label: "直播模式 B · 全国际 Hysteria2" },
+                  { value: "live_catalog", label: "直播模式 A · 目录分流（P1）", disabled: true },
+                ]}
+              />
+            </Descriptions.Item>
+          )}
           <Descriptions.Item label="节点">{line.nodeName}</Descriptions.Item>
           <Descriptions.Item label="国家/地区">{line.country || "-"}</Descriptions.Item>
           <Descriptions.Item label="客户端">
