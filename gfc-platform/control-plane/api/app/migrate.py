@@ -47,6 +47,7 @@ def _migrate_sync(sync_conn: Connection) -> None:
         "live_mode": "ALTER TABLE lines ADD COLUMN live_mode VARCHAR(32) DEFAULT 'standard'",
         "hy2_password": "ALTER TABLE lines ADD COLUMN hy2_password VARCHAR(128)",
         "hy2_brutal_enabled": "ALTER TABLE lines ADD COLUMN hy2_brutal_enabled BOOLEAN DEFAULT 1",
+        "live_platforms_json": "ALTER TABLE lines ADD COLUMN live_platforms_json TEXT",
     }
     node_traffic_cols = {
         "traffic_monitor_iface": "ALTER TABLE nodes ADD COLUMN traffic_monitor_iface VARCHAR(64)",
@@ -293,6 +294,104 @@ def _migrate_sync(sync_conn: Connection) -> None:
                     UNIQUE (version, arch)
                 )
                 """
+            )
+        )
+
+    if not _table_exists(sync_conn, "live_platforms"):
+        sync_conn.execute(
+            text(
+                """
+                CREATE TABLE live_platforms (
+                    id VARCHAR(64) NOT NULL PRIMARY KEY,
+                    display_name VARCHAR(128) NOT NULL,
+                    markets_json TEXT DEFAULT '[]',
+                    live_strength VARCHAR(16) DEFAULT 'strong',
+                    is_enabled BOOLEAN DEFAULT 1,
+                    created_at DATETIME
+                )
+                """
+            )
+        )
+
+    if not _table_exists(sync_conn, "live_endpoints"):
+        sync_conn.execute(
+            text(
+                """
+                CREATE TABLE live_endpoints (
+                    id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                    platform_id VARCHAR(64) NOT NULL,
+                    role VARCHAR(32) DEFAULT 'ingest',
+                    match_type VARCHAR(32) DEFAULT 'fqdn',
+                    value VARCHAR(255) NOT NULL,
+                    confidence VARCHAR(16) DEFAULT 'high',
+                    source VARCHAR(32) DEFAULT 'official_doc',
+                    status VARCHAR(16) DEFAULT 'draft',
+                    region VARCHAR(64),
+                    last_verified_at DATETIME,
+                    created_at DATETIME,
+                    FOREIGN KEY(platform_id) REFERENCES live_platforms (id) ON DELETE CASCADE
+                )
+                """
+            )
+        )
+        sync_conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS idx_live_endpoints_platform "
+                "ON live_endpoints(platform_id)"
+            )
+        )
+
+    if not _table_exists(sync_conn, "live_resolve_results"):
+        sync_conn.execute(
+            text(
+                """
+                CREATE TABLE live_resolve_results (
+                    line_id INTEGER NOT NULL PRIMARY KEY,
+                    node_id INTEGER,
+                    status VARCHAR(16) DEFAULT 'ok',
+                    payload_json TEXT DEFAULT '{}',
+                    egress_hint VARCHAR(255),
+                    catalog_epoch VARCHAR(64),
+                    resolved_at DATETIME,
+                    updated_at DATETIME,
+                    FOREIGN KEY(line_id) REFERENCES lines (id) ON DELETE CASCADE,
+                    FOREIGN KEY(node_id) REFERENCES nodes (id) ON DELETE SET NULL
+                )
+                """
+            )
+        )
+
+    if not _table_exists(sync_conn, "live_capture_candidates"):
+        sync_conn.execute(
+            text(
+                """
+                CREATE TABLE live_capture_candidates (
+                    id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                    platform_id VARCHAR(64) NOT NULL,
+                    role VARCHAR(32) DEFAULT 'ingest',
+                    match_type VARCHAR(32) DEFAULT 'fqdn',
+                    value VARCHAR(255) NOT NULL,
+                    confidence VARCHAR(16) DEFAULT 'medium',
+                    source VARCHAR(32) DEFAULT 'capture',
+                    status VARCHAR(16) DEFAULT 'pending',
+                    evidence_json TEXT,
+                    notes TEXT,
+                    line_id INTEGER,
+                    reviewed_by VARCHAR(64),
+                    reviewed_at DATETIME,
+                    endpoint_id INTEGER,
+                    created_at DATETIME,
+                    FOREIGN KEY(platform_id) REFERENCES live_platforms (id) ON DELETE CASCADE,
+                    FOREIGN KEY(line_id) REFERENCES lines (id) ON DELETE SET NULL,
+                    FOREIGN KEY(endpoint_id) REFERENCES live_endpoints (id) ON DELETE SET NULL
+                )
+                """
+            )
+        )
+        sync_conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS idx_live_capture_platform "
+                "ON live_capture_candidates(platform_id, status)"
             )
         )
 

@@ -14,6 +14,7 @@ from .hy2_util import (
     ensure_node_hy2_config,
     normalize_live_mode,
 )
+from .live_catalog import parse_line_platforms
 
 
 def _collect_line_cidrs(lines: list[Line]) -> list[str]:
@@ -131,6 +132,7 @@ def _build_client_ingress(
                 "flow": "xtls-rprx-vision",
                 "bandwidthMbps": line.bandwidth_mbps,
                 "liveMode": normalize_live_mode(getattr(line, "live_mode", None)),
+                "livePlatforms": parse_line_platforms(line),
                 "hy2Password": hy2_password,
                 "hy2Brutal": bool(getattr(line, "hy2_brutal_enabled", True)),
                 "outbound": outbound,
@@ -181,6 +183,7 @@ def build_node_payload(
     node: Node,
     lines: list[Line],
     socks_by_id: dict[int, SocksProfile],
+    live_catalog: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     rules = _build_forward_rules(lines, socks_by_id)
     client_ingress = _build_client_ingress(lines, socks_by_id)
@@ -224,7 +227,7 @@ def build_node_payload(
     if client_ingress["users"] and not node.reality_config_json:
         pass  # persisted when line is created on control plane
 
-    return {
+    payload: dict[str, Any] = {
         "nodeId": node.id,
         "nodeName": node.name,
         "connectMode": connect_mode,
@@ -247,6 +250,9 @@ def build_node_payload(
             "dnsIntlServer": "1.1.1.1",
         },
     }
+    if live_catalog:
+        payload["liveCatalog"] = live_catalog
+    return payload
 
 
 def payload_version(payload: dict[str, Any]) -> str:

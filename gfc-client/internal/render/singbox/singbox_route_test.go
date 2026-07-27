@@ -118,12 +118,64 @@ func TestBuildHysteria2FromPayload(t *testing.T) {
 	}
 }
 
+func TestLiveCatalogRouteRulesUsesHy2ForLiveIp(t *testing.T) {
+	r := NewRenderer(&config.Config{})
+	payload := map[string]any{
+		"lineId": float64(10),
+		"liveIp": map[string]any{
+			"lineId": float64(10),
+			"cidrs":  []any{"203.0.113.10/32"},
+		},
+	}
+	rules := r.liveCatalogRouteRules("1.2.3.4", payload, preferProxyTag, hy2ProxyTag)
+	foundHy2 := false
+	foundPreferCatch := false
+	for _, rule := range rules {
+		if rule["outbound"] == hy2ProxyTag {
+			if cidrs, ok := rule["ip_cidr"].([]string); ok {
+				for _, c := range cidrs {
+					if c == "203.0.113.10/32" {
+						foundHy2 = true
+					}
+				}
+			}
+		}
+		if rule["outbound"] == preferProxyTag {
+			if _, hasCIDR := rule["ip_cidr"]; !hasCIDR {
+				foundPreferCatch = true
+			}
+		}
+	}
+	if !foundHy2 {
+		t.Fatal("missing live_ip → hy2 rule")
+	}
+	if !foundPreferCatch {
+		t.Fatal("missing catch-all prefer rule")
+	}
+}
+
+func TestLiveIpLineMismatchRejected(t *testing.T) {
+	payload := map[string]any{
+		"lineId": float64(10),
+		"liveIp": map[string]any{
+			"lineId": float64(99),
+			"cidrs":  []any{"203.0.113.10/32"},
+		},
+	}
+	if got := liveIpCidrsFromPayload(payload); len(got) != 0 {
+		t.Fatalf("want empty on line mismatch, got %v", got)
+	}
+}
+
 func TestNormalizeLiveMode(t *testing.T) {
 	if normalizeLiveMode("") != liveModeStandard {
 		t.Fatal("default")
 	}
 	if normalizeLiveMode("live_all_hy2") != liveModeAllHy2 {
 		t.Fatal("all hy2")
+	}
+	if normalizeLiveMode("live_catalog") != liveModeCatalog {
+		t.Fatal("catalog")
 	}
 }
 

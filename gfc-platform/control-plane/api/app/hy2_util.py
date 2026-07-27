@@ -13,7 +13,7 @@ HY2_BRUTAL_RATIO = 0.93
 
 LIVE_MODE_STANDARD = "standard"
 LIVE_MODE_ALL_HY2 = "live_all_hy2"
-LIVE_MODE_CATALOG = "live_catalog"  # P1 — accepted in schema, not routed yet
+LIVE_MODE_CATALOG = "live_catalog"
 
 LIVE_MODES = frozenset({LIVE_MODE_STANDARD, LIVE_MODE_ALL_HY2, LIVE_MODE_CATALOG})
 

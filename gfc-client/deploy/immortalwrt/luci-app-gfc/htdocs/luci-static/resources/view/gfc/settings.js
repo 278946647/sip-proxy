@@ -81,7 +81,7 @@ return view.extend({
 		var liveSelect = E('select', { 'class': 'cbi-input-select' }, [
 			option('standard', '标准（国际走 VLESS）', liveMode),
 			option('live_all_hy2', '直播模式 B · 全国际 Hysteria2', liveMode),
-			option('live_catalog', '直播模式 A · 目录分流（P1）', liveMode, true)
+			option('live_catalog', '直播模式 A · 目录分流（ingest → Hy2）', liveMode)
 		]);
 		var logSelect = E('select', { 'class': 'cbi-input-select' }, [
 			option('error', 'error', logLevel),

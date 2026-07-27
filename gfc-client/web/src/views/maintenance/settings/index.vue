@@ -101,7 +101,7 @@ onMounted(load)
         <select v-model="form.live_mode">
           <option value="standard">standard 标准（国际走 VLESS）</option>
           <option value="live_all_hy2">live_all_hy2 全国际 Hysteria2</option>
-          <option value="live_catalog" disabled>live_catalog 目录分流（P1 未启用）</option>
+          <option value="live_catalog">直播模式 A · 目录分流（ingest → Hy2）</option>
         </select>
       </label>
       <label>国内 DNS<input v-model="form.dns_domestic" placeholder="例如 223.5.5.5" /></label>

@@ -181,6 +181,7 @@ class LineCreateIn(BaseModel):
     bandwidth_mbps: int = Field(default=5, ge=1, le=10000)
     live_mode: str = Field(default="standard", pattern="^(standard|live_all_hy2|live_catalog)$")
     hy2_brutal_enabled: bool = True
+    live_platforms: list[str] = Field(default_factory=list)
     remark: str | None = None
     socks_remark: str | None = None
     created_by: str = "admin"
@@ -196,6 +197,7 @@ class LineUpdateIn(BaseModel):
         default=None, pattern="^(standard|live_all_hy2|live_catalog)$"
     )
     hy2_brutal_enabled: bool | None = None
+    live_platforms: list[str] | None = None
     country: str | None = None
     source_cidrs: list[str] | None = None
     socks_profile_id: int | None = None
@@ -215,6 +217,7 @@ class LineListItem(BaseModel):
     bandwidth_mbps: int
     live_mode: str = "standard"
     hy2_brutal_enabled: bool = True
+    live_platforms: list[str] = Field(default_factory=list)
     remark: str | None
     is_enabled: bool
     status: str
@@ -241,6 +244,111 @@ class LineDetailOut(LineListItem):
     flow_stats_enabled: bool = True
     socks_udp_over_tcp: bool = True
     hy2_port: int = 18443
+    live_resolve_status: str | None = None
+    live_resolve_at: dt.datetime | None = None
+
+
+class LivePlatformOut(BaseModel):
+    id: str
+    display_name: str
+    markets: list[str] = Field(default_factory=list)
+    live_strength: str = "strong"
+    is_enabled: bool = True
+    endpoint_count: int = 0
+    active_endpoint_count: int = 0
+    draft_endpoint_count: int = 0
+    pending_capture_count: int = 0
+
+
+class LiveEndpointOut(BaseModel):
+    id: int
+    platform_id: str
+    role: str
+    match_type: str
+    value: str
+    confidence: str
+    source: str
+    status: str
+    region: str | None = None
+    last_verified_at: dt.datetime | None = None
+    created_at: dt.datetime | None = None
+
+
+class LiveEndpointCreateIn(BaseModel):
+    platform_id: str
+    role: str = Field(default="ingest", pattern="^(ingest|shop_api|cdn_play|control)$")
+    match_type: str = Field(default="fqdn", pattern="^(fqdn|domain_suffix|ip_cidr)$")
+    value: str = Field(min_length=1, max_length=255)
+    confidence: str = Field(default="medium", pattern="^(high|medium|low)$")
+    source: str = Field(default="manual", max_length=32)
+    status: str = Field(default="draft", pattern="^(draft|active|retired)$")
+    region: str | None = None
+
+
+class LiveEndpointUpdateIn(BaseModel):
+    role: str | None = Field(default=None, pattern="^(ingest|shop_api|cdn_play|control)$")
+    match_type: str | None = Field(default=None, pattern="^(fqdn|domain_suffix|ip_cidr)$")
+    value: str | None = Field(default=None, min_length=1, max_length=255)
+    confidence: str | None = Field(default=None, pattern="^(high|medium|low)$")
+    source: str | None = Field(default=None, max_length=32)
+    status: str | None = Field(default=None, pattern="^(draft|active|retired)$")
+    region: str | None = None
+
+
+class LiveCaptureCandidateOut(BaseModel):
+    id: int
+    platform_id: str
+    role: str
+    match_type: str
+    value: str
+    confidence: str
+    source: str
+    status: str
+    notes: str | None = None
+    line_id: int | None = None
+    evidence: dict[str, Any] = Field(default_factory=dict)
+    reviewed_by: str | None = None
+    reviewed_at: dt.datetime | None = None
+    endpoint_id: int | None = None
+    created_at: dt.datetime | None = None
+
+
+class LiveCaptureCandidateCreateIn(BaseModel):
+    platform_id: str
+    role: str = Field(default="ingest", pattern="^(ingest|shop_api|cdn_play|control)$")
+    match_type: str = Field(default="fqdn", pattern="^(fqdn|domain_suffix|ip_cidr)$")
+    value: str = Field(min_length=1, max_length=255)
+    confidence: str = Field(default="medium", pattern="^(high|medium|low)$")
+    notes: str | None = None
+    line_id: int | None = None
+    evidence: dict[str, Any] = Field(default_factory=dict)
+
+
+class LiveCaptureReviewIn(BaseModel):
+    activate: bool = True
+    notes: str | None = None
+
+
+class LivePlatformPatchIn(BaseModel):
+    is_enabled: bool | None = None
+    display_name: str | None = None
+
+
+class LiveResolveReportIn(BaseModel):
+    line_id: int
+    detour_tag: str
+    egress_hint: str = ""
+    cidrs: list[str] = Field(default_factory=list)
+    resolved_at: dt.datetime | None = None
+    catalog_epoch: str = ""
+    skipped_unhealthy: bool = False
+    used_fallback_vantage: bool = False
+    message: str | None = None
+
+
+class LiveResolveBatchIn(BaseModel):
+    catalog_epoch: str = ""
+    reports: list[LiveResolveReportIn] = Field(default_factory=list)
 
 
 class LineOut(BaseModel):

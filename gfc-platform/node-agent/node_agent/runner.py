@@ -15,6 +15,7 @@ from .env_sync import read_bootstrap_token, sync_bootstrap_token
 from .public_ip import detect_public_ip
 from .routes import ROUTES_STATE, egress_snat_active, resolve_snat_iface, tproxy_policy_active
 from .singbox import singbox_config_ok
+from .live_resolve import format_live_resolve_summary, maybe_run_live_resolve
 from .socks_health import dns_health_changed, evaluate_socks_dns_health
 from .sysctl_util import ensure_network_tuning
 from .version import AGENT_VERSION
@@ -157,6 +158,8 @@ def run_loop(args: argparse.Namespace) -> None:
                             need_apply = True
                         if old.get("clientIngress") != payload.get("clientIngress"):
                             need_apply = True
+                        if old.get("liveCatalog") != payload.get("liveCatalog"):
+                            need_apply = True
                     except (OSError, json.JSONDecodeError):
                         need_apply = True
             tproxy_iface = (payload.get("tproxyIface") or "").strip() or os.environ.get(
@@ -175,6 +178,32 @@ def run_loop(args: argparse.Namespace) -> None:
             socks_dns_ok = evaluate_socks_dns_health(payload, config_dir)
             if not need_apply and dns_health_changed(config_dir, socks_dns_ok):
                 need_apply = True
+            live_results = maybe_run_live_resolve(payload, socks_dns_ok)
+            if live_results:
+                try:
+                    reports = []
+                    for item in live_results:
+                        reports.append(
+                            {
+                                "line_id": item.get("lineId"),
+                                "detour_tag": item.get("detourTag"),
+                                "egress_hint": item.get("egressHint"),
+                                "cidrs": item.get("cidrs") or [],
+                                "catalog_epoch": item.get("catalogEpoch"),
+                                "resolved_at": item.get("resolvedAt"),
+                                "skipped_unhealthy": bool(item.get("skippedUnhealthy")),
+                                "used_fallback_vantage": bool(item.get("usedFallbackVantage")),
+                            }
+                        )
+                    client.report_live_resolve(
+                        {
+                            "catalog_epoch": (payload.get("liveCatalog") or {}).get("catalogEpoch"),
+                            "reports": reports,
+                        }
+                    )
+                    print(format_live_resolve_summary(live_results), flush=True)
+                except Exception as rep_exc:  # noqa: BLE001
+                    print(f"live-resolve report failed: {rep_exc}", flush=True)
             if need_apply:
                 ok, msg = apply_payload(payload, config_dir)
                 if ok:

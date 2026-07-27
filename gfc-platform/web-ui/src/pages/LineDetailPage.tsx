@@ -22,7 +22,7 @@ import { formatApiTime, nowDisplay } from "../utils/datetime";
 import { apiDelete, apiGet, apiPatch } from "../api/client";
 import { confirmLineEnableChange } from "../utils/lineEnableConfirm";
 import { confirmDeleteLine } from "../utils/dangerousConfirm";
-import { mapLineDetail, type FlowStat, type LineDetail } from "../types";
+import { mapLineDetail, type FlowStat, type LineDetail, type LivePlatformRow } from "../types";
 import { getUser } from "../api/auth";
 import { permissionsFromUser } from "../utils/permissions";
 
@@ -48,6 +48,8 @@ export function LineDetailPage() {
   const [bandwidthDraft, setBandwidthDraft] = useState<number | null>(null);
   const [bandwidthSaving, setBandwidthSaving] = useState(false);
   const [liveModeSaving, setLiveModeSaving] = useState(false);
+  const [platforms, setPlatforms] = useState<LivePlatformRow[]>([]);
+  const [platformsSaving, setPlatformsSaving] = useState(false);
   const [enableSaving, setEnableSaving] = useState(false);
   const [udpOverTcpSaving, setUdpOverTcpSaving] = useState(false);
   const [flowStats, setFlowStats] = useState<FlowStat[]>([]);
@@ -87,6 +89,21 @@ export function LineDetailPage() {
   useEffect(() => {
     setLine(null);
     void load().catch((e) => message.error(String(e)));
+    void apiGet<Record<string, unknown>[]>("/admin/live-platforms")
+      .then((rows) =>
+        setPlatforms(
+          rows.map((r) => ({
+            id: r.id as string,
+            displayName: r.display_name as string,
+            markets: (r.markets as string[]) || [],
+            liveStrength: (r.live_strength as string) || "strong",
+            isEnabled: r.is_enabled !== false,
+            endpointCount: (r.endpoint_count as number) || 0,
+            activeEndpointCount: (r.active_endpoint_count as number) || 0,
+          }))
+        )
+      )
+      .catch(() => setPlatforms([]));
     const timer = window.setInterval(() => {
       if (!id) return;
       void refreshFlowStats().catch(() => undefined);
@@ -166,6 +183,22 @@ export function LineDetailPage() {
       message.error(String(e));
     } finally {
       setLiveModeSaving(false);
+    }
+  };
+
+  const saveLivePlatforms = async (ids: string[]) => {
+    if (!id) return;
+    setPlatformsSaving(true);
+    try {
+      await apiPatch(`/admin/lines/${id}?operator=${localStorage.getItem("gfc_user") || "admin"}`, {
+        live_platforms: ids,
+      });
+      message.success("直播平台已保存，节点将按线预解析 ingest IP");
+      await load();
+    } catch (e) {
+      message.error(String(e));
+    } finally {
+      setPlatformsSaving(false);
     }
   };
 
@@ -278,7 +311,7 @@ export function LineDetailPage() {
                 options={[
                   { value: "standard", label: "标准 / Reality（国际 → VLESS）" },
                   { value: "live_all_hy2", label: "直播模式 B · 全国际 Hysteria2" },
-                  { value: "live_catalog", label: "直播模式 A · 目录分流（P1）", disabled: true },
+                  { value: "live_catalog", label: "直播模式 A · 目录分流（Hy2 仅 ingest）" },
                 ]}
               />
             </Descriptions.Item>
@@ -314,7 +347,7 @@ export function LineDetailPage() {
         <div className="line-detail-section">
           <Typography.Title level={5}>直播模式（传输协议）</Typography.Title>
           <Typography.Paragraph type="secondary">
-            与设备页「分流/全局」无关：此处选择国际流量走 VLESS 还是全国际 Hysteria2。
+            模式 A：仅预解析的直播平台 ingest IP/CIDR 走 Hysteria2，其余国际流量仍走 VLESS。
           </Typography.Paragraph>
           <Select
             style={{ minWidth: 360 }}
@@ -324,9 +357,34 @@ export function LineDetailPage() {
             options={[
               { value: "standard", label: "标准 / Reality（国际 → VLESS）" },
               { value: "live_all_hy2", label: "直播模式 B · 全国际 Hysteria2" },
-              { value: "live_catalog", label: "直播模式 A · 目录分流（P1）", disabled: true },
+              { value: "live_catalog", label: "直播模式 A · 目录分流（Hy2 仅 ingest）" },
             ]}
           />
+          {line.liveMode === "live_catalog" && (
+            <div style={{ marginTop: 16 }}>
+              <Typography.Text type="secondary">勾选直播平台（需有 active 种子）</Typography.Text>
+              <Select
+                mode="multiple"
+                style={{ width: "100%", marginTop: 8 }}
+                loading={platformsSaving}
+                value={line.livePlatforms || []}
+                onChange={(v) => void saveLivePlatforms(v)}
+                options={platforms.map((p) => ({
+                  value: p.id,
+                  label: `${p.displayName}（active ${p.activeEndpointCount}${p.pendingCaptureCount ? ` · 待审${p.pendingCaptureCount}` : ""}）`,
+                  disabled: !p.isEnabled || p.activeEndpointCount === 0,
+                }))}
+              />
+              {line.liveResolveStatus && (
+                <Typography.Paragraph type="secondary" style={{ marginTop: 8 }}>
+                  live_ip 状态：{line.liveResolveStatus}
+                  {line.liveResolveAt ? ` · ${formatApiTime(line.liveResolveAt)}` : ""}
+                  {" · "}
+                  <Link to="/live-catalog">管理目录</Link>
+                </Typography.Paragraph>
+              )}
+            </div>
+          )}
         </div>
       )}
 

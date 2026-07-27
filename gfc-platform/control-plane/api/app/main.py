@@ -27,6 +27,13 @@ from .migrate import migrate_sqlite
 from .models import Base, ConfigBundle, Line, Node, NodeToken, PlatformUser, SocksProfile
 from .node_config import build_node_payload, payload_version
 from .node_public_ip import normalize_node_public_ip
+from .live_catalog import (
+    build_node_live_catalog,
+    ensure_live_catalog_seed,
+    merge_report_to_payload,
+    upsert_resolve_result,
+    validate_resolve_report,
+)
 from .monitor import monitor_loop
 from .node_health import emit_alert, process_heartbeat_metrics
 from .reverse_ssh import sync_authorized_keys
@@ -38,6 +45,7 @@ from .schemas import (
     ConfigBundleOut,
     HeartbeatRequest,
     HeartbeatResponse,
+    LiveResolveBatchIn,
 )
 from .security import hash_password, hash_token, load_token_secrets, new_token
 from .settings import settings
@@ -50,6 +58,8 @@ async def _lifespan(_app: FastAPI):
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         await migrate_sqlite(engine)
+        async with async_session_factory() as session:
+            await ensure_live_catalog_seed(session)
     except Exception:
         logger.exception("database bootstrap failed")
         raise
@@ -220,7 +230,8 @@ async def pull_config(
     lines = (await session.execute(select(Line).where(Line.node_id == node.id))).scalars().all()
     socks = (await session.execute(select(SocksProfile))).scalars().all()
     socks_by_id = {s.id: s for s in socks}
-    payload = build_node_payload(node, lines, socks_by_id)
+    live_catalog = await build_node_live_catalog(session, lines, socks_by_id)
+    payload = build_node_payload(node, lines, socks_by_id, live_catalog)
     reality = payload.get("clientIngress", {}).get("reality") or {}
     reality_json = json.dumps(reality, ensure_ascii=False, separators=(",", ":"))
     hy2 = payload.get("clientIngress", {}).get("hysteria2") or {}
@@ -291,6 +302,73 @@ async def ack_config(
         )
     await session.commit()
     return {"ok": True}
+
+
+@app.post("/nodes/me/live-resolve")
+async def report_live_resolve(
+    body: LiveResolveBatchIn,
+    authorization: str | None = Header(default=None),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    node = await _auth_node(session, authorization)
+    lines = (await session.execute(select(Line).where(Line.node_id == node.id))).scalars().all()
+    socks = (await session.execute(select(SocksProfile))).scalars().all()
+    socks_by_id = {s.id: s for s in socks}
+    catalog = await build_node_live_catalog(session, lines, socks_by_id)
+    tasks_by_line = {int(t["lineId"]): t for t in (catalog.get("tasks") or [])}
+    accepted = 0
+    rejected = 0
+    for report in body.reports:
+        task = tasks_by_line.get(report.line_id)
+        if not task:
+            await emit_alert(
+                session,
+                node_id=node.id,
+                line_id=report.line_id,
+                level="warn",
+                alert_type="live_resolve_rejected",
+                message=f"no live_catalog task for line {report.line_id}",
+            )
+            rejected += 1
+            continue
+        report_dict = {
+            "lineId": report.line_id,
+            "detourTag": report.detour_tag,
+            "egressHint": report.egress_hint,
+            "cidrs": report.cidrs,
+            "resolvedAt": report.resolved_at.isoformat() if report.resolved_at else None,
+            "skippedUnhealthy": report.skipped_unhealthy,
+            "usedFallbackVantage": report.used_fallback_vantage,
+        }
+        ok, alert_type, msg = validate_resolve_report(node.id, task, report_dict)
+        if not ok:
+            await emit_alert(
+                session,
+                node_id=node.id,
+                line_id=report.line_id,
+                level="warn",
+                alert_type=alert_type or "live_resolve_rejected",
+                message=msg or "live resolve validation failed",
+            )
+            rejected += 1
+            continue
+        if report.skipped_unhealthy or report.used_fallback_vantage:
+            rejected += 1
+            continue
+        payload = merge_report_to_payload(task, report_dict, status="ok")
+        await upsert_resolve_result(
+            session,
+            node_id=node.id,
+            line_id=report.line_id,
+            status="ok",
+            payload=payload,
+            egress_hint=report.egress_hint or None,
+            catalog_epoch=report.catalog_epoch or str(task.get("catalogEpoch") or ""),
+            resolved_at=report.resolved_at,
+        )
+        accepted += 1
+    await session.commit()
+    return {"ok": True, "accepted": accepted, "rejected": rejected}
 
 
 @app.get("/healthz")

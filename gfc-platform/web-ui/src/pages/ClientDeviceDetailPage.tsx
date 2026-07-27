@@ -495,7 +495,7 @@ export function ClientDeviceDetailPage() {
                       国际流量直连 Hysteria2（同节点同 SOCKS）
                     </div>
                   </Radio>
-                  <Radio value="live_catalog" disabled>
+                  <Radio value="live_catalog">
                     <Typography.Text strong>直播模式 A · 目录分流</Typography.Text>
                     <div style={{ color: "#64748b", fontSize: 13, marginLeft: 24 }}>
                       P1 未启用

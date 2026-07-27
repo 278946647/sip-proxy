@@ -30,6 +30,8 @@ from .platform_secrets import (
     security_to_public,
 )
 from .client_config import encode_platform_bootstrap_code, line_code_fingerprint, refresh_line_code
+from .live_catalog import get_line_resolve_row, parse_line_platforms, serialize_line_platforms
+from .live_catalog_admin import router as live_catalog_admin_router
 from .artifacts import queue_device_upgrade
 from .models import (
     AlertEvent,
@@ -316,6 +318,7 @@ def _line_to_list_item(line: Line) -> LineListItem:
         bandwidth_mbps=line.bandwidth_mbps,
         live_mode=getattr(line, "live_mode", None) or "standard",
         hy2_brutal_enabled=bool(getattr(line, "hy2_brutal_enabled", True)),
+        live_platforms=parse_line_platforms(line),
         remark=line.remark,
         is_enabled=line.is_enabled,
         status=line.status,
@@ -787,6 +790,7 @@ async def get_line(line_id: int, session: AsyncSession = Depends(get_session)) -
     node = line.node
     if (line.line_type or "client") == "client" and node:
         await _sync_line_code(session, line, node)
+    resolve_row = await get_line_resolve_row(session, line.id)
     base = _line_to_list_item(line)
     return LineDetailOut(
         **base.model_dump(),
@@ -803,6 +807,8 @@ async def get_line(line_id: int, session: AsyncSession = Depends(get_session)) -
         flow_stats_enabled=line.flow_stats_enabled,
         socks_udp_over_tcp=line.socks_udp_over_tcp,
         hy2_port=18443,
+        live_resolve_status=resolve_row.status if resolve_row else None,
+        live_resolve_at=resolve_row.resolved_at if resolve_row else None,
     )
 
 
@@ -854,6 +860,7 @@ async def create_line(
         bandwidth_mbps=body.bandwidth_mbps,
         live_mode=getattr(body, "live_mode", None) or "standard",
         hy2_brutal_enabled=bool(getattr(body, "hy2_brutal_enabled", True)),
+        live_platforms_json=serialize_line_platforms(getattr(body, "live_platforms", None)),
         remark=body.remark,
         socks_remark=body.socks_remark,
         status="active",
@@ -885,6 +892,9 @@ async def update_line(
     data = body.model_dump(exclude_unset=True)
     if "source_cidrs" in data and data["source_cidrs"] is not None:
         data["source_cidrs"] = ",".join(data["source_cidrs"])
+    if "live_platforms" in data:
+        platforms = data.pop("live_platforms")
+        data["live_platforms_json"] = serialize_line_platforms(platforms)
     if "is_enabled" in data:
         data["status"] = "active" if data["is_enabled"] else "inactive"
     for k, v in data.items():
@@ -2043,3 +2053,6 @@ async def refresh_line_code_endpoint(
 async def get_platform_bootstrap_code() -> dict[str, str]:
     """Platform-only flash code (control-plane URL); client line codes already embed the same URLs."""
     return {"bootstrap_code_b32": encode_platform_bootstrap_code()}
+
+
+router.include_router(live_catalog_admin_router)

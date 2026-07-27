@@ -47,6 +47,7 @@ OPERATOR_LINE_PATCH_FIELDS = frozenset(
         "socks_udp_over_tcp",
         "live_mode",
         "hy2_brutal_enabled",
+        "live_platforms",
     }
 )
 
@@ -68,8 +69,9 @@ MENU_KEYS_BY_ROLE: dict[str, list[str]] = {
     "admin": [
         "dashboard",
         "nodes",
-        "lines",
-        "client-devices",
+    "lines",
+    "live-catalog",
+    "client-devices",
         "traffic",
         "health",
         "proxies",
@@ -81,8 +83,9 @@ MENU_KEYS_BY_ROLE: dict[str, list[str]] = {
     "operator": [
         "dashboard",
         "nodes",
-        "lines",
-        "client-devices",
+    "lines",
+    "live-catalog",
+    "client-devices",
         "traffic",
         "health",
         "proxies",
@@ -92,8 +95,9 @@ MENU_KEYS_BY_ROLE: dict[str, list[str]] = {
     "auditor": [
         "dashboard",
         "nodes",
-        "lines",
-        "client-devices",
+    "lines",
+    "live-catalog",
+    "client-devices",
         "traffic",
         "health",
         "proxies",

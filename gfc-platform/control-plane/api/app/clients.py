@@ -16,6 +16,7 @@ from sqlalchemy.orm import selectinload
 from .client_config import (
     build_client_disabled_payload,
     build_client_payload,
+    build_client_payload_async,
     client_payload_version,
 )
 from .line_code import decode_line_code as _decode_line_code
@@ -529,7 +530,7 @@ async def client_config(
         version = client_payload_version(payload)
         return ConfigBundleOut(version=version, payload=payload)
 
-    payload = build_client_payload(device, line, line.node, line.socks_profile)
+    payload = await build_client_payload_async(device, line, line.node, line.socks_profile, session)
     version = client_payload_version(payload)
 
     # Persist generated Hy2 secrets / node TLS if ensure_* filled them.

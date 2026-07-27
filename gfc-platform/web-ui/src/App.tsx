@@ -5,11 +5,12 @@ import { RequireAuth } from "./components/RequireAuth";
 import { RequirePasswordChange } from "./components/RequirePasswordChange";
 import { MainLayout } from "./layout/MainLayout";
 import { DashboardPage } from "./pages/DashboardPage";
-import { LinesPage } from "./pages/LinesPage";
+import { LiveCatalogPage } from "./pages/LiveCatalogPage";
 import { ClientDevicesPage } from "./pages/ClientDevicesPage";
 import { ClientDeviceDetailPage } from "./pages/ClientDeviceDetailPage";
 import { ClientWebSSHPage } from "./pages/ClientWebSSHPage";
 import { LineDetailPage } from "./pages/LineDetailPage";
+import { LinesPage } from "./pages/LinesPage";
 import { TrafficPage } from "./pages/TrafficPage";
 import { HealthPage } from "./pages/HealthPage";
 import { NodesPage } from "./pages/NodesPage";
@@ -50,6 +51,7 @@ export function App() {
               <Route path="nodes" element={<NodesPage />} />
               <Route path="lines" element={<LinesPage />} />
               <Route path="lines/:id" element={<LineDetailPage />} />
+              <Route path="live-catalog" element={<LiveCatalogPage />} />
               <Route path="client-devices" element={<ClientDevicesPage />} />
               <Route path="client-devices/:id" element={<ClientDeviceDetailPage />} />
               <Route path="traffic" element={<TrafficPage />} />

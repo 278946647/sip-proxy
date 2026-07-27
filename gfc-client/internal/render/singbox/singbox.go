@@ -28,6 +28,7 @@ const preferProxyTag = "proxy-prefer"
 const hy2ProxyTag = "proxy-hy2"
 const liveModeStandard = "standard"
 const liveModeAllHy2 = "live_all_hy2"
+const liveModeCatalog = "live_catalog"
 
 type Renderer struct {
 	cfg *config.Config
@@ -195,8 +196,11 @@ func (r *Renderer) RenderActive(payload map[string]any, ruleSets []map[string]an
 		}
 		intlTag = hy2ProxyTag
 	}
+	if liveMode == liveModeCatalog && hy2Outbound == nil {
+		return nil, fmt.Errorf("live_catalog requires hysteria2 credentials in bundle")
+	}
 
-	inbounds := r.buildInbounds(proxyMode)
+	inbounds := r.buildInbounds(proxyMode, liveMode)
 	routingMode := r.RoutingMode()
 
 	var routeRules []map[string]any
@@ -211,16 +215,24 @@ func (r *Renderer) RenderActive(payload map[string]any, ruleSets []map[string]an
 		}
 	} else if scheme == "kernel-split" {
 		// CN/intl split is done in kernel nft. Inside TUN:
-		// bypass_ip → direct; intl DNS + other → prefer/hy2; final → direct.
-		routeRules = r.preferProxyRouteRules(address, payload, intlTag, true)
-	} else {
-		routeRules = r.preferProxyRouteRules(address, payload, intlTag, false)
-		if routingMode != "global" {
-			activeRuleSets = ruleSets
-			r.appendSplitRules(&routeRules, len(ruleSets) > 0, intlTag)
+		// bypass_ip → direct; live_catalog live_ip → hy2; intl DNS + other → prefer; final → direct.
+		if liveMode == liveModeCatalog {
+			routeRules = r.liveCatalogRouteRules(address, payload, preferTag, hy2ProxyTag)
+		} else {
+			routeRules = r.preferProxyRouteRules(address, payload, intlTag, true)
 		}
-		// Other traffic uses selected international outbound.
-		routeRules = append(routeRules, map[string]any{"outbound": intlTag})
+	} else {
+		if liveMode == liveModeCatalog {
+			routeRules = r.liveCatalogRouteRules(address, payload, preferTag, hy2ProxyTag)
+		} else {
+			routeRules = r.preferProxyRouteRules(address, payload, intlTag, false)
+			if routingMode != "global" {
+				activeRuleSets = ruleSets
+				r.appendSplitRules(&routeRules, len(ruleSets) > 0, intlTag)
+			}
+			// Other traffic uses selected international outbound.
+			routeRules = append(routeRules, map[string]any{"outbound": intlTag})
+		}
 	}
 
 	route := map[string]any{
@@ -334,7 +346,7 @@ func buildVLESSFromPayload(address string, port int, vless map[string]any, tag, 
 func normalizeLiveMode(raw any) string {
 	mode := strings.ToLower(strings.TrimSpace(fmt.Sprint(raw)))
 	switch mode {
-	case liveModeAllHy2, "live_catalog":
+	case liveModeAllHy2, liveModeCatalog:
 		return mode
 	default:
 		return liveModeStandard
@@ -411,7 +423,7 @@ func buildVLESSOutbound(nm map[string]any, tag, wan string) map[string]any {
 	return buildVLESSFromPayload(addr, port, vless, tag, wan)
 }
 
-func (r *Renderer) buildInbounds(proxyMode string) []any {
+func (r *Renderer) buildInbounds(proxyMode string, liveMode string) []any {
 	_ = strings.ToLower(strings.TrimSpace(proxyMode))
 	// Kernel policy routing (nft fwmark + ip rule) feeds gfctun.
 	// sing-box is outbound-only: no auto_route / auto_redirect / strict_route.
@@ -425,6 +437,10 @@ func (r *Renderer) buildInbounds(proxyMode string) []any {
 		"auto_route":     false,
 		"strict_route":   false,
 		"stack":          "gvisor",
+	}
+	if liveMode == liveModeCatalog {
+		tun["sniff"] = true
+		tun["sniff_override_destination"] = true
 	}
 	if r.RoutingScheme() != "byst-redirect" {
 		return []any{tun}
@@ -517,6 +533,90 @@ func (r *Renderer) preferProxyRouteRules(nodeAddr string, payload map[string]any
 	if catchAll {
 		rules = append(rules, map[string]any{"outbound": preferTag})
 	}
+	return rules
+}
+
+func liveIpCidrsFromPayload(payload map[string]any) []string {
+	liveIp, _ := payload["liveIp"].(map[string]any)
+	if liveIp == nil {
+		return nil
+	}
+	wantLine := int(payloadLineID(payload))
+	gotLine := int(payloadLineID(liveIp))
+	if wantLine > 0 && gotLine > 0 && wantLine != gotLine {
+		return nil
+	}
+	raw, _ := liveIp["cidrs"].([]any)
+	if len(raw) == 0 {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, item := range raw {
+		cidr := strings.TrimSpace(fmt.Sprint(item))
+		if cidr == "" || seen[cidr] {
+			continue
+		}
+		seen[cidr] = true
+		out = append(out, cidr)
+	}
+	return out
+}
+
+func liveDomainSuffixesFromPayload(payload map[string]any) []string {
+	liveIp, _ := payload["liveIp"].(map[string]any)
+	if liveIp == nil {
+		return nil
+	}
+	wantLine := int(payloadLineID(payload))
+	gotLine := int(payloadLineID(liveIp))
+	if wantLine > 0 && gotLine > 0 && wantLine != gotLine {
+		return nil
+	}
+	raw, _ := liveIp["domainSuffixes"].([]any)
+	seen := map[string]bool{}
+	var out []string
+	for _, item := range raw {
+		sfx := strings.TrimSpace(fmt.Sprint(item))
+		if sfx == "" || seen[sfx] {
+			continue
+		}
+		seen[sfx] = true
+		out = append(out, sfx)
+	}
+	return out
+}
+
+func payloadLineID(payload map[string]any) float64 {
+	if id, ok := payload["lineId"].(float64); ok {
+		return id
+	}
+	return 0
+}
+
+// liveCatalogRouteRules: live_ip / suffix → proxy-hy2; intl DNS + catch-all → proxy-prefer (VLESS).
+func (r *Renderer) liveCatalogRouteRules(
+	nodeAddr string,
+	payload map[string]any,
+	preferTag string,
+	hy2Tag string,
+) []map[string]any {
+	var rules []map[string]any
+	if bypass := r.bypassIPCidrs(payload, nodeAddr); len(bypass) > 0 {
+		rules = append(rules, map[string]any{"ip_cidr": bypass, "outbound": "direct"})
+	}
+	rules = append(rules,
+		map[string]any{"ip_is_private": true, "outbound": "direct"},
+		map[string]any{"ip_cidr": domesticDNS, "port": []int{53}, "outbound": "direct"},
+	)
+	if cidrs := liveIpCidrsFromPayload(payload); len(cidrs) > 0 {
+		rules = append(rules, map[string]any{"ip_cidr": cidrs, "outbound": hy2Tag})
+	}
+	if suffixes := liveDomainSuffixesFromPayload(payload); len(suffixes) > 0 {
+		rules = append(rules, map[string]any{"domain_suffix": suffixes, "outbound": hy2Tag})
+	}
+	rules = append(rules, map[string]any{"ip_cidr": intlDNSCidrs(), "outbound": preferTag})
+	rules = append(rules, map[string]any{"outbound": preferTag})
 	return rules
 }
 

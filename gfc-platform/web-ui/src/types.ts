@@ -36,6 +36,7 @@ export type LineListItem = {
   bandwidthMbps: number;
   liveMode: "standard" | "live_all_hy2" | "live_catalog";
   hy2BrutalEnabled: boolean;
+  livePlatforms: string[];
   remark: string | null;
   isEnabled: boolean;
   status: string;
@@ -66,6 +67,52 @@ export type LineDetail = LineListItem & {
   lineCodeB32: string | null;
   flowStatsEnabled: boolean;
   socksUdpOverTcp: boolean;
+  liveResolveStatus: string | null;
+  liveResolveAt: string | null;
+};
+
+export type LivePlatformRow = {
+  id: string;
+  displayName: string;
+  markets: string[];
+  liveStrength: string;
+  isEnabled: boolean;
+  endpointCount: number;
+  activeEndpointCount: number;
+  draftEndpointCount: number;
+  pendingCaptureCount: number;
+};
+
+export type LiveEndpointRow = {
+  id: number;
+  platformId: string;
+  role: string;
+  matchType: string;
+  value: string;
+  confidence: string;
+  source: string;
+  status: string;
+  region: string | null;
+  lastVerifiedAt: string | null;
+  createdAt: string | null;
+};
+
+export type LiveCaptureCandidateRow = {
+  id: number;
+  platformId: string;
+  role: string;
+  matchType: string;
+  value: string;
+  confidence: string;
+  source: string;
+  status: string;
+  notes: string | null;
+  lineId: number | null;
+  evidence: Record<string, unknown>;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  endpointId: number | null;
+  createdAt: string | null;
 };
 
 export type DeviceProxyMode = "gateway" | "bypass" | "transparent";
@@ -310,6 +357,7 @@ export function mapLineItem(raw: Record<string, unknown>): LineListItem {
     bandwidthMbps: raw.bandwidth_mbps as number,
     liveMode: ((raw.live_mode as string) || "standard") as LineListItem["liveMode"],
     hy2BrutalEnabled: raw.hy2_brutal_enabled !== false,
+    livePlatforms: Array.isArray(raw.live_platforms) ? (raw.live_platforms as string[]) : [],
     remark: raw.remark as string | null,
     isEnabled: raw.is_enabled as boolean,
     status: raw.status as string,
@@ -339,6 +387,8 @@ export function mapLineDetail(raw: Record<string, unknown>): LineDetail {
     lineCodeB32: (raw.line_code_b32 as string | null) ?? null,
     flowStatsEnabled: raw.flow_stats_enabled !== false,
     socksUdpOverTcp: raw.socks_udp_over_tcp !== false,
+    liveResolveStatus: (raw.live_resolve_status as string | null) ?? null,
+    liveResolveAt: (raw.live_resolve_at as string | null) ?? null,
   };
 }
 

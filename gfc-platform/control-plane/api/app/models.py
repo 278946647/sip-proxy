@@ -131,6 +131,8 @@ class Line(Base):
     live_mode: Mapped[str] = mapped_column(String(32), default="standard")
     hy2_password: Mapped[str | None] = mapped_column(String(128), nullable=True)
     hy2_brutal_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # JSON array of LivePlatform.id slugs when live_mode == live_catalog.
+    live_platforms_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_by: Mapped[str] = mapped_column(String(64), default="admin")
     created_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: dt.datetime.now(dt.timezone.utc)
@@ -351,6 +353,98 @@ class PlatformSetting(Base):
 
     key: Mapped[str] = mapped_column(String(64), primary_key=True)
     value_json: Mapped[str] = mapped_column(Text)
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: dt.datetime.now(dt.timezone.utc)
+    )
+
+
+class LivePlatform(Base):
+    __tablename__ = "live_platforms"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    display_name: Mapped[str] = mapped_column(String(128))
+    markets_json: Mapped[str] = mapped_column(Text, default="[]")
+    live_strength: Mapped[str] = mapped_column(String(16), default="strong")
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: dt.datetime.now(dt.timezone.utc)
+    )
+
+    endpoints: Mapped[list["LiveEndpoint"]] = relationship(
+        back_populates="platform", cascade="all, delete-orphan"
+    )
+
+
+class LiveEndpoint(Base):
+    __tablename__ = "live_endpoints"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    platform_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("live_platforms.id", ondelete="CASCADE"), index=True
+    )
+    role: Mapped[str] = mapped_column(String(32), default="ingest")
+    match_type: Mapped[str] = mapped_column(String(32), default="fqdn")
+    value: Mapped[str] = mapped_column(String(255))
+    confidence: Mapped[str] = mapped_column(String(16), default="high")
+    source: Mapped[str] = mapped_column(String(32), default="official_doc")
+    status: Mapped[str] = mapped_column(String(16), default="draft")
+    region: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_verified_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: dt.datetime.now(dt.timezone.utc)
+    )
+
+    platform: Mapped["LivePlatform"] = relationship(back_populates="endpoints")
+
+
+class LiveCaptureCandidate(Base):
+    __tablename__ = "live_capture_candidates"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    platform_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("live_platforms.id", ondelete="CASCADE"), index=True
+    )
+    role: Mapped[str] = mapped_column(String(32), default="ingest")
+    match_type: Mapped[str] = mapped_column(String(32), default="fqdn")
+    value: Mapped[str] = mapped_column(String(255))
+    confidence: Mapped[str] = mapped_column(String(16), default="medium")
+    source: Mapped[str] = mapped_column(String(32), default="capture")
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+    evidence_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    line_id: Mapped[int | None] = mapped_column(
+        ForeignKey("lines.id", ondelete="SET NULL"), nullable=True
+    )
+    reviewed_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    reviewed_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    endpoint_id: Mapped[int | None] = mapped_column(
+        ForeignKey("live_endpoints.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: dt.datetime.now(dt.timezone.utc)
+    )
+
+
+class LiveResolveResult(Base):
+    __tablename__ = "live_resolve_results"
+
+    line_id: Mapped[int] = mapped_column(
+        ForeignKey("lines.id", ondelete="CASCADE"), primary_key=True
+    )
+    node_id: Mapped[int | None] = mapped_column(
+        ForeignKey("nodes.id", ondelete="SET NULL"), nullable=True
+    )
+    status: Mapped[str] = mapped_column(String(16), default="ok")
+    payload_json: Mapped[str] = mapped_column(Text, default="{}")
+    egress_hint: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    catalog_epoch: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    resolved_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     updated_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: dt.datetime.now(dt.timezone.utc)
     )

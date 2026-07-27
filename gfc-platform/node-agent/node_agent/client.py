@@ -106,6 +106,16 @@ class ControlPlaneClient:
             timeout=15,
         )
 
+    def report_live_resolve(self, body: dict[str, Any]) -> dict[str, Any]:
+        resp = self._request(
+            "POST",
+            "/nodes/me/live-resolve",
+            headers=self._headers,
+            json=body,
+            timeout=30,
+        )
+        return resp.json()
+
     def check_reachable(self) -> bool:
         for base in self.servers:
             try:

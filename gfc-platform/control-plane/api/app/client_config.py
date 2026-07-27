@@ -14,6 +14,7 @@ from .hy2_util import (
     normalize_live_mode,
 )
 from .line_code import encode_line_code
+from .live_catalog import build_client_live_ip, parse_line_platforms
 from .models import ClientDevice, Line, Node, SocksProfile
 from .reality_util import REALITY_DEFAULT_PORT, REALITY_DEFAULT_SNI, ensure_node_reality_config
 from .server_url_util import public_server_urls
@@ -92,6 +93,23 @@ def build_client_disabled_payload(
     }
 
 
+async def build_client_payload_async(
+    device: ClientDevice,
+    line: Line,
+    node: Node,
+    socks: SocksProfile | None,
+    session: Any,
+) -> dict[str, Any]:
+    payload = build_client_payload(device, line, node, socks)
+    live_ip = await build_client_live_ip(session, device.line_id or 0, line)
+    if live_ip:
+        if int(live_ip.get("lineId") or 0) != line.id:
+            raise ValueError("V3 live_ip line_id mismatch")
+        payload["liveIp"] = live_ip
+    payload["livePlatforms"] = parse_line_platforms(line)
+    return payload
+
+
 def build_client_payload(
     device: ClientDevice,
     line: Line,
@@ -141,6 +159,7 @@ def build_client_payload(
         "proxyMode": device.proxy_mode or "gateway",
         "routingScheme": scheme,
         "liveMode": live_mode,
+        "livePlatforms": parse_line_platforms(line),
         "controlPlaneServers": public_server_urls(),
         "node": {
             "id": node.id,

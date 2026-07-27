@@ -12,6 +12,7 @@ import {
   MobileOutlined,
   SettingOutlined,
   KeyOutlined,
+  VideoCameraOutlined,
 } from "@ant-design/icons";
 import { Layout, Menu, Tag, Button, Space, theme, Modal, Form, Input, message, Dropdown } from "antd";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
@@ -26,6 +27,7 @@ const allMenuItems = [
   { key: "/", icon: <DashboardOutlined />, label: "仪表盘", perm: "dashboard" },
   { key: "/nodes", icon: <ClusterOutlined />, label: "转发节点", perm: "nodes" },
   { key: "/lines", icon: <GlobalOutlined />, label: "线路管理", perm: "lines" },
+  { key: "/live-catalog", icon: <VideoCameraOutlined />, label: "直播平台", perm: "live-catalog" },
   { key: "/client-devices", icon: <MobileOutlined />, label: "客户端管理", perm: "client-devices" },
   { key: "/traffic", icon: <LineChartOutlined />, label: "节点流量", perm: "traffic" },
   { key: "/health", icon: <HeartOutlined />, label: "健康检查", perm: "health" },
