@@ -312,6 +312,26 @@ export function LineDetailPage() {
 
       {line.lineType === "client" && (
         <div className="line-detail-section">
+          <Typography.Title level={5}>直播模式（传输协议）</Typography.Title>
+          <Typography.Paragraph type="secondary">
+            与设备页「分流/全局」无关：此处选择国际流量走 VLESS 还是全国际 Hysteria2。
+          </Typography.Paragraph>
+          <Select
+            style={{ minWidth: 360 }}
+            loading={liveModeSaving}
+            value={line.liveMode || "standard"}
+            onChange={(v) => void saveLiveMode(v)}
+            options={[
+              { value: "standard", label: "标准 / Reality（国际 → VLESS）" },
+              { value: "live_all_hy2", label: "直播模式 B · 全国际 Hysteria2" },
+              { value: "live_catalog", label: "直播模式 A · 目录分流（P1）", disabled: true },
+            ]}
+          />
+        </div>
+      )}
+
+      {line.lineType === "client" && (
+        <div className="line-detail-section">
           <Typography.Title level={5}>线路码</Typography.Title>
           <LineCodeField value={line.lineCodeB32 || ""} />
         </div>

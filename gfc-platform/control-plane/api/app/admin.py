@@ -1716,6 +1716,7 @@ async def get_client_device(
         line_name=line.name if line else None,
         line_country=line.country if line else None,
         node_name=line.node.name if line and line.node else None,
+        line_live_mode=(getattr(line, "live_mode", None) or "standard") if line else None,
         ssh_connect_url=ssh_url,
         web_remote_url=web_url,
         flash_remote_url=flash_url,

@@ -546,6 +546,10 @@ class ClientDeviceDetailOut(ClientDeviceListItem):
     line_name: str | None = None
     line_country: str | None = None
     node_name: str | None = None
+    # Bound line live transport mode (NOT device routing_scheme split/global).
+    line_live_mode: str | None = Field(
+        default=None, pattern="^(standard|live_all_hy2|live_catalog)$"
+    )
     ssh_connect_url: str | None = None
     web_remote_url: str | None = None
     flash_remote_url: str | None = None

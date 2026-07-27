@@ -103,6 +103,7 @@ export type ClientDeviceDetail = ClientDeviceListItem & {
   lineName: string | null;
   lineCountry: string | null;
   nodeName: string | null;
+  lineLiveMode: LineListItem["liveMode"] | null;
   sshConnectUrl: string | null;
   webRemoteUrl: string | null;
   flashRemoteUrl: string | null;
@@ -379,6 +380,9 @@ export function mapClientDeviceDetail(raw: Record<string, unknown>): ClientDevic
     lineName: (raw.line_name as string | null) ?? null,
     lineCountry: (raw.line_country as string | null) ?? null,
     nodeName: (raw.node_name as string | null) ?? null,
+    lineLiveMode: raw.line_live_mode
+      ? ((raw.line_live_mode as string) as LineListItem["liveMode"])
+      : null,
     sshConnectUrl: (raw.ssh_connect_url as string | null) ?? null,
     webRemoteUrl: (raw.web_remote_url as string | null) ?? null,
     flashRemoteUrl: (raw.flash_remote_url as string | null) ?? null,

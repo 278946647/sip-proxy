@@ -95,10 +95,12 @@ export function ClientDeviceDetailPage() {
   const [lines, setLines] = useState<LineListItem[]>([]);
   const [nameDraft, setNameDraft] = useState("");
   const [routingDraft, setRoutingDraft] = useState<DeviceRoutingScheme>("split");
+  const [liveModeDraft, setLiveModeDraft] = useState<LineListItem["liveMode"]>("standard");
   const [lineModalOpen, setLineModalOpen] = useState(false);
   const [lineDraft, setLineDraft] = useState<number | undefined>();
   const [savingName, setSavingName] = useState(false);
   const [savingRouting, setSavingRouting] = useState(false);
+  const [savingLiveMode, setSavingLiveMode] = useState(false);
   const [artifacts, setArtifacts] = useState<{ id: number; version: string; arch: string; is_enabled: boolean }[]>([]);
   const [upgradeArtifactId, setUpgradeArtifactId] = useState<number | undefined>();
   const [upgrading, setUpgrading] = useState(false);
@@ -111,6 +113,7 @@ export function ClientDeviceDetailPage() {
     setDevice(mapped);
     setNameDraft(mapped.name);
     setRoutingDraft(mapped.routingScheme);
+    setLiveModeDraft(mapped.lineLiveMode || "standard");
   };
 
   const loadLines = async () => {
@@ -275,6 +278,24 @@ export function ClientDeviceDetailPage() {
     );
   };
 
+  const saveLiveMode = async () => {
+    if (!device?.lineId) return;
+    if (liveModeDraft === (device.lineLiveMode || "standard")) return;
+    setSavingLiveMode(true);
+    try {
+      await apiPatch(
+        `/admin/lines/${device.lineId}?operator=${localStorage.getItem("gfc_user") || "admin"}`,
+        { live_mode: liveModeDraft }
+      );
+      message.success("直播模式已保存，设备将在下次拉取配置后切换传输协议");
+      await load();
+    } catch (e) {
+      message.error(String(e));
+    } finally {
+      setSavingLiveMode(false);
+    }
+  };
+
   if (!device) return null;
 
   const m = device.metrics;
@@ -410,7 +431,10 @@ export function ClientDeviceDetailPage() {
         </Col>
 
         <Col xs={24} lg={12}>
-          <Card title="代理模式">
+          <Card title="代理模式（分流范围）">
+            <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
+              决定国内是否进代理（nft 分流/全局），与下方直播模式无关。
+            </Typography.Paragraph>
             <Radio.Group
               value={routingDraft}
               onChange={(e) => setRoutingDraft(e.target.value)}
@@ -441,6 +465,56 @@ export function ClientDeviceDetailPage() {
                 保存代理模式
               </Button>
             ) : null}
+          </Card>
+        </Col>
+
+        <Col xs={24} lg={12}>
+          <Card title="直播模式（传输协议）">
+            {!device.lineId ? (
+              <Typography.Text type="secondary">未绑定线路，无法设置直播模式。</Typography.Text>
+            ) : (
+              <>
+                <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
+                  绑定线路的国际出口协议：标准 VLESS，或全国际 Hysteria2（模式 B）。
+                </Typography.Paragraph>
+                <Radio.Group
+                  value={liveModeDraft}
+                  onChange={(e) => setLiveModeDraft(e.target.value)}
+                  disabled={!writable}
+                  style={{ display: "flex", flexDirection: "column", gap: 8 }}
+                >
+                  <Radio value="standard">
+                    <Typography.Text strong>标准 / Reality</Typography.Text>
+                    <div style={{ color: "#64748b", fontSize: 13, marginLeft: 24 }}>
+                      国际流量走 VLESS（默认）
+                    </div>
+                  </Radio>
+                  <Radio value="live_all_hy2">
+                    <Typography.Text strong>直播模式 B · 全国际 Hy2</Typography.Text>
+                    <div style={{ color: "#64748b", fontSize: 13, marginLeft: 24 }}>
+                      国际流量直连 Hysteria2（同节点同 SOCKS）
+                    </div>
+                  </Radio>
+                  <Radio value="live_catalog" disabled>
+                    <Typography.Text strong>直播模式 A · 目录分流</Typography.Text>
+                    <div style={{ color: "#64748b", fontSize: 13, marginLeft: 24 }}>
+                      P1 未启用
+                    </div>
+                  </Radio>
+                </Radio.Group>
+                {writable && liveModeDraft !== (device.lineLiveMode || "standard") ? (
+                  <Button
+                    type="primary"
+                    size="small"
+                    style={{ marginTop: 12 }}
+                    loading={savingLiveMode}
+                    onClick={() => void saveLiveMode()}
+                  >
+                    保存直播模式
+                  </Button>
+                ) : null}
+              </>
+            )}
           </Card>
         </Col>
 
