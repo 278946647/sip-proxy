@@ -24,17 +24,24 @@ func TestPatchOpenWrtPathsTrustAnchorAndChroot(t *testing.T) {
 	}
 }
 
-func TestEnsureTrustAnchorLayoutCreatesAnchor(t *testing.T) {
+func TestCopyIfMissing(t *testing.T) {
 	dir := t.TempDir()
-	anchor := filepath.Join(dir, "root.key")
-	chrootEtc := filepath.Join(dir, "etc", "unbound")
-	if err := ensureTrustAnchorLayoutAt(dir, anchor, chrootEtc); err != nil {
+	src := filepath.Join(dir, "src.conf")
+	dst := filepath.Join(dir, "dst.conf")
+	if err := os.WriteFile(src, []byte("from-bundle\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(anchor); err != nil {
-		t.Fatalf("anchor not created: %v", err)
+	if err := copyIfMissing(src, dst); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(chrootEtc, "root.key")); err != nil {
-		t.Fatalf("chroot anchor mirror missing: %v", err)
+	if err := os.WriteFile(dst, []byte("operator-edit\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyIfMissing(src, dst); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(dst)
+	if string(got) != "operator-edit\n" {
+		t.Fatalf("operator file overwritten: %q", got)
 	}
 }

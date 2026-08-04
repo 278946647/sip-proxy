@@ -30,11 +30,26 @@ func New(cfg *config.Config) *Manager {
 func (m *Manager) paths() map[string]string {
 	base := filepath.Dir(m.cfg.Paths.UnboundConfig)
 	return map[string]string{
-		"cn":               filepath.Join(m.cfg.Paths.UnboundConfD, "cn.unbound.conf"),
-		SnippetBlock:       filepath.Join(base, "local.d", "gfc-block.conf"),
-		SnippetStatic:      filepath.Join(base, "local.d", "gfc-static.conf"),
+		"cn":                   filepath.Join(m.cfg.Paths.UnboundConfD, "cn.unbound.conf"),
+		SnippetBlock:           filepath.Join(base, "local.d", "gfc-block.conf"),
+		SnippetStatic:          filepath.Join(base, "local.d", "gfc-static.conf"),
 		SnippetDomesticForward: filepath.Join(m.cfg.Paths.UnboundConfD, "gfc-domestic-forward.conf"),
-		"main":             m.cfg.Paths.UnboundConfig,
+		"main":                 m.cfg.Paths.UnboundConfig,
+	}
+}
+
+func (m *Manager) listPath(kind string) string {
+	conf := m.paths()[kind]
+	dir := filepath.Dir(conf)
+	switch kind {
+	case SnippetBlock:
+		return filepath.Join(dir, "gfc-block.list")
+	case SnippetStatic:
+		return filepath.Join(dir, "gfc-static.list")
+	case SnippetDomesticForward:
+		return filepath.Join(dir, "gfc-domestic-forward.list")
+	default:
+		return conf + ".list"
 	}
 }
 
@@ -65,37 +80,29 @@ func (m *Manager) EnsureTree() error {
 				return err
 			}
 		}
+		list := m.listPath(kind)
+		if _, err := os.Stat(list); err != nil {
+			if err := os.WriteFile(list, []byte(dslHeader(kind)), 0o644); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
 
 func defaultBlockConf() string {
-	return `# GFC — 域名阻断（local-zone static）
-# 每行一条：domain example.com
-# 保存后自动 unbound-checkconf
-server:
-    # local-zone: "ads.example.com." static
-    # local-data: "ads.example.com. 3600 IN A 0.0.0.0"
-`
+	conf, _ := GenerateConf(SnippetBlock, nil)
+	return conf
 }
 
 func defaultStaticConf() string {
-	return `# GFC — 指定域名静态解析
-# 示例：
-# server:
-#     local-zone: "mmo.example.com." static
-#     local-data: "mmo.example.com. 3600 IN A 203.0.113.10"
-`
+	conf, _ := GenerateConf(SnippetStatic, nil)
+	return conf
 }
 
 func defaultDomesticForwardConf() string {
-	return `# GFC — 指定域名走国内 DNS（独立于 cn.unbound.conf）
-# 示例：
-# forward-zone:
-#     name: "special.example.com"
-#     forward-addr: 223.5.5.5
-#     forward-addr: 119.29.29.29
-`
+	conf, _ := GenerateConf(SnippetDomesticForward, nil)
+	return conf
 }
 
 func (m *Manager) Status() map[string]any {
@@ -135,7 +142,14 @@ func (m *Manager) ListBackups() []map[string]any {
 	}
 	var out []map[string]any
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasPrefix(e.Name(), "cn.unbound.") {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.HasPrefix(name, "cn.unbound.") &&
+			!strings.HasPrefix(name, "gfc-block.") &&
+			!strings.HasPrefix(name, "gfc-static.") &&
+			!strings.HasPrefix(name, "gfc-domestic-forward.") {
 			continue
 		}
 		info, err := e.Info()
@@ -143,7 +157,7 @@ func (m *Manager) ListBackups() []map[string]any {
 			continue
 		}
 		out = append(out, map[string]any{
-			"name":    e.Name(),
+			"name":    name,
 			"size":    info.Size(),
 			"updated": info.ModTime().Format(time.RFC3339),
 		})
@@ -186,6 +200,7 @@ func (m *Manager) RestoreCN(name string) error {
 	if err := copyFile(src, dst); err != nil {
 		return err
 	}
+	m.InvalidateCNIndex()
 	return m.validateMain()
 }
 
@@ -201,10 +216,41 @@ func (m *Manager) SyncCNFromBundle() error {
 	if err := copyFile(bundle, dst); err != nil {
 		return err
 	}
+	m.InvalidateCNIndex()
 	return m.validateMain()
 }
 
+// GetSnippet returns operator DSL (prefer .list; else reverse-parse conf).
 func (m *Manager) GetSnippet(kind string) (string, error) {
+	if _, ok := m.paths()[kind]; !ok {
+		return "", os.ErrInvalid
+	}
+	_ = m.EnsureTree()
+	listPath := m.listPath(kind)
+	if data, err := os.ReadFile(listPath); err == nil && len(strings.TrimSpace(string(data))) > 0 {
+		// If list is only header, still try enrich from conf once
+		entries, perr := ParseDSL(kind, string(data))
+		if perr == nil && len(entries) > 0 {
+			return FormatDSL(kind, sortEntries(entries)), nil
+		}
+		if perr == nil && len(entries) == 0 {
+			conf, _ := m.GetSnippetConf(kind)
+			extracted := ExtractEntriesFromConf(kind, conf)
+			if len(extracted) > 0 {
+				return FormatDSL(kind, sortEntries(extracted)), nil
+			}
+			return FormatDSL(kind, nil), nil
+		}
+	}
+	conf, err := m.GetSnippetConf(kind)
+	if err != nil {
+		return FormatDSL(kind, nil), nil
+	}
+	return FormatDSL(kind, sortEntries(ExtractEntriesFromConf(kind, conf))), nil
+}
+
+// GetSnippetConf returns the on-disk unbound include file content.
+func (m *Manager) GetSnippetConf(kind string) (string, error) {
 	path, ok := m.paths()[kind]
 	if !ok {
 		return "", os.ErrInvalid
@@ -222,27 +268,98 @@ func (m *Manager) GetSnippet(kind string) (string, error) {
 	return string(data), nil
 }
 
-func (m *Manager) PutSnippet(kind, content string) error {
-	path, ok := m.paths()[kind]
-	if !ok {
-		return os.ErrInvalid
+// PutSnippetResult is returned to the API layer.
+type PutSnippetResult struct {
+	Kind      string      `json:"kind"`
+	Audit     AuditResult `json:"audit"`
+	Generated string      `json:"generated,omitempty"`
+	Backup    string      `json:"backup,omitempty"`
+}
+
+// PutSnippet parses DSL, audits conflicts, writes .list + generated conf.
+// force=true allows warn-level only; deny-level still blocked unless forceDeny.
+func (m *Manager) PutSnippet(kind, content string, force bool) (*PutSnippetResult, error) {
+	if _, ok := m.paths()[kind]; !ok {
+		return nil, os.ErrInvalid
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
+	entries, err := ParseDSL(kind, content)
+	if err != nil {
+		return nil, err
 	}
-	if err := os.WriteFile(path+".tmp", []byte(content), 0o644); err != nil {
-		return err
+	entries = sortEntries(entries)
+	audit := m.AuditWrite(kind, entries)
+	_ = force // reserved; exact cross-list conflicts are always denied
+	if audit.Denied {
+		return &PutSnippetResult{Kind: kind, Audit: audit}, fmt.Errorf("conflict: %s", audit.Summary)
 	}
-	// validate with temp swap
-	orig, _ := os.ReadFile(path)
-	if err := os.Rename(path+".tmp", path); err != nil {
-		return err
+	conf, err := GenerateConf(kind, entries)
+	if err != nil {
+		return nil, err
+	}
+	backupName, _ := m.backupSnippet(kind)
+	listPath := m.listPath(kind)
+	confPath := m.paths()[kind]
+	if err := os.MkdirAll(filepath.Dir(confPath), 0o755); err != nil {
+		return nil, err
+	}
+	dsl := FormatDSL(kind, entries)
+	origList, _ := os.ReadFile(listPath)
+	origConf, _ := os.ReadFile(confPath)
+	if err := os.WriteFile(listPath+".tmp", []byte(dsl), 0o644); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(confPath+".tmp", []byte(conf), 0o644); err != nil {
+		_ = os.Remove(listPath + ".tmp")
+		return nil, err
+	}
+	if err := os.Rename(listPath+".tmp", listPath); err != nil {
+		_ = os.Remove(confPath + ".tmp")
+		return nil, err
+	}
+	if err := os.Rename(confPath+".tmp", confPath); err != nil {
+		_ = os.WriteFile(listPath, origList, 0o644)
+		return nil, err
 	}
 	if err := m.validateMain(); err != nil {
-		_ = os.WriteFile(path, orig, 0o644)
-		return err
+		_ = os.WriteFile(listPath, origList, 0o644)
+		_ = os.WriteFile(confPath, origConf, 0o644)
+		return nil, err
 	}
-	return nil
+	return &PutSnippetResult{
+		Kind:      kind,
+		Audit:     audit,
+		Generated: conf,
+		Backup:    backupName,
+	}, nil
+}
+
+func (m *Manager) backupSnippet(kind string) (string, error) {
+	if err := os.MkdirAll(m.backupDir(), 0o755); err != nil {
+		return "", err
+	}
+	ts := time.Now().Format("20060102-150405")
+	prefix := map[string]string{
+		SnippetBlock:           "gfc-block",
+		SnippetStatic:          "gfc-static",
+		SnippetDomesticForward: "gfc-domestic-forward",
+	}[kind]
+	if prefix == "" {
+		return "", fmt.Errorf("bad kind")
+	}
+	listSrc := m.listPath(kind)
+	confSrc := m.paths()[kind]
+	name := fmt.Sprintf("%s.%s.list", prefix, ts)
+	_ = copyFile(listSrc, filepath.Join(m.backupDir(), name))
+	_ = copyFile(confSrc, filepath.Join(m.backupDir(), fmt.Sprintf("%s.%s.conf", prefix, ts)))
+	return name, nil
+}
+
+func sortEntries(in []Entry) []Entry {
+	out := append([]Entry(nil), in...)
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Domain < out[j].Domain
+	})
+	return out
 }
 
 func (m *Manager) validateMain() error {

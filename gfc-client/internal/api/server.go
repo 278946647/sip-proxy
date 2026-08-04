@@ -113,6 +113,8 @@ func (s *Server) Router() *gin.Engine {
 		v1.GET("/dns/unbound/snippets/:kind", s.unboundGetSnippet)
 		v1.PUT("/dns/unbound/snippets/:kind", s.unboundPutSnippet)
 		v1.POST("/dns/unbound/snippets/:kind", s.unboundPutSnippet)
+		v1.POST("/dns/unbound/snippets/:kind/audit", s.unboundAuditSnippet)
+		v1.GET("/dns/unbound/lookup", s.unboundLookup)
 
 		v1.GET("/policy/egress-routes", s.policyEgressRoutes)
 
@@ -1083,10 +1085,46 @@ func (s *Server) unboundGetSnippet(c *gin.Context) {
 		s.fail(c, 404, err.Error())
 		return
 	}
-	s.ok(c, map[string]any{"kind": kind, "content": text})
+	generated, _ := s.unboundMgr.GetSnippetConf(kind)
+	s.ok(c, map[string]any{"kind": kind, "content": text, "format": "dsl", "generated": generated})
 }
 
 func (s *Server) unboundPutSnippet(c *gin.Context) {
+	kind := c.Param("kind")
+	var body struct {
+		Content string `json:"content"`
+		Force   bool   `json:"force"`
+	}
+	if err := c.BindJSON(&body); err != nil {
+		s.fail(c, 400, err.Error())
+		return
+	}
+	result, err := s.unboundMgr.PutSnippet(kind, body.Content, body.Force)
+	if err != nil {
+		// Use HTTP 200 + ok:false so BusyBox wget still returns the JSON body.
+		payload := gin.H{
+			"ok":    false,
+			"error": gin.H{"message": err.Error()},
+		}
+		if result != nil {
+			payload["data"] = result
+		}
+		c.JSON(http.StatusOK, payload)
+		return
+	}
+	ok, msg := s.engine.ReloadDNS()
+	s.ok(c, map[string]any{
+		"kind":      kind,
+		"reload":    ok,
+		"message":   msg,
+		"check":     s.unboundMgr.CheckConfig(),
+		"audit":     result.Audit,
+		"backup":    result.Backup,
+		"generated": result.Generated,
+	})
+}
+
+func (s *Server) unboundAuditSnippet(c *gin.Context) {
 	kind := c.Param("kind")
 	var body struct {
 		Content string `json:"content"`
@@ -1095,12 +1133,26 @@ func (s *Server) unboundPutSnippet(c *gin.Context) {
 		s.fail(c, 400, err.Error())
 		return
 	}
-	if err := s.unboundMgr.PutSnippet(kind, body.Content); err != nil {
+	entries, err := unboundmgr.ParseDSL(kind, body.Content)
+	if err != nil {
 		s.fail(c, 400, err.Error())
 		return
 	}
-	ok, msg := s.engine.ReloadDNS()
-	s.ok(c, map[string]any{"kind": kind, "reload": ok, "message": msg, "check": s.unboundMgr.CheckConfig()})
+	s.ok(c, s.unboundMgr.AuditWrite(kind, entries))
+}
+
+func (s *Server) unboundLookup(c *gin.Context) {
+	q := strings.TrimSpace(c.Query("q"))
+	if q == "" {
+		s.fail(c, 400, "missing q")
+		return
+	}
+	res, err := s.unboundMgr.Lookup(q)
+	if err != nil {
+		s.fail(c, 400, err.Error())
+		return
+	}
+	s.ok(c, res)
 }
 
 func (s *Server) policyEgressRoutes(c *gin.Context) {

@@ -18,15 +18,19 @@ _ensure_snippet() {
 }
 
 _ensure_snippet /etc/unbound/conf.d/gfc-domestic-forward.conf \
-	'# GFC — domestic forward overrides (empty default)'
+	'# Generated from gfc-domestic-forward.list — do not hand-edit; edit via LuCI DSL' \
+	'# forward-zone MUST stay outside server: (UNBOUND_ARCHITECTURE)' \
+	'# (empty)'
 
 _ensure_snippet /etc/unbound/local.d/gfc-block.conf \
-	'# GFC — block list (empty default)' \
+	'# Generated from gfc-block.list — do not hand-edit; edit via LuCI DSL' \
 	'server:' \
-	'    # local-zone: "ads.example.com." static'
+	'    # (empty)'
 
 _ensure_snippet /etc/unbound/local.d/gfc-static.conf \
-	'# GFC — static records (empty default)'
+	'# Generated from gfc-static.list — do not hand-edit; edit via LuCI DSL' \
+	'server:' \
+	'    # (empty)'
 
 # unbound-checkconf on ImmortalWrt validates paths inside default chroot (/var/lib/unbound).
 # GFC config keeps auto-trust-anchor-file at /var/lib/unbound/root.key and sets chroot: "".

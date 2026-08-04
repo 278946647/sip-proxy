@@ -69,11 +69,20 @@ func (r *Renderer) EnsureTree() error {
 	if err := EnsureTrustAnchorLayout(); err != nil {
 		return err
 	}
-	files := map[string]string{
+	// Bundle-managed: safe to re-sync from share on every Render.
+	syncAlways := map[string]string{
 		filepath.Join(bundle, "domains-insecure.conf"): r.cfg.Paths.UnboundDomainsInsecure,
 		filepath.Join(bundle, "conf.d", "cn.unbound.conf"): filepath.Join(
 			r.cfg.Paths.UnboundConfD, "cn.unbound.conf",
 		),
+	}
+	for src, dst := range syncAlways {
+		if err := copyIfChanged(src, dst); err != nil {
+			return err
+		}
+	}
+	// Operator-managed snippets: create once from bundle; never overwrite on ReloadDNS.
+	operatorOnce := map[string]string{
 		filepath.Join(bundle, "conf.d", "gfc-domestic-forward.conf"): filepath.Join(
 			r.cfg.Paths.UnboundConfD, "gfc-domestic-forward.conf",
 		),
@@ -84,8 +93,8 @@ func (r *Renderer) EnsureTree() error {
 			filepath.Dir(r.cfg.Paths.UnboundConfig), "local.d", "gfc-static.conf",
 		),
 	}
-	for src, dst := range files {
-		if err := copyIfChanged(src, dst); err != nil {
+	for src, dst := range operatorOnce {
+		if err := copyIfMissing(src, dst); err != nil {
 			return err
 		}
 	}
@@ -237,6 +246,24 @@ func copyIfChanged(src, dst string) error {
 	}
 	if existing, err := os.ReadFile(dst); err == nil && string(existing) == string(in) {
 		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(dst, in, 0o644)
+}
+
+// copyIfMissing installs a bundle default only when the destination does not exist.
+// Used for operator-edited unbound snippets so ReloadDNS cannot wipe them.
+func copyIfMissing(src, dst string) error {
+	if _, err := os.Stat(dst); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	in, err := os.ReadFile(src)
+	if err != nil {
+		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
