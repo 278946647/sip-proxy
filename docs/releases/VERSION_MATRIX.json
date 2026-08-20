@@ -8,15 +8,50 @@
     "deploy_order_default": ["control_plane", "forward_node", "client"]
   },
   "product": {
-    "current": "1.1.8",
+    "current": "1.1.9",
     "major": 1,
     "ota_baseline": "1.1.0",
     "ota_baseline_notes": "Boxes without Runtime OTA must bootstrap via install.sh / OEM image, then use platform OTA."
   },
   "releases": [
     {
-      "version": "1.1.8",
+      "version": "1.1.9",
       "status": "current",
+      "git_tag": "v1.1.9",
+      "released": "2026-08-20",
+      "components": {
+        "control_plane_api": "0.1.0",
+        "node_agent": "0.3.1",
+        "gfc_client": "1.1.0-r23",
+        "client_proto": 1,
+        "node_proto": 1
+      },
+      "floors": {
+        "gfc_client": "1.1.0-r14",
+        "node_agent": "0.3.0",
+        "client_proto": 1,
+        "node_proto": 1
+      },
+      "upgrade_path": {
+        "from_any_in_major": true,
+        "from_majors": [1],
+        "bridge": null,
+        "migration_doc": null
+      },
+      "channels": {
+        "client_runtime": "ota",
+        "dataplane_arch": "firmware"
+      },
+      "probes": [
+        "opkg/manifest gfc-client == 1.1.0-r23 when OEM image claim",
+        "docs/NFT_ARCHITECTURE.md contains §9.3 Bypass Option B",
+        "git rev-parse v1.1.9"
+      ],
+      "notes": "Checkpoint before bypass-mode implementation: ratify NFT §9.3 Option B + handoff; no PKG_RELEASE bump."
+    },
+    {
+      "version": "1.1.8",
+      "status": "supported",
       "git_tag": "v1.1.8",
       "released": "2026-07-21",
       "components": {

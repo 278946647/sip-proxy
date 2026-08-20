@@ -301,21 +301,6 @@ export function LineDetailPage() {
               </Button>
             </Space>
           </Descriptions.Item>
-          {line.lineType === "client" && (
-            <Descriptions.Item label="直播模式" span={2}>
-              <Select
-                style={{ minWidth: 320 }}
-                loading={liveModeSaving}
-                value={line.liveMode || "standard"}
-                onChange={(v) => void saveLiveMode(v)}
-                options={[
-                  { value: "standard", label: "标准 / Reality（国际 → VLESS）" },
-                  { value: "live_all_hy2", label: "直播模式 B · 全国际 Hysteria2" },
-                  { value: "live_catalog", label: "直播模式 A · 目录分流（Hy2 仅 ingest）" },
-                ]}
-              />
-            </Descriptions.Item>
-          )}
           <Descriptions.Item label="节点">{line.nodeName}</Descriptions.Item>
           <Descriptions.Item label="国家/地区">{line.country || "-"}</Descriptions.Item>
           <Descriptions.Item label="客户端">

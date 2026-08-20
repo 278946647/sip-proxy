@@ -29,6 +29,31 @@ Patch | Minor | Major | Dataplane-Arch
 
 ---
 
+## [1.1.9] - 2026-08-20
+
+### 级别
+Patch
+
+### 组件钉扎
+- control_plane_api: 0.1.0
+- node_agent: 0.3.1
+- gfc_client: 1.1.0-r23
+
+### 变更
+- **存档基线：** 旁路模式实现前的可回滚产品快照（annotated tag `v1.1.9`）
+- **规范：** `NFT_ARCHITECTURE.md` 批准旁路 Option B（`@customer_hosts`、WAN DNS 劫持、管理 LAN 小网关、设备 Web 切模式 + 超时回滚）
+- **计划 / 交接：** `docs/BYPASS_MODE_DEV_PLAN.md`、根目录 `HANDOFF.md`
+- **未改：** nft/unbound/sing-box 生成器；`PKG_RELEASE` 仍为 r23
+
+### 升级
+- 同 Major 直升：是
+- OTA 基线：1.1.0
+
+### 验收探针
+- `docs/NFT_ARCHITECTURE.md` 含 §9.3 Bypass Option B
+- `git rev-parse v1.1.9`
+- manifest 仍为 `gfc-client 1.1.0-r23`（本版无新 OEM）
+
 ## [1.1.8] - 2026-07-21
 
 ### 级别
