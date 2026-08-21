@@ -25,6 +25,12 @@ BRIDGE_NAME="${GFC_BRIDGE_NAME:-bridge_lan}"
 
 [[ -f "$GFC_ENV" ]] && set -a && source "$GFC_ENV" && set +a
 PROXY_MODE="${GFC_PROXY_MODE:-$PROXY_MODE}"
+if [[ "$PROXY_MODE" != "bypass" && -f "${GFC_ETC}/proxy-mode.json" ]]; then
+  if grep -q '"mode"[[:space:]]*:[[:space:]]*"bypass"' "${GFC_ETC}/proxy-mode.json" 2>/dev/null; then
+    PROXY_MODE="bypass"
+  fi
+fi
+export GFC_PROXY_MODE="$PROXY_MODE"
 GFC_POLICY_MARK="${GFC_POLICY_MARK:-0x2023}"
 GFC_POLICY_TABLE="${GFC_POLICY_TABLE:-2022}"
 GFC_SSH_PORT="${GFC_SSH_PORT:-212}"
@@ -99,12 +105,12 @@ echo "==> network wan=$WAN lan=${LAN:-none} bridge=$USE_BRIDGE proxy=$PROXY_MODE
 
 if [[ "$USE_BRIDGE" == "1" ]]; then
   python3 - "$NETPLAN_FILE" "$WAN" "$LAN" "$BRIDGE_MEMBERS" "$LAN_ADDRESS" "$LAN_PREFIX" "$PROXY_MODE" <<'PY'
-import os, sys
+import json, os, sys
 from pathlib import Path
 netplan, wan, bridge, members, addr, prefix, proxy = sys.argv[1:8]
 ms = [m for m in members.split() if m and m != wan]
 policy = ""
-if proxy in ("gateway", "transparent"):
+if proxy in ("gateway", "transparent", "bypass"):
     mark = int(os.environ.get("GFC_POLICY_MARK", "0x2023"), 0)
     table = int(os.environ.get("GFC_POLICY_TABLE", "2022"))
     policy = f"""
@@ -113,7 +119,30 @@ if proxy in ("gateway", "transparent"):
           mark: {mark}
           table: {table}
           priority: 100"""
-eth = [f"    {wan}:\n      dhcp4: true\n      optional: true{policy}"]
+
+def wan_iface_yaml(name, proxy_mode, pol):
+    cfgp = Path(os.environ.get("GFC_ETC", "/etc/gfc-client")) / "network-wan.json"
+    data = {}
+    if cfgp.is_file():
+        try:
+            data = json.loads(cfgp.read_text())
+        except Exception:
+            data = {}
+    mode = str(data.get("mode") or "").lower()
+    if proxy_mode == "bypass" and mode == "static" and data.get("address"):
+        mask = str(data.get("netmask") or "255.255.255.0")
+        pmap = {"255.255.255.0": 24, "255.255.255.128": 25, "255.255.255.192": 26,
+                "255.255.255.224": 27, "255.255.255.240": 28, "255.255.255.248": 29,
+                "255.255.255.252": 30, "255.255.255.255": 32}
+        pfx = pmap.get(mask, 24)
+        gw = str(data.get("gateway") or "")
+        dns = [x for x in (data.get("dns1"), data.get("dns2")) if x]
+        routes = f"\n      routes:\n        - to: default\n          via: {gw}" if gw else ""
+        ns = ("\n      nameservers:\n        addresses: [" + ", ".join(str(x) for x in dns) + "]") if dns else ""
+        return f"    {name}:\n      dhcp4: false\n      addresses:\n        - {data['address']}/{pfx}\n      optional: true{routes}{ns}{pol}"
+    return f"    {name}:\n      dhcp4: true\n      optional: true{pol}"
+
+eth = [wan_iface_yaml(wan, proxy, policy)]
 for m in ms:
     eth.append(f"    {m}:\n      dhcp4: false\n      optional: true")
 member_yaml = ", ".join(ms)
@@ -138,11 +167,11 @@ Path(netplan).chmod(0o600)
 PY
 else
   python3 - "$NETPLAN_FILE" "$WAN" "$LAN" "$LAN_ADDRESS" "$LAN_PREFIX" "$PROXY_MODE" <<'PY'
-import os, sys
+import json, os, sys
 from pathlib import Path
 netplan, wan, lan, addr, prefix, proxy = sys.argv[1:7]
 policy = ""
-if proxy in ("gateway", "transparent"):
+if proxy in ("gateway", "transparent", "bypass"):
     mark = int(os.environ.get("GFC_POLICY_MARK", "0x2023"), 0)
     table = int(os.environ.get("GFC_POLICY_TABLE", "2022"))
     policy = f"""
@@ -151,6 +180,29 @@ if proxy in ("gateway", "transparent"):
           mark: {mark}
           table: {table}
           priority: 100"""
+
+def wan_iface_yaml(name, proxy_mode, pol):
+    cfgp = Path(os.environ.get("GFC_ETC", "/etc/gfc-client")) / "network-wan.json"
+    data = {}
+    if cfgp.is_file():
+        try:
+            data = json.loads(cfgp.read_text())
+        except Exception:
+            data = {}
+    mode = str(data.get("mode") or "").lower()
+    if proxy_mode == "bypass" and mode == "static" and data.get("address"):
+        mask = str(data.get("netmask") or "255.255.255.0")
+        pmap = {"255.255.255.0": 24, "255.255.255.128": 25, "255.255.255.192": 26,
+                "255.255.255.224": 27, "255.255.255.240": 28, "255.255.255.248": 29,
+                "255.255.255.252": 30, "255.255.255.255": 32}
+        pfx = pmap.get(mask, 24)
+        gw = str(data.get("gateway") or "")
+        dns = [x for x in (data.get("dns1"), data.get("dns2")) if x]
+        routes = f"\n      routes:\n        - to: default\n          via: {gw}" if gw else ""
+        ns = ("\n      nameservers:\n        addresses: [" + ", ".join(str(x) for x in dns) + "]") if dns else ""
+        return f"    {name}:\n      dhcp4: false\n      addresses:\n        - {data['address']}/{pfx}\n      optional: true{routes}{ns}{pol}"
+    return f"    {name}:\n      dhcp4: true\n      optional: true{pol}"
+
 lan_block = ""
 if lan:
     lan_block = f"""
@@ -164,9 +216,7 @@ network:
   version: 2
   renderer: networkd
   ethernets:
-    {wan}:
-      dhcp4: true
-      optional: true{policy}{lan_block}
+{wan_iface_yaml(wan, proxy, policy)}{lan_block}
 """
 Path(netplan).write_text(text)
 Path(netplan).chmod(0o600)
@@ -175,9 +225,7 @@ fi
 echo "    netplan -> $NETPLAN_FILE"
 
 ENABLE_DHCP=1
-if [[ "$PROXY_MODE" == "bypass" && "${GFC_BYPASS_DHCP:-0}" != "1" ]]; then
-  ENABLE_DHCP=0
-fi
+# Bypass: keep management-LAN DHCP; do not run a DHCP server toward customer WAN L2.
 
 if [[ -n "${LAN:-}" && "$ENABLE_DHCP" == "1" ]]; then
   cat >"$DNSMASQ_FILE" <<EOF
@@ -198,26 +246,25 @@ else
   echo "    dnsmasq disabled (proxy_mode=$PROXY_MODE)"
 fi
 
-ENABLE_MASQ=1
-if [[ "$PROXY_MODE" == "bypass" ]]; then
-  ENABLE_MASQ="${GFC_BYPASS_MASQ:-0}"
-fi
-
-python3 - "$NFT_BOOT" "$WAN" "$LAN" "$ENABLE_MASQ" "$TUN_IFACE" <<'PY'
+LAN_CIDR_NAT="${LAN_NETWORK}/${LAN_PREFIX}"
+python3 - "$NFT_BOOT" "$WAN" "$LAN" "$PROXY_MODE" "$TUN_IFACE" "$LAN_CIDR_NAT" <<'PY'
 import os, sys
 from pathlib import Path
-nft_boot, wan, lan, enable_masq, tun = sys.argv[1:6]
+nft_boot, wan, lan, proxy_mode, tun, lan_cidr = sys.argv[1:7]
 ssh_port = int(os.environ.get("GFC_SSH_PORT", "212"))
 # Fresh Ubuntu listens on 22; production boxes use GFC_SSH_PORT (212). Allow both on all ifaces.
 admin_tcp = sorted({22, ssh_port})
 admin_tcp_set = ", ".join(str(p) for p in admin_tcp)
+masq_rule = f'    oifname "{wan}" masquerade' if wan else ""
+if wan and proxy_mode == "bypass":
+    masq_rule = f'    oifname "{wan}" ip saddr {lan_cidr} masquerade'
 masq = ""
-if wan and enable_masq == "1":
+if masq_rule:
     masq = f"""
 table inet nat {{
   chain postrouting {{
     type nat hook postrouting priority srcnat; policy accept;
-    oifname "{wan}" masquerade
+{masq_rule}
   }}
 }}"""
 forward = ""
@@ -230,6 +277,14 @@ if wan and lan:
     iifname "{tun}" oifname "{lan}" ct state established,related accept
     iifname "{lan}" oifname "{wan}" accept
     iifname "{wan}" oifname "{lan}" ct state established,related accept"""
+    if proxy_mode == "bypass":
+        forward += f"""
+    iifname "{wan}" oifname "{tun}" accept
+    iifname "{tun}" oifname "{wan}" ct state established,related accept
+    iifname "{wan}" oifname "{wan}" accept"""
+        input_rules += f"""
+    iifname "{wan}" udp dport {{ 53, 67, 68 }} accept
+    iifname "{wan}" tcp dport 53 accept"""
     input_rules += f"""
     iifname "{lan}" tcp dport {{ 80, 443, 8080 }} accept
     iifname "{lan}" udp dport {{ 53, 67, 68 }} accept
@@ -264,6 +319,7 @@ LAN_IF="${LAN:-bridge_lan}"
 migrate_mosdns_user || ensure_mosdns_user
 migrate_singbox_user || ensure_singbox_user
 fix_singbox_tree_perms "$GFC_ETC"
+export WAN GFC_PROXY_MODE
 write_gfc_nft_dns_conf "$LAN_IF" "$MOSDNS_PORT" "$NFT_DNS"
 echo "    nft dns -> $NFT_DNS (exclude uid ${GFC_MOSDNS_UID})"
 
@@ -397,6 +453,15 @@ fi
 
 if [[ -f "${GFC_ETC}/sing-box.json" ]]; then
   bash "$SCRIPT_DIR/patch-singbox-wan.sh" || echo "    WARN: patch-singbox-wan failed"
+fi
+
+if [[ "$PROXY_MODE" == "bypass" ]]; then
+  sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true
+  sysctl -w net.ipv4.conf.all.rp_filter=2 >/dev/null 2>&1 || true
+  if [[ -n "${WAN:-}" ]]; then
+    sysctl -w "net.ipv4.conf.${WAN}.rp_filter=2" >/dev/null 2>&1 || true
+  fi
+  echo "    sysctl: ip_forward=1 rp_filter=2 (bypass hairpin)"
 fi
 
 echo "==> network apply done"

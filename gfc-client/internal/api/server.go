@@ -23,6 +23,7 @@ import (
 	"github.com/278946647/sip-proxy/gfc-client/internal/envfile"
 	"github.com/278946647/sip-proxy/gfc-client/internal/logtail"
 	"github.com/278946647/sip-proxy/gfc-client/internal/network"
+	"github.com/278946647/sip-proxy/gfc-client/internal/proxymode"
 	"github.com/278946647/sip-proxy/gfc-client/internal/payload"
 	"github.com/278946647/sip-proxy/gfc-client/internal/render/unbound"
 	"github.com/278946647/sip-proxy/gfc-client/internal/render/singbox"
@@ -43,6 +44,7 @@ type Server struct {
 	dns        *dnslists.Manager
 	rules      *rules.Manager
 	network    *network.Manager
+	proxyMode  *proxymode.Controller
 	revSSH     *reversessh.Manager
 	unboundMgr *unboundmgr.Manager
 	mode       string // admin | flash | api
@@ -51,18 +53,37 @@ type Server struct {
 func NewServer(cfg *config.Config, st *store.Store, mode string) *Server {
 	engine := dataplane.New(cfg)
 	_ = st.DefaultPolicyGroups()
-	return &Server{
+	netMgr := network.New(cfg)
+	s := &Server{
 		cfg:        cfg,
 		store:      st,
 		engine:     engine,
 		activation: activation.New(cfg, st, engine),
 		dns:        dnslists.New(cfg),
 		rules:      rules.New(cfg),
-		network:    network.New(cfg),
+		network:    netMgr,
 		revSSH:     reversessh.New(cfg),
 		unboundMgr: unboundmgr.New(cfg),
 		mode:       mode,
 	}
+	s.proxyMode = proxymode.NewController(cfg, netMgr.ApplyWAN, s.lanCIDR)
+	s.proxyMode.SetDataplaneApply(s.applyProxyModeDataplane)
+	s.proxyMode.Resume()
+	return s
+}
+
+func (s *Server) applyProxyModeDataplane(mode string) error {
+	mode = proxymode.NormalizeMode(mode)
+	if err := envfile.Set(s.cfg.Paths.EnvFile, "GFC_PROXY_MODE", mode); err != nil {
+		return err
+	}
+	_ = os.Setenv("GFC_PROXY_MODE", mode)
+	s.cfg.ProxyMode = mode
+	ok, msg := s.engine.ReloadRoutingPolicy()
+	if !ok {
+		return fmt.Errorf("%s", msg)
+	}
+	return nil
 }
 
 func (s *Server) Router() *gin.Engine {
@@ -157,6 +178,11 @@ func (s *Server) Router() *gin.Engine {
 		v1.GET("/settings", s.getSettings)
 		v1.PUT("/settings", s.putSettings)
 		v1.POST("/settings", s.putSettings)
+		v1.GET("/settings/proxy-mode", s.getProxyMode)
+		v1.PUT("/settings/proxy-mode", s.putProxyMode)
+		v1.POST("/settings/proxy-mode", s.putProxyMode)
+		v1.POST("/settings/proxy-mode/confirm", s.confirmProxyMode)
+		v1.POST("/settings/proxy-mode/rollback", s.rollbackProxyMode)
 		v1.PUT("/settings/singbox/logging", s.putLogging)
 		v1.POST("/settings/singbox/logging", s.putLogging)
 	}
@@ -726,8 +752,18 @@ func (s *Server) getLogs(c *gin.Context) {
 
 func (s *Server) getSettings(c *gin.Context) {
 	settings, _ := s.store.GetSettings()
+	if settings == nil {
+		settings = map[string]any{}
+	}
 	settings["device_name"] = s.cfg.DeviceName
-	settings["proxy_mode"] = s.cfg.ProxyMode
+	pm := s.proxyMode.Status()
+	settings["proxy_mode"] = pm.Mode
+	settings["dataplane_proxy_mode"] = pm.DataplaneMode
+	settings["customer_hosts"] = pm.CustomerHosts
+	settings["proxy_mode_pending"] = pm.Pending
+	settings["proxy_mode_note"] = pm.DataplaneNote
+	settings["operate_from_lan"] = pm.OperateFromLAN
+	settings["lan_cidr"] = pm.LANCIDR
 	settings["routing_mode"] = singbox.NewRenderer(s.cfg).RoutingMode()
 	liveMode := "standard"
 	if bundle := s.engine.LoadBundle(); bundle != nil {
@@ -940,7 +976,6 @@ func (s *Server) putSettings(c *gin.Context) {
 
 	result := map[string]any{"saved": true}
 	routingChanged := false
-	proxyChanged := false
 
 	if mode, ok := body["routing_mode"].(string); ok && strings.TrimSpace(mode) != "" {
 		mode = payload.NormalizeRoutingMode(mode)
@@ -960,21 +995,19 @@ func (s *Server) putSettings(c *gin.Context) {
 		routingChanged = true
 	}
 
-	if mode, ok := body["proxy_mode"].(string); ok && strings.TrimSpace(mode) != "" {
-		mode = strings.ToLower(strings.TrimSpace(mode))
-		if err := envfile.Set(s.cfg.Paths.EnvFile, "GFC_PROXY_MODE", mode); err != nil {
-			s.fail(c, 500, err.Error())
+	if _, ok := body["proxy_mode"]; ok {
+		req, err := switchRequestFromBody(body, s.lanCIDR())
+		if err != nil {
+			s.fail(c, 400, err.Error())
 			return
 		}
-		_ = os.Setenv("GFC_PROXY_MODE", mode)
-		s.cfg.ProxyMode = mode
-		netOut, err := s.network.ApplyNetwork()
-		result["proxy_mode"] = mode
-		result["network"] = netOut
+		st, err := s.proxyMode.Apply(req)
 		if err != nil {
-			result["network_error"] = err.Error()
+			s.fail(c, 400, err.Error())
+			return
 		}
-		proxyChanged = true
+		result["proxy_mode"] = st
+		result["operate_from_lan"] = st.OperateFromLAN
 	}
 
 	if mode, ok := body["live_mode"].(string); ok && strings.TrimSpace(mode) != "" {
@@ -1008,13 +1041,59 @@ func (s *Server) putSettings(c *gin.Context) {
 		}
 	}
 
-	if proxyChanged {
-		ok, msg := s.engine.ReapplyLocal(true)
-		result["dataplane"] = map[string]any{"ok": ok, "message": msg}
-	} else if !routingChanged {
-		// DNS / log settings only — no dataplane reload required.
+	if !routingChanged {
+		// DNS / log / proxy-mode persist only — no dataplane reload required in P1.
 	}
 	s.ok(c, result)
+}
+
+func (s *Server) getProxyMode(c *gin.Context) {
+	s.ok(c, s.proxyMode.Status())
+}
+
+func (s *Server) putProxyMode(c *gin.Context) {
+	var body map[string]any
+	if err := c.BindJSON(&body); err != nil {
+		s.fail(c, 400, err.Error())
+		return
+	}
+	req, err := switchRequestFromBody(body, s.lanCIDR())
+	if err != nil {
+		s.fail(c, 400, err.Error())
+		return
+	}
+	st, err := s.proxyMode.Apply(req)
+	if err != nil {
+		s.fail(c, 400, err.Error())
+		return
+	}
+	s.ok(c, st)
+}
+
+func (s *Server) confirmProxyMode(c *gin.Context) {
+	var body struct {
+		Token string `json:"token"`
+	}
+	_ = c.BindJSON(&body)
+	st, err := s.proxyMode.Confirm(body.Token)
+	if err != nil {
+		s.fail(c, 400, err.Error())
+		return
+	}
+	if syncErr := cpsync.SyncRuntime(s.cfg, s.store, cpsync.Runtime{ProxyMode: st.Mode}); syncErr != nil {
+		s.ok(c, map[string]any{"status": st, "synced": false, "sync_error": syncErr.Error()})
+		return
+	}
+	s.ok(c, map[string]any{"status": st, "synced": true})
+}
+
+func (s *Server) rollbackProxyMode(c *gin.Context) {
+	st, err := s.proxyMode.Rollback()
+	if err != nil {
+		s.fail(c, 500, err.Error())
+		return
+	}
+	s.ok(c, st)
 }
 
 func (s *Server) putLogging(c *gin.Context) {

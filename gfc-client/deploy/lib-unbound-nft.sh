@@ -50,17 +50,59 @@ migrate_unbound_user() {
 
 write_gfc_nft_dns_conf() {
   local lan="$1" port="$2" outfile="$3"
-  cat >"$outfile" <<EOF
-#!/usr/sbin/nft -f
-# LAN DNS hijack — docs/NFT_ARCHITECTURE.md (no skuid OUTPUT bypass)
-table inet gfc_dns_hijack {
-  chain prerouting {
+  local wan="${WAN:-${GFC_WAN_IFACE:-}}"
+  local mode="${GFC_PROXY_MODE:-gateway}"
+  local hosts_file="${GFC_ETC:-/etc/gfc-client}/customer-hosts.json"
+  local mode_file="${GFC_ETC:-/etc/gfc-client}/proxy-mode.json"
+  python3 - "$outfile" "$lan" "$port" "$wan" "$mode" "$hosts_file" "$mode_file" <<'PY'
+import json, sys
+from pathlib import Path
+outfile, lan, port, wan, mode, hosts_file, mode_file = sys.argv[1:8]
+file_mode = ""
+if Path(mode_file).is_file():
+    try:
+        file_mode = str(json.loads(Path(mode_file).read_text()).get("mode") or "").lower()
+    except (OSError, json.JSONDecodeError, TypeError):
+        file_mode = ""
+if mode != "bypass" and file_mode == "bypass":
+    mode = "bypass"
+hosts = []
+if Path(hosts_file).is_file():
+    try:
+        raw = json.loads(Path(hosts_file).read_text()).get("hosts") or []
+        if isinstance(raw, str):
+            raw = raw.replace(",", " ").split()
+        hosts = [str(x).strip() for x in raw if str(x).strip()]
+    except (OSError, json.JSONDecodeError, TypeError):
+        hosts = []
+set_block = ""
+wan_rules = ""
+if mode == "bypass":
+    elems = ", ".join(hosts)
+    body = f"\n    elements = {{ {elems} }}" if elems else ""
+    set_block = f"""
+  set customer_hosts {{
+    type ipv4_addr
+    flags interval{body}
+  }}"""
+    if wan:
+        wan_rules = f"""
+    iifname "{wan}" ip saddr @customer_hosts udp dport 53 fib daddr type local return
+    iifname "{wan}" ip saddr @customer_hosts tcp dport 53 fib daddr type local return
+    iifname "{wan}" ip saddr @customer_hosts udp dport 53 redirect to :{port}
+    iifname "{wan}" ip saddr @customer_hosts tcp dport 53 redirect to :{port}"""
+text = f"""#!/usr/sbin/nft -f
+# DNS hijack — docs/NFT_ARCHITECTURE.md (no skuid OUTPUT bypass)
+table inet gfc_dns_hijack {{{set_block}
+  chain prerouting {{
     type nat hook prerouting priority dstnat; policy accept;
-    iifname "${lan}" udp dport 53 redirect to :${port}
-    iifname "${lan}" tcp dport 53 redirect to :${port}
-  }
-}
-EOF
+    iifname "{lan}" udp dport 53 redirect to :{port}
+    iifname "{lan}" tcp dport 53 redirect to :{port}{wan_rules}
+  }}
+}}
+"""
+Path(outfile).write_text(text)
+PY
 }
 
 apply_gfc_nft_dns_conf() {

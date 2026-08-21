@@ -47,6 +47,58 @@ def load_routing_mode() -> str:
         return "split"
 
 
+def load_proxy_mode() -> str:
+    env_mode = env("GFC_PROXY_MODE", "").lower()
+    file_mode = ""
+    path = etc_dir() / "proxy-mode.json"
+    if path.is_file():
+        try:
+            data = json.loads(path.read_text())
+            file_mode = str(data.get("mode", "")).lower()
+        except (OSError, json.JSONDecodeError):
+            file_mode = ""
+    if env_mode == "bypass":
+        return "bypass"
+    if file_mode in ("bypass", "transparent"):
+        return file_mode
+    if env_mode in ("gateway", "transparent"):
+        return env_mode
+    return "gateway"
+
+
+def load_customer_hosts() -> list[str]:
+    path = etc_dir() / "customer-hosts.json"
+    if not path.is_file():
+        return []
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return []
+    raw = data.get("hosts") or []
+    if isinstance(raw, str):
+        raw = raw.replace(",", " ").split()
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        token = str(item).strip()
+        if not token or token in seen:
+            continue
+        try:
+            if "/" in token:
+                net = ipaddress.ip_network(token, strict=False)
+            else:
+                net = ipaddress.ip_network(token + "/32", strict=False)
+        except ValueError:
+            continue
+        if net.version != 4:
+            continue
+        cidr = str(net) if net.prefixlen != 32 else str(net.network_address)
+        if cidr not in seen:
+            seen.add(cidr)
+            out.append(cidr)
+    return out
+
+
 def load_cn_cidrs() -> list[str]:
     candidates = [
         etc_dir() / "mosdns/easymosdns/rules/china_ip_list.txt",
@@ -198,41 +250,73 @@ def normalize_mark(mark: str) -> str:
 def render_architecture(cfg: dict) -> str:
     """inet gfc per docs/NFT_ARCHITECTURE.md (kernel-split default)."""
     lan = cfg["lan"]
+    wan = str(cfg.get("wan") or "").strip()
+    tun = str(cfg.get("tun") or "gfctun").strip() or "gfctun"
     lan_cidr = cfg["lan_cidr"]
     mark = normalize_mark(cfg["mark"])
     ssh_port = cfg["ssh_port"]
     ext_const = fmt_ip_elements(cfg["ext_const_ips"])
     routing_mode = str(cfg.get("routing_mode", "split")).lower()
+    proxy_mode = str(cfg.get("proxy_mode", "gateway")).lower()
+    customer_hosts = cfg.get("customer_hosts") or []
 
-    bypass_set = ""
-    bypass_preroute = ""
-    bypass_output = ""
-    if cfg["bypass_ips"]:
-        bypass_set = f"""
-  set bypass_ip {{
+    bypass_elems = fmt_bypass_elements(cfg.get("bypass_ips") or [])
+    bypass_set_body = f"\n    elements = {{ {bypass_elems} }}" if bypass_elems else ""
+
+    customer_set = ""
+    if proxy_mode == "bypass":
+        host_elems = fmt_ip_elements(list(customer_hosts))
+        host_body = f"\n    elements = {{ {host_elems} }}" if host_elems else ""
+        customer_set = f"""
+  set customer_hosts {{
     type ipv4_addr
-    flags interval
-    elements = {{ {fmt_bypass_elements(cfg["bypass_ips"])} }}
+    flags interval{host_body}
   }}"""
-        bypass_preroute = """
-    ip daddr @bypass_ip return"""
-        bypass_output = """
-    ip daddr @bypass_ip counter return"""
 
-    cn_preroute = ""
+    cn_lan = ""
+    cn_wan = ""
     cn_output = ""
     if routing_mode != "global":
-        cn_preroute = f"""
+        cn_lan = f"""
     iifname "{lan}" ip daddr @TO_CN return"""
+        if proxy_mode == "bypass" and wan:
+            cn_wan = f"""
+    iifname "{wan}" ip saddr @customer_hosts ip daddr @TO_CN return"""
         cn_output = """
     ip daddr @TO_CN return"""
+
+    ct_head = ""
+    ct_wan = ""
+    route_head = ""
+    route_wan = ""
+    forward_customer = ""
+    if proxy_mode == "bypass":
+        ct_head = f"""
+    iifname "{tun}" return
+    fib daddr type {{ local, broadcast, multicast }} return"""
+        route_head = f"""
+    iifname "{tun}" return
+    fib daddr type {{ local, broadcast, multicast }} return"""
+        if wan:
+            ct_wan = f"""
+    iifname "{wan}" ip saddr @customer_hosts ct state {{ established, related }} return
+    iifname "{wan}" ip saddr @customer_hosts ct mark set {mark} accept"""
+            route_wan = f"""
+    iifname "{wan}" ip saddr @customer_hosts ip daddr {{ 10.0.0.0/8, 127.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 }} return
+    iifname "{wan}" ip saddr @customer_hosts ip daddr @customer_hosts return
+    iifname "{wan}" ip saddr @customer_hosts udp dport {{ 53, 67, 68, 123 }} return
+    iifname "{wan}" ip saddr @customer_hosts ip daddr @bypass_ip return
+    iifname "{wan}" ip saddr @customer_hosts ip daddr @ext_const ct mark {mark} meta mark set ct mark return{cn_wan}
+    iifname "{wan}" ip saddr @customer_hosts ct mark {mark} meta mark set ct mark"""
+        forward_customer = """
+    ct state new ip saddr @customer_hosts ct mark set meta mark"""
 
     cn_load = cfg["cn_load_path"]
     cn_count = cfg["cn_count"]
 
     return f"""#!/usr/sbin/nft -f
 # GFC client inet gfc — docs/NFT_ARCHITECTURE.md
-# routing_mode={routing_mode}; TO_CN: {cn_count} prefixes via {cn_load}
+# routing_mode={routing_mode}; proxy_mode={proxy_mode}; TO_CN: {cn_count} prefixes via {cn_load}
 table inet gfc {{
   set TO_CN {{
     type ipv4_addr
@@ -243,7 +327,12 @@ table inet gfc {{
     type ipv4_addr
     flags interval
     elements = {{ 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 }}
-  }}{bypass_set}
+  }}
+
+  set bypass_ip {{
+    type ipv4_addr
+    flags interval{bypass_set_body}
+  }}{customer_set}
 
   set ext {{
     type ipv4_addr
@@ -257,23 +346,24 @@ table inet gfc {{
   }}
 
   chain prerouting_mangle_ct {{
-    type filter hook prerouting priority mangle; policy accept;
-    iifname "{lan}" ct mark set {mark} accept
+    type filter hook prerouting priority mangle; policy accept;{ct_head}
+    iifname "{lan}" ct mark set {mark} accept{ct_wan}
   }}
 
   chain prerouting_mangle_route {{
-    type filter hook prerouting priority filter; policy accept;
+    type filter hook prerouting priority filter; policy accept;{route_head}
     iifname "{lan}" ip daddr {{ 10.0.0.0/8, 127.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 }} return
     iifname "{lan}" ip daddr {lan_cidr} return
-    iifname "{lan}" udp dport {{ 53, 67, 68, 123 }} return{bypass_preroute}
-    iifname "{lan}" ip daddr @ext_const ct mark {mark} meta mark set ct mark return{cn_preroute}
-    iifname "{lan}" ct mark {mark} meta mark set ct mark
+    iifname "{lan}" udp dport {{ 53, 67, 68, 123 }} return
+    iifname "{lan}" ip daddr @bypass_ip return
+    iifname "{lan}" ip daddr @ext_const ct mark {mark} meta mark set ct mark return{cn_lan}
+    iifname "{lan}" ct mark {mark} meta mark set ct mark{route_wan}
   }}
 
   chain gfc_forward {{
     type filter hook forward priority filter; policy accept;
     ct state established,related accept
-    ct state new ip saddr {lan_cidr} ct mark set meta mark
+    ct state new ip saddr {lan_cidr} ct mark set meta mark{forward_customer}
     accept
   }}
 
@@ -282,7 +372,8 @@ table inet gfc {{
     meta mark != 0x00000000 return
     tcp dport {ssh_port} return
     ip daddr @TO_RFC1918 return
-    ip daddr 127.0.0.0/8 return{cn_output}{bypass_output}
+    ip daddr 127.0.0.0/8 return{cn_output}
+    ip daddr @bypass_ip counter return
     meta mark set {mark}
     ct mark set meta mark
   }}
@@ -553,6 +644,8 @@ def main() -> int:
         "cn_load_path": str(cn_load),
     }
     cfg["routing_mode"] = load_routing_mode()
+    cfg["proxy_mode"] = load_proxy_mode()
+    cfg["customer_hosts"] = load_customer_hosts() if cfg["proxy_mode"] == "bypass" else []
 
     if scheme == "kernel-split":
         body = render_architecture(cfg)
@@ -562,8 +655,8 @@ def main() -> int:
         body = scheme_a(cfg)
     outfile.write_text(body)
     print(
-        f"    nft policy scheme={scheme} mode={cfg['routing_mode']} cn={len(cn_cidrs)} "
-        f"bypass={bypass_ips or 'none'} -> {outfile}"
+        f"    nft policy scheme={scheme} mode={cfg['routing_mode']} proxy={cfg['proxy_mode']} cn={len(cn_cidrs)} "
+        f"bypass={bypass_ips or 'none'} hosts={cfg['customer_hosts'] or 'none'} -> {outfile}"
     )
     print(f"    nft cn load -> {cn_load} ({(len(cn_cidrs) + BATCH_SIZE - 1) // BATCH_SIZE if cn_cidrs else 0} batches)")
     return 0

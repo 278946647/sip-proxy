@@ -8,7 +8,7 @@ GFC_TUN_INTERFACE="${GFC_TUN_INTERFACE:-gfctun}"
 gfc_policy_mode_enabled() {
   local mode="${GFC_PROXY_MODE:-gateway}"
   case "$mode" in
-    gateway | transparent) return 0 ;;
+    gateway | transparent | bypass) return 0 ;;
     *) return 1 ;;
   esac
 }

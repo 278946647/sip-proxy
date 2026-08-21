@@ -134,11 +134,17 @@ _clear_fwmark_rules() {
 }
 
 apply_wan_nat() {
+	local proxy_mode masq_match
+	proxy_mode="$(load_proxy_mode)"
+	masq_match="    oifname \"$WAN_IFACE\" masquerade"
+	if [ "$proxy_mode" = "bypass" ]; then
+		masq_match="    oifname \"$WAN_IFACE\" ip saddr $LAN_CIDR masquerade"
+	fi
 	nft -f - <<EOF
 table inet nat {
   chain postrouting {
     type nat hook postrouting priority srcnat; policy accept;
-    oifname "$WAN_IFACE" masquerade
+$masq_match
   }
 }
 EOF
@@ -147,12 +153,39 @@ EOF
 apply_dns_hijack() {
 	# LAN clients may point DNS at 8.8.8.8 or other resolvers. Redirect them
 	# to local unbound:53 (dnsmasq is DHCP-only with port=0).
+	# Bypass: also hijack WAN DNS from @customer_hosts (not LAN-only).
+	local proxy_mode hosts wan_rules set_block
+	proxy_mode="$(load_proxy_mode)"
+	hosts="$(load_customer_host_elements)"
+	wan_rules=""
+	set_block=""
+	if [ "$proxy_mode" = "bypass" ]; then
+		if [ -n "$hosts" ]; then
+			set_block="
+  set customer_hosts {
+    type ipv4_addr
+    flags interval
+    elements = { $hosts }
+  }"
+		else
+			set_block="
+  set customer_hosts {
+    type ipv4_addr
+    flags interval
+  }"
+		fi
+		wan_rules="
+    iifname \"$WAN_IFACE\" ip saddr @customer_hosts udp dport 53 fib daddr type local return
+    iifname \"$WAN_IFACE\" ip saddr @customer_hosts tcp dport 53 fib daddr type local return
+    iifname \"$WAN_IFACE\" ip saddr @customer_hosts udp dport 53 redirect to :$DNS_PORT
+    iifname \"$WAN_IFACE\" ip saddr @customer_hosts tcp dport 53 redirect to :$DNS_PORT"
+	fi
 	nft -f - <<EOF
-table inet gfc_dns_hijack {
+table inet gfc_dns_hijack {$set_block
   chain prerouting {
     type nat hook prerouting priority dstnat; policy accept;
     iifname "$LAN_IFACE" udp dport 53 redirect to :$DNS_PORT
-    iifname "$LAN_IFACE" tcp dport 53 redirect to :$DNS_PORT
+    iifname "$LAN_IFACE" tcp dport 53 redirect to :$DNS_PORT$wan_rules
   }
 }
 EOF
@@ -188,15 +221,107 @@ load_routing_mode() {
 	esac
 }
 
+load_proxy_mode() {
+	local env_mode file_mode f
+	env_mode="$(echo "${GFC_PROXY_MODE:-}" | tr 'A-Z' 'a-z')"
+	file_mode=""
+	f="${GFC_ETC}/proxy-mode.json"
+	if [ -f "$f" ]; then
+		if command -v jsonfilter >/dev/null 2>&1; then
+			file_mode="$(jsonfilter -i "$f" -e '@.mode' 2>/dev/null || true)"
+		else
+			file_mode="$(awk -F'"' '/"mode"[[:space:]]*:/ { print tolower($4); exit }' "$f" 2>/dev/null || true)"
+		fi
+		file_mode="$(echo "$file_mode" | tr 'A-Z' 'a-z')"
+	fi
+	if [ "$env_mode" = "bypass" ]; then
+		echo "bypass"
+		return 0
+	fi
+	case "$file_mode" in
+		bypass) echo "bypass"; return 0 ;;
+		transparent) echo "transparent"; return 0 ;;
+	esac
+	case "$env_mode" in
+		transparent) echo "transparent" ;;
+		*) echo "gateway" ;;
+	esac
+}
+
+load_customer_host_elements() {
+	local f="${GFC_ETC}/customer-hosts.json"
+	local out="" token
+	[ -f "$f" ] || { echo ""; return 0; }
+	for token in $(grep -Eo '([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]+)?' "$f" 2>/dev/null || true); do
+		[ -n "$token" ] || continue
+		is_ipv4 "${token%%/*}" || continue
+		[ -n "$out" ] && out="$out, "
+		out="${out}${token}"
+	done
+	echo "$out"
+}
+
+apply_bypass_sysctl() {
+	sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true
+	sysctl -w net.ipv4.conf.all.rp_filter=2 >/dev/null 2>&1 || true
+	if [ -n "$WAN_IFACE" ]; then
+		sysctl -w "net.ipv4.conf.${WAN_IFACE}.rp_filter=2" >/dev/null 2>&1 || true
+	fi
+}
+
 apply_policy_table_architecture() {
-	local ext_const routing_mode cn_preroute_rule cn_output_rule
+	local ext_const routing_mode proxy_mode hosts
+	local cn_preroute_rule cn_output_rule cn_wan_rule
+	local ct_head ct_wan route_head route_wan forward_customer customer_set
 	ext_const="$(fmt_ext_const_elements)"
 	routing_mode="$(load_routing_mode)"
+	proxy_mode="$(load_proxy_mode)"
+	hosts="$(load_customer_host_elements)"
 	cn_preroute_rule=""
 	cn_output_rule=""
+	cn_wan_rule=""
+	ct_head=""
+	ct_wan=""
+	route_head=""
+	route_wan=""
+	forward_customer=""
+	customer_set=""
 	if [ "$routing_mode" != "global" ]; then
 		cn_preroute_rule="    iifname \"$LAN_IFACE\" ip daddr @TO_CN return"
 		cn_output_rule="    ip daddr @TO_CN return"
+	fi
+	if [ "$proxy_mode" = "bypass" ]; then
+		if [ -n "$hosts" ]; then
+			customer_set="
+  set customer_hosts {
+    type ipv4_addr
+    flags interval
+    elements = { $hosts }
+  }"
+		else
+			customer_set="
+  set customer_hosts {
+    type ipv4_addr
+    flags interval
+  }"
+		fi
+		ct_head="    iifname \"$TUN_IFACE\" return
+    fib daddr type { local, broadcast, multicast } return"
+		route_head="    iifname \"$TUN_IFACE\" return
+    fib daddr type { local, broadcast, multicast } return"
+		ct_wan="    iifname \"$WAN_IFACE\" ip saddr @customer_hosts ct state { established, related } return
+    iifname \"$WAN_IFACE\" ip saddr @customer_hosts ct mark set $MARK accept"
+		if [ "$routing_mode" != "global" ]; then
+			cn_wan_rule="    iifname \"$WAN_IFACE\" ip saddr @customer_hosts ip daddr @TO_CN return"
+		fi
+		route_wan="    iifname \"$WAN_IFACE\" ip saddr @customer_hosts ip daddr { 10.0.0.0/8, 127.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 } return
+    iifname \"$WAN_IFACE\" ip saddr @customer_hosts ip daddr @customer_hosts return
+    iifname \"$WAN_IFACE\" ip saddr @customer_hosts udp dport { 53, 67, 68, 123 } return
+    iifname \"$WAN_IFACE\" ip saddr @customer_hosts ip daddr @bypass_ip return
+    iifname \"$WAN_IFACE\" ip saddr @customer_hosts ip daddr @ext_const ct mark $MARK meta mark set ct mark return
+${cn_wan_rule}
+    iifname \"$WAN_IFACE\" ip saddr @customer_hosts ct mark $MARK meta mark set ct mark"
+		forward_customer="    ct state new ip saddr @customer_hosts ct mark set meta mark"
 	fi
 	nft -f - <<EOF
 table inet gfc {
@@ -215,7 +340,7 @@ table inet gfc {
     type ipv4_addr
     flags interval
   }
-
+$customer_set
   set ext {
     type ipv4_addr
     size 262144
@@ -229,11 +354,14 @@ table inet gfc {
 
   chain prerouting_mangle_ct {
     type filter hook prerouting priority mangle; policy accept;
+$ct_head
     iifname "$LAN_IFACE" ct mark set $MARK accept
+$ct_wan
   }
 
   chain prerouting_mangle_route {
     type filter hook prerouting priority filter; policy accept;
+$route_head
     iifname "$LAN_IFACE" ip daddr { 10.0.0.0/8, 127.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 } return
     iifname "$LAN_IFACE" ip daddr $LAN_CIDR return
     iifname "$LAN_IFACE" udp dport { 53, 67, 68, 123 } return
@@ -241,12 +369,14 @@ table inet gfc {
     iifname "$LAN_IFACE" ip daddr @ext_const ct mark $MARK meta mark set ct mark return
 ${cn_preroute_rule}
     iifname "$LAN_IFACE" ct mark $MARK meta mark set ct mark
+$route_wan
   }
 
   chain gfc_forward {
     type filter hook forward priority filter; policy accept;
     ct state established,related accept
     ct state new ip saddr $LAN_CIDR ct mark set meta mark
+$forward_customer
     accept
   }
 
@@ -490,6 +620,9 @@ start_rules() {
 	apply_output_policy
 	load_cn_set
 	load_bypass_set
+	if [ "$(load_proxy_mode)" = "bypass" ]; then
+		apply_bypass_sysctl
+	fi
 	wait_tun || {
 		echo "WARN: $TUN_IFACE not up; DNS hijack and CN policy set applied, policy route deferred (hotplug 99-gfc-tun will apply when TUN appears)" >&2
 		exit 0
@@ -500,7 +633,7 @@ start_rules() {
 	if [ -x "$GFC_ROOT/deploy/apply-tc-htb.sh" ]; then
 		sh "$GFC_ROOT/deploy/apply-tc-htb.sh" apply 2>/dev/null || true
 	fi
-	echo "gfc routing: scheme=$ROUTING_SCHEME mode=$(load_routing_mode) lan=$LAN_IFACE wan=$WAN_IFACE cidr=$LAN_CIDR mark=$MARK table=$TABLE redirect=$REDIRECT_PORT ssh=$SSH_PORT priority=$NFT_PRIORITY output=$OUTPUT_POLICY mosdns_uid=$MOSDNS_UID singbox_uid=$SINGBOX_UID cn=$CN_LIST bypass=$BYPASS_AUDIT"
+	echo "gfc routing: scheme=$ROUTING_SCHEME proxy=$(load_proxy_mode) mode=$(load_routing_mode) lan=$LAN_IFACE wan=$WAN_IFACE cidr=$LAN_CIDR mark=$MARK table=$TABLE redirect=$REDIRECT_PORT ssh=$SSH_PORT priority=$NFT_PRIORITY output=$OUTPUT_POLICY mosdns_uid=$MOSDNS_UID singbox_uid=$SINGBOX_UID cn=$CN_LIST bypass=$BYPASS_AUDIT"
 }
 
 case "$ACTION" in
@@ -509,7 +642,7 @@ case "$ACTION" in
 	stop) stop_rules ;;
 	restart) stop_rules; start_rules ;;
 	status)
-		echo "scheme=$ROUTING_SCHEME lan=$LAN_IFACE wan=$WAN_IFACE cidr=$LAN_CIDR tun=$TUN_IFACE mark=$MARK table=$TABLE redirect=$REDIRECT_PORT ssh=$SSH_PORT"
+		echo "scheme=$ROUTING_SCHEME proxy=$(load_proxy_mode) lan=$LAN_IFACE wan=$WAN_IFACE cidr=$LAN_CIDR tun=$TUN_IFACE mark=$MARK table=$TABLE redirect=$REDIRECT_PORT ssh=$SSH_PORT"
 		echo "dns_hijack=$(nft list table inet gfc_dns_hijack >/dev/null 2>&1 && echo yes || echo no)"
 		echo "policy=$(nft list table inet gfc >/dev/null 2>&1 && echo yes || echo no)"
 		echo "cn_list=$CN_LIST"

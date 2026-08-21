@@ -17,6 +17,7 @@ import (
 	"github.com/278946647/sip-proxy/gfc-client/internal/linecode"
 	"github.com/278946647/sip-proxy/gfc-client/internal/metrics"
 	"github.com/278946647/sip-proxy/gfc-client/internal/payload"
+	"github.com/278946647/sip-proxy/gfc-client/internal/proxymode"
 	"github.com/278946647/sip-proxy/gfc-client/internal/reversessh"
 	"github.com/278946647/sip-proxy/gfc-client/internal/stats"
 	"github.com/278946647/sip-proxy/gfc-client/internal/store"
@@ -166,7 +167,7 @@ func (r *Runner) tick() {
 	_ = metrics.WriteStatus(r.cfg.Paths.StatusFile, m, device)
 
 	pubKey, _ := r.revSSH.EnsureKeypair()
-	hb, err := client.Heartbeat(m, r.cfg.DeviceName, nil, nil, pubKey, nil, r.cfg.ProxyMode, config.Version, nil)
+	hb, err := client.Heartbeat(m, r.cfg.DeviceName, nil, nil, pubKey, nil, proxymode.CommittedMode(r.cfg), config.Version, nil)
 	r.pendingReverseSSH = false
 	if err != nil {
 		fmt.Printf("heartbeat: %v\n", err)
@@ -203,7 +204,7 @@ func (r *Runner) tick() {
 		if active {
 			status["active"] = true
 		}
-		if _, err := client.Heartbeat(m, r.cfg.DeviceName, nil, nil, "", status, r.cfg.ProxyMode, config.Version, deviceCmdAck); err != nil {
+		if _, err := client.Heartbeat(m, r.cfg.DeviceName, nil, nil, "", status, proxymode.CommittedMode(r.cfg), config.Version, deviceCmdAck); err != nil {
 			fmt.Printf("heartbeat status: %v\n", err)
 		}
 		if msg != "" {
@@ -288,18 +289,8 @@ func (r *Runner) configMatches(p map[string]any) bool {
 }
 
 func (r *Runner) mergePayloadProxyMode(payload map[string]any) {
-	pm, ok := payload["proxyMode"].(string)
-	if !ok || strings.TrimSpace(pm) == "" {
-		payload["proxyMode"] = r.cfg.ProxyMode
-		return
-	}
-	pm = strings.ToLower(strings.TrimSpace(pm))
-	if pm != r.cfg.ProxyMode {
-		_ = envfile.Set(r.cfg.Paths.EnvFile, "GFC_PROXY_MODE", pm)
-		_ = os.Setenv("GFC_PROXY_MODE", pm)
-		r.cfg.ProxyMode = pm
-	}
-	payload["proxyMode"] = pm
+	// Device Web is authoritative. Ignore control-plane proxyMode writes.
+	payload["proxyMode"] = r.cfg.ProxyMode
 }
 
 func (r *Runner) reconcileRoutingScheme(cpPayload map[string]any, cpVersion, appliedVersion string) {

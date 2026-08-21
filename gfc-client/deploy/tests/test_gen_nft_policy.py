@@ -98,6 +98,37 @@ class ClientNftArchitectureTests(unittest.TestCase):
         text = gnp.render_architecture(cfg)
         self.assertIn("ip daddr @TO_CN return", text)
 
+    def test_bypass_option_b(self) -> None:
+        cfg = {
+            "lan": "br-lan",
+            "lan_cidr": "192.168.68.0/24",
+            "mark": "0x2023",
+            "tun": "gfctun",
+            "wan": "eth0",
+            "mosdns_uid": "65353",
+            "singbox_uid": "65354",
+            "ssh_port": "212",
+            "redirect_port": "11800",
+            "ext_const_ips": ["1.1.1.1", "8.8.8.8"],
+            "bypass_ips": ["103.78.41.16"],
+            "cn_count": 1,
+            "cn_load_path": "/tmp/cn.nft",
+            "routing_mode": "split",
+            "proxy_mode": "bypass",
+            "customer_hosts": ["10.20.30.0/24"],
+        }
+        text = gnp.render_architecture(cfg)
+        for needle in (
+            'iifname "eth0" ip saddr @customer_hosts ct mark set 0x00002023 accept',
+            'iifname "eth0" ip saddr @customer_hosts ip daddr @TO_CN return',
+            "ct state new ip saddr @customer_hosts ct mark set meta mark",
+            "set customer_hosts",
+            'iifname "gfctun" return',
+            "fib daddr type { local, broadcast, multicast } return",
+        ):
+            self.assertIn(needle, text, msg=needle)
+        self.assertNotIn("skuid", text)
+
     def test_cn_load_targets_to_cn(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             etc = Path(tmp)
