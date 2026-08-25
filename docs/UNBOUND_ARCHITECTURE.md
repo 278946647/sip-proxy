@@ -81,6 +81,7 @@ server:
     access-control: 10.0.0.0/8 allow
     access-control: 172.16.0.0/12 allow
     access-control: 192.168.0.0/16 allow
+    include: "/etc/unbound/conf.d/gfc-bypass-acl.conf"
 
     qname-minimisation: no
     forward-first: no          # implicit via forward-zone; never fall back to root recursion
@@ -93,6 +94,21 @@ server:
 - `do-ip6: yes` without architecture review
 - `interface: 127.0.0.1` only (must serve LAN via gateway :53)
 - Any `forward-zone` / `stub-zone` **inside** `server:` (unbound ignores them → silent root recursion bug)
+- `access-control: 0.0.0.0/0 allow`
+
+### 4.1 Bypass ACL (`gfc-bypass-acl.conf`)
+
+RFC1918 ACLs cover the management LAN mini-gateway only. Bypass customer sources are **`@customer_hosts` from device Web** and may be **public WAN IPs**. They are not assumed private and are not derived from the WAN mask.
+
+| Item | Rule |
+|------|------|
+| Path | `/etc/unbound/conf.d/gfc-bypass-acl.conf` |
+| Include | Inside `server:` (ACL clauses only — never `forward-zone`) |
+| Bypass | One `access-control: <host-or-cidr> allow` per `customer-hosts.json` entry (`a.b.c.d` → `/32`) |
+| Gateway / not bypass | File exists but contains **no** `allow` lines (comments only) |
+| Forbidden | Auto-inserting the entire bypass WAN prefix; `0.0.0.0/0 allow` |
+
+Generators: `internal/render/unbound` on Render/ReloadDNS; `gfc-routing.sh` on routing apply (same file). Reload `gfc-unbound` when the file content changes.
 
 ---
 
@@ -208,8 +224,9 @@ Generated / rendered unbound config must:
 
 | Component | Generator | Status |
 |-----------|-----------|--------|
-| Main template | `share/unbound/unbound.conf.template` | Aligned |
-| Renderer | `internal/render/unbound/unbound.go` | Aligned |
+| Main template | `share/unbound/unbound.conf.template` | Aligned (`gfc-bypass-acl.conf` include in `server:`) |
+| Renderer | `internal/render/unbound/unbound.go` | Aligned (writes bypass ACL) |
+| Bypass ACL | `/etc/unbound/conf.d/gfc-bypass-acl.conf` | From `customer-hosts.json`; `gfc-routing.sh` + renderer |
 | Snippet includes | `share/unbound/local.d/*.conf`, `conf.d/gfc-domestic-forward.conf` | Required at bootstrap |
 | Init | `deploy/immortalwrt/package/files/etc/init.d/gfc-unbound` | Aligned |
 | dnsmasq DHCP DNS | `deploy/immortalwrt/configure-dnsmasq-dhcp.sh` | Aligned (`v0.3.0`) |

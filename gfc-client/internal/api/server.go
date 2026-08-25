@@ -83,6 +83,9 @@ func (s *Server) applyProxyModeDataplane(mode string) error {
 	if !ok {
 		return fmt.Errorf("%s", msg)
 	}
+	if ok, msg := s.engine.ReloadDNS(); !ok {
+		return fmt.Errorf("unbound reload: %s", msg)
+	}
 	return nil
 }
 

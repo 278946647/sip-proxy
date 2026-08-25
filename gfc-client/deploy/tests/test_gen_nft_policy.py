@@ -55,6 +55,7 @@ class ClientNftArchitectureTests(unittest.TestCase):
         self.assertNotIn("skuid", text)
         self.assertNotIn("gfc_client_mangle", text)
         self.assertNotIn("cn_ip", text)
+        self.assertNotIn("ip daddr @TO_RFC1918 return\n    ip daddr 127.0.0.0/8 return\n    ip daddr @customer_hosts return", text)
 
     def test_global_mode_omits_to_cn_return(self) -> None:
         cfg = {
@@ -125,6 +126,7 @@ class ClientNftArchitectureTests(unittest.TestCase):
             "set customer_hosts",
             'iifname "gfctun" return',
             "fib daddr type { local, broadcast, multicast } return",
+            "ip daddr @TO_RFC1918 return\n    ip daddr 127.0.0.0/8 return\n    ip daddr @customer_hosts return",
         ):
             self.assertIn(needle, text, msg=needle)
         self.assertNotIn("skuid", text)

@@ -45,3 +45,20 @@ func TestCopyIfMissing(t *testing.T) {
 		t.Fatalf("operator file overwritten: %q", got)
 	}
 }
+
+func TestRenderBypassACLPublicHost(t *testing.T) {
+	got := RenderBypassACL(true, []string{"103.78.41.18", "10.20.30.0/24"})
+	if !strings.Contains(got, "access-control: 103.78.41.18/32 allow") {
+		t.Fatalf("missing public host ACL:\n%s", got)
+	}
+	if !strings.Contains(got, "access-control: 10.20.30.0/24 allow") {
+		t.Fatalf("missing cidr ACL:\n%s", got)
+	}
+	if strings.Contains(got, "0.0.0.0/0") {
+		t.Fatal("must not allow all")
+	}
+	inactive := RenderBypassACL(false, []string{"103.78.41.18"})
+	if strings.Contains(inactive, "allow") {
+		t.Fatalf("gateway ACL must not allow hosts:\n%s", inactive)
+	}
+}

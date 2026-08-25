@@ -281,7 +281,7 @@ add rule inet gfc output_mangle_route ct mark set meta mark
 
 ### 9.3 Bypass mode — reference rules (Option B, ratified 2026-08-20)
 
-Same tables, chains, mark `0x00002023`, and `output_mangle_route` as §9.2. Differences are **match conditions** and set `customer_hosts`.
+Same tables, chains, and mark `0x00002023` as §9.2. Differences are **match conditions**, set `customer_hosts`, and **one extra** `output_mangle_route` return for `@customer_hosts` (customer sources may be public WAN IPs; do not assume RFC1918). Remaining OUTPUT rules match §9.2.
 
 Non-nft companions (mandatory with these rules):
 
@@ -359,12 +359,13 @@ add rule inet gfc gfc_forward ct state new ip saddr <lan_subnet> ct mark set met
 add rule inet gfc gfc_forward ct state new ip saddr @customer_hosts ct mark set meta mark
 add rule inet gfc gfc_forward accept
 
-# 12. output_mangle_route — identical to gateway (§9.2)
+# 12. output_mangle_route — §9.2 plus bypass customer return (before catch-all mark)
 add chain inet gfc output_mangle_route { type route hook output priority filter; policy accept; }
 add rule inet gfc output_mangle_route meta mark != 0x00000000 return
 add rule inet gfc output_mangle_route tcp dport 212 return
 add rule inet gfc output_mangle_route ip daddr @TO_RFC1918 return
 add rule inet gfc output_mangle_route ip daddr 127.0.0.0/8 return
+add rule inet gfc output_mangle_route ip daddr @customer_hosts return
 add rule inet gfc output_mangle_route ip daddr @TO_CN return
 add rule inet gfc output_mangle_route ip daddr @bypass_ip counter return
 add rule inet gfc output_mangle_route meta mark set 0x00002023
@@ -376,6 +377,7 @@ add rule inet gfc output_mangle_route ct mark set meta mark
 | Guard | Stops |
 |-------|--------|
 | `saddr @customer_hosts` on WAN | Marking/hijacking unrelated WAN neighbors, ISP gateway, non-GFC clients |
+| OUTPUT `ip daddr @customer_hosts return` | Local unbound/ICMP replies to **public** customer IPs policy-routed into `gfctun` |
 | `iifname <tun_iface> return` | TUN replies re-classified into TUN |
 | `fib daddr type { local, broadcast, multicast } return` | VLESS/SSH/LuCI/unbound replies marked `0x2023` |
 | WAN `established,related` return (customer only) | Re-marking existing customer flows |

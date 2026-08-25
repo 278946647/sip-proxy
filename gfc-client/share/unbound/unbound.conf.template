@@ -21,6 +21,7 @@ server:
     access-control: 192.168.0.0/16 allow
     access-control: 10.0.0.0/8 allow
     access-control: 172.16.0.0/12 allow
+    include: "/etc/unbound/conf.d/gfc-bypass-acl.conf"
 
     # --- 隐私与性能 ---
     verbosity: 1

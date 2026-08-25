@@ -290,6 +290,7 @@ def render_architecture(cfg: dict) -> str:
     route_head = ""
     route_wan = ""
     forward_customer = ""
+    customer_output = ""
     if proxy_mode == "bypass":
         ct_head = f"""
     iifname "{tun}" return
@@ -310,6 +311,8 @@ def render_architecture(cfg: dict) -> str:
     iifname "{wan}" ip saddr @customer_hosts ct mark {mark} meta mark set ct mark"""
         forward_customer = """
     ct state new ip saddr @customer_hosts ct mark set meta mark"""
+        customer_output = """
+    ip daddr @customer_hosts return"""
 
     cn_load = cfg["cn_load_path"]
     cn_count = cfg["cn_count"]
@@ -372,7 +375,7 @@ table inet gfc {{
     meta mark != 0x00000000 return
     tcp dport {ssh_port} return
     ip daddr @TO_RFC1918 return
-    ip daddr 127.0.0.0/8 return{cn_output}
+    ip daddr 127.0.0.0/8 return{customer_output}{cn_output}
     ip daddr @bypass_ip counter return
     meta mark set {mark}
     ct mark set meta mark
