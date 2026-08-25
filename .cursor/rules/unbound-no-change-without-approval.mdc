@@ -8,6 +8,7 @@ globs:
   - "**/fix-unbound*.sh"
   - "**/lib-unbound*.sh"
   - "**/UNBOUND_ARCHITECTURE.md"
+  - "**/BYPASS_MODE.md"
 alwaysApply: true
 ---
 
@@ -18,7 +19,8 @@ alwaysApply: true
 1. `docs/UNBOUND_ARCHITECTURE.md`（仓库内唯一真相）
 2. `docs/NFT_ARCHITECTURE.md`（DNS 劫持、ext_const 路由分类）
 3. 用户在对话中明确给出的 unbound 片段
-4. 其他文档（`GATEWAY_CORE.md`、`ARCHITECTURE.md`、MosDNS 注释）— **不得覆盖 1**
+4. `docs/BYPASS_MODE.md`（旁路 ACL / 设备 Web DNS 契约）
+5. 其他文档（`GATEWAY_CORE.md`、`ARCHITECTURE.md`、MosDNS 注释）— **不得覆盖 1**
 
 ## 修改前必须做的事
 
@@ -40,6 +42,8 @@ alwaysApply: true
 - 默认 zone 改为纯 UDP 8.8.8.8 并 `forward-first: yes`（递归回退）
 - 硬编码部署 LAN 网段到 unbound access-control 之外的全局策略
 - 启用 stock OpenWrt `/etc/init.d/unbound`（UCI 递归）替代 `gfc-unbound`
+- 旁路 `access-control: 0.0.0.0/0 allow`，或用 RFC1918 代替 `@customer_hosts` ACL
+- 旁路 ACL 写进 `server:` 之外的 `forward-zone` 文件冒充 include
 
 ## dnsmasq 边界（强制）
 

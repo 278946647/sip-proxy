@@ -9,6 +9,8 @@ globs:
   - "**/node_agent/routes.py"
   - "**/*.nft"
   - "**/NFT_ARCHITECTURE.md"
+  - "**/BYPASS_MODE.md"
+  - "**/verify-dataplane-dns.sh"
 alwaysApply: true
 ---
 
@@ -17,8 +19,9 @@ alwaysApply: true
 ## 权威来源（优先级从高到低）
 
 1. `docs/NFT_ARCHITECTURE.md`（仓库内唯一真相）
-2. 用户在对话中明确给出的 nft 片段
-3. 其他文档（`GATEWAY_CORE.md`、`ARCHITECTURE.md`、生成器注释）— **不得覆盖 1**
+2. `docs/BYPASS_MODE.md`（旁路匹配条件 / NAT / OUTPUT customer_hosts）
+3. 用户在对话中明确给出的 nft 片段
+4. 其他文档（`GATEWAY_CORE.md`、`ARCHITECTURE.md`、生成器注释）— **不得覆盖 1**
 
 ## 修改前必须做的事
 
@@ -40,6 +43,8 @@ alwaysApply: true
 - 用 `meta skuid` 替代 `bypass_ip` 或 `TO_CN`
 - 合并 nft 表或发明新 packet flow
 - 引入新方案名（如 `gfc_client_mangle`、`classify` 替代规范链名）
+- 旁路：WAN 全量新连接 ct mark；客户 `oif WAN masquerade`（无 `ip saddr <lan>`）；关闭 `0x2023` 策略路由
+- 旁路 `output_mangle_route` 省略 `ip daddr @customer_hosts return`（公网客户 DNS 回包会进 gfctun）
 
 ## 允许的无须批准操作
 

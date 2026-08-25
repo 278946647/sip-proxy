@@ -6,6 +6,8 @@
 > - [`docs/SINGBOX_ARCHITECTURE.md`](../../docs/SINGBOX_ARCHITECTURE.md) — sing-box 配置
 >
 > 本文档描述数据流与运维；与上述文件冲突时以 ARCHITECTURE 文档为准。
+>
+> **旁路模式：** 以 [`docs/BYPASS_MODE.md`](../../docs/BYPASS_MODE.md) 与 NFT §9.3 为准。下文「部署模式」表若与之冲突，视为过时。
 
 ## 可行性结论
 
@@ -181,11 +183,13 @@ network-online
 
 ## 部署模式
 
-| 模式 | 策略路由 | mangle 打标 |
-|------|----------|-------------|
-| `gateway` | ✅ | ✅ |
-| `transparent` | ✅ | ✅ |
-| `bypass` | ❌ | ❌ |
+策略路由：`fwmark 0x2023 → table 2022 → gfctun`。旁路 **不得** 关闭 mangle / 策略路由（旧表曾误写 ❌，已废止）。
+
+| 模式 | 策略路由 | nft 打标 | 用户入向 |
+|------|----------|----------|----------|
+| `gateway` | ✅ | ✅ LAN | `iif LAN` |
+| `bypass` | ✅ | ✅ 仅 `@customer_hosts`（WAN）+ 管理 LAN 小网关 | WAN + `saddr @customer_hosts`；见 `docs/BYPASS_MODE.md` |
+| `transparent` | — | — | **未开放**，必须拒绝 |
 
 ---
 
@@ -196,7 +200,7 @@ network-online
 | `deploy/lib-policy-routing.sh` | mark/table 常量、nft 策略、ip rule |
 | `deploy/lib-singbox-user.sh` | sing-box 固定 uid 65354 |
 | `deploy/gfc-routing.sh` | 刷新 policy nft + 应用策略路由 |
-| `deploy/lib-mosdns-nft.sh` | DNS 劫持 |
+| `deploy/lib-unbound-nft.sh` / `immortalwrt/gfc-routing.sh` | DNS 劫持（unbound :53；MosDNS 脚本为 legacy） |
 | `/etc/gfc-client/nftables-policy.conf` | mangle 规则 |
 | `internal/render/singbox/singbox.go` | TUN 无 auto_route |
 

@@ -1,0 +1,63 @@
+---
+description: GFC 旁路模式契约 — 设备 Web 权威、Option B、公网 customer_hosts
+globs:
+  - "**/proxymode/**"
+  - "**/gfc-routing.sh"
+  - "**/gen-nft-policy.py"
+  - "**/lib-unbound-nft.sh"
+  - "**/lib-policy-routing.sh"
+  - "**/verify-dataplane-dns.sh"
+  - "**/settings.js"
+  - "**/BYPASS_MODE.md"
+  - "**/UNBOUND_ARCHITECTURE.md"
+  - "**/NFT_ARCHITECTURE.md"
+alwaysApply: true
+---
+
+# 旁路模式（proxy_mode=bypass）协议（强制）
+
+## 权威来源
+
+1. `docs/BYPASS_MODE.md`
+2. `docs/NFT_ARCHITECTURE.md` §9.3 Option B
+3. `docs/UNBOUND_ARCHITECTURE.md` §4.1
+4. 用户在对话中明确批准的片段
+
+`GATEWAY_CORE.md` / `ARCHITECTURE.md` / `BYPASS_MODE_DEV_PLAN.md` **不得覆盖** 以上文档。
+
+## 修改前
+
+1. 读 `docs/BYPASS_MODE.md` 与对应 `*_ARCHITECTURE.md`
+2. 输出规范 vs 实现差异表
+3. 等待「确认修改」
+4. 只改点名文件
+
+## 绝对禁止（无架构评审 + 用户批准）
+
+- WAN 入向对所有新连接 `ct mark 0x2023`（方案 A）
+- 旁路关闭策略路由 / mangle（`0x2023 → 2022 → gfctun` 必须保留）
+- 客户流量 `oif WAN masquerade`（无 `ip saddr <lan_subnet>`）
+- 管理 LAN 与 WAN 桥接
+- 用控制面 / payload `proxyMode` 开局写入旁路或 `customer_hosts`
+- 假定 `@customer_hosts` 一定是 RFC1918；省略 OUTPUT `ip daddr @customer_hosts return`
+- 把整个旁路 WAN 前缀自动写入 `customer_hosts`
+- unbound `access-control: 0.0.0.0/0 allow`
+- 用 MosDNS / sing-box DNS inbound 替代 unbound
+- 旁路改 sing-box `route.final` / `auto_route`
+- 开放 `transparent`（当前必须拒绝）
+- 为旁路试编而 bump 产品版本 / `PKG_RELEASE`（§1.5）
+
+## 强制摘要
+
+| 项 | 值 |
+|----|-----|
+| 写入路径 | 仅设备 Web |
+| 控制面 | 只读上报；客户端忽略 payload 写入 |
+| 客户匹配 | `@customer_hosts`（可为公网） |
+| NAT | 仅管理 LAN SNAT |
+| DNS | LAN hijack + WAN+customer 四条；ACL=hosts |
+| OEM LAN | 暂不改默认段；冲突校验用运行时 LAN CIDR |
+
+## 用户口令
+
+> 严格按 `docs/BYPASS_MODE.md` 与 `NFT_ARCHITECTURE.md` §9.3，只改我点名的文件，改前先给 diff，我确认后再写代码。

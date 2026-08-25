@@ -4,7 +4,7 @@
 **Scope:** GFC Client (ImmortalWrt / Ubuntu gateway) and GFC Forward Node.  
 **Supersedes:** Any conflicting nft descriptions in `GFC_GATEWAY_CORE.md`, `ARCHITECTURE.md`, generator comments, or AI-generated shortcuts.
 
-**Companion:** [`docs/UNBOUND_ARCHITECTURE.md`](UNBOUND_ARCHITECTURE.md) · [`docs/SINGBOX_ARCHITECTURE.md`](SINGBOX_ARCHITECTURE.md)
+**Companion:** [`docs/UNBOUND_ARCHITECTURE.md`](UNBOUND_ARCHITECTURE.md) · [`docs/SINGBOX_ARCHITECTURE.md`](SINGBOX_ARCHITECTURE.md) · [`docs/BYPASS_MODE.md`](BYPASS_MODE.md)
 
 If generated runtime rules differ from this document, **the generator is wrong** — not this document.
 

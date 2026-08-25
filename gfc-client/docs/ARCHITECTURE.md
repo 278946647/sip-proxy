@@ -9,7 +9,10 @@
 > [`docs/NFT_ARCHITECTURE.md`](../../docs/NFT_ARCHITECTURE.md) ·
 > [`docs/UNBOUND_ARCHITECTURE.md`](../../docs/UNBOUND_ARCHITECTURE.md) ·
 > [`docs/SINGBOX_ARCHITECTURE.md`](../../docs/SINGBOX_ARCHITECTURE.md) ·
+> [`docs/BYPASS_MODE.md`](../../docs/BYPASS_MODE.md) ·
 > [`NETWORK_APPLY.md`](NETWORK_APPLY.md)（OpenWrt WAN apply / 回滚）
+>
+> **本文后半 MosDNS / Ubuntu Phase 1 叙述为历史设计。** 生产 LAN DNS 是 **unbound :53**；旁路以 `BYPASS_MODE.md` 为准。冲突时禁止用本文覆盖架构文档。
 
 ---
 
@@ -33,18 +36,16 @@ GFC Client 是企业级 Linux 网关分流盒子，运行于 Ubuntu Server，面
 
 仓库 `gfc-client/` 已有 Go Agent、Vue3 Web、unbound/Sing-box 渲染器及部署脚本。`share/easymosdns/` 为 **legacy**，生产路径使用 unbound（见 `UNBOUND_ARCHITECTURE.md`）。
 
-**当前实现与目标的主要差距**（实现阶段处理）：
+**与生产权威的对照**（ MosDNS 行已废止）：
 
-| 项 | 当前 | 目标 |
-|----|------|------|
-| MosDNS 监听 | `:5335` + nft redirect | `0.0.0.0:53` 直接监听 |
-| DNS 劫持范围 | 仅 LAN PREROUTING | PREROUTING（LAN）+ OUTPUT（本机/Docker） |
-| systemd-resolved | 未显式禁用 | 安装时禁用，resolv.conf → 127.0.0.1 |
-| 网络初始化服务 | `apply-network.sh` 散落调用 | 独立 `gfc-network.service` |
-| 服务命名 | `gfc-client-*` | 规范化为 `gfc-*`（可保留别名兼容） |
-| dnsmasq | 含 `cache-size` | `port=0`，禁止 DNS 能力 |
-| Sing-box DNS | idle 配置含 local DNS | 禁止 DNS 出站参与解析 |
-| 配置编排 | `dataplane.Engine` 雏形 | 完整 Orchestrator + 校验 + 回滚 |
+| 项 | 生产权威（以此为准） | 本文后半历史稿 |
+|----|----------------------|----------------|
+| LAN DNS | unbound `0.0.0.0:53`（`UNBOUND_ARCHITECTURE.md`） | 曾写 MosDNS :53 / :5335 |
+| DNS 劫持 | nft `gfc_dns_hijack`：网关 LAN；旁路再加 WAN+`@customer_hosts` | 仅 LAN / MosDNS |
+| dnsmasq | `port=0`，option 6 = LAN 网关 | 曾含 DNS 缓存 |
+| 中外分流 | nft `TO_CN` + mark；sing-box kernel-split `final=direct` | 部分稿写 MosDNS/Geo |
+| 旁路 | `docs/BYPASS_MODE.md`；策略路由必须开 | 勿用旧「bypass 关 mangle」 |
+| OEM 管理 LAN | ImmortalWrt **当前 UCI**（常见 `192.168.1.0/24`）；暂不改出厂默认 | 下文 `192.168.68.0/24` 为 Ubuntu/Go 回退示例 |
 
 ---
 

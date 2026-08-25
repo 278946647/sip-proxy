@@ -6,7 +6,7 @@
 
 If generated runtime config differs from this document, **the generator is wrong** — not this document.
 
-**Companion:** [`docs/NFT_ARCHITECTURE.md`](NFT_ARCHITECTURE.md) (DNS hijack, `ext_const`), [`docs/SINGBOX_ARCHITECTURE.md`](SINGBOX_ARCHITECTURE.md) (TUN 内国际 DNS IP 出站).
+**Companion:** [`docs/NFT_ARCHITECTURE.md`](NFT_ARCHITECTURE.md) (DNS hijack, `ext_const`), [`docs/SINGBOX_ARCHITECTURE.md`](SINGBOX_ARCHITECTURE.md) (TUN 内国际 DNS IP 出站), [`docs/BYPASS_MODE.md`](BYPASS_MODE.md) (旁路 ACL / 设备 Web).
 
 ---
 

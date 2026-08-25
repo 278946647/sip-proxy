@@ -42,6 +42,8 @@ LAN / local process
 
 **Sing-box does not decide CN vs international IP split** in kernel-split. That is **nft only**.
 
+**`proxy_mode` (gateway vs bypass)** does not change kernel-split sing-box: still TUN `gfctun`, `auto_route: false`, `route.final: direct`. Bypass only changes nft ingress (`iif WAN` + `@customer_hosts`). See [`BYPASS_MODE.md`](BYPASS_MODE.md).
+
 ### GFC Forward Node
 
 ```

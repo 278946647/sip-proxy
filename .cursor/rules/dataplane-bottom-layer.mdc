@@ -10,6 +10,7 @@ globs:
   - "**/docs/NFT_ARCHITECTURE.md"
   - "**/docs/UNBOUND_ARCHITECTURE.md"
   - "**/docs/SINGBOX_ARCHITECTURE.md"
+  - "**/docs/BYPASS_MODE.md"
   - "**/gfc-client/docs/NETWORK_APPLY.md"
   - "**/gfc-client/docs/DATAPLANE_CHANGE.md"
 alwaysApply: false

@@ -11,6 +11,7 @@
 |------|------|
 | nft | `docs/NFT_ARCHITECTURE.md` |
 | DNS | `docs/UNBOUND_ARCHITECTURE.md` |
+| 旁路 | `docs/BYPASS_MODE.md` |
 | sing-box | `docs/SINGBOX_ARCHITECTURE.md` |
 | WAN apply | `gfc-client/docs/NETWORK_APPLY.md` |
 | 远程运维 | `gfc-platform/docs/REMOTE_ACCESS.md` |

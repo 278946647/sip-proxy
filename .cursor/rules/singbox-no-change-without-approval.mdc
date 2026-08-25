@@ -41,6 +41,7 @@ alwaysApply: true
 - 修改规范 outbound tag：`direct`、`proxy`、`proxy-prefer`、`tun-in`
 - VLESS `bind_interface` 指向 `gfctun` 而非 WAN
 - `route.final` 改为 `proxy` / `proxy-prefer`（kernel-split 必须为 `direct`）
+- 因 `proxy_mode=bypass` 改 TUN / `auto_route` / `route.final`（旁路分类在 nft，sing-box 契约不变）
 - 用 skuid / process 规则替代 `ip_cidr` bypass
 - sing-box 自建 nft 表与 `inet gfc` 冲突
 

@@ -32,10 +32,10 @@ alwaysApply: true
 5. `docs/SESSION_HANDOFF_2026-07_OTA_LIFECYCLE.md` — reclaim / 硬退役 / OTA（平台侧）
 6. `docs/NFT_ARCHITECTURE.md` / `UNBOUND_ARCHITECTURE.md` / `SINGBOX_ARCHITECTURE.md` — 数据面（须批准）
 
-## 当前状态摘要（2026-07-21 / `PKG_RELEASE:=23`）
+## 当前状态摘要
 
-- **已验证构建：** `437d990` → `gfc-build-437d990-client-1.1.0-r23-x86-64-ext4-combined-efi.img.gz`
-- **manifest 必含：** `gfc-client 1.1.0-r23` + `dropbear` + `openssh-client` + `openssh-keygen` + `uhttpd` + `rpcd` + `odhcpd-ipv6only`（或 odhcpd）
+- **产品当前（矩阵）：** `v2.0.0` / Makefile `gfc-client 2.0.0-r1`（旁路首发；新 OEM 须 rebuild 后 manifest 对齐）
+- **上次已验证 OEM 构建（历史 2026-07-21）：** `437d990` → `gfc-build-437d990-client-1.1.0-r23-…`；manifest 当时为 `gfc-client 1.1.0-r23`
 - **r16 init.d 基线：** `config/gfc-initd-baseline.txt`；ORIG 缺则 build fail
 - **构建机：** Ubuntu，`/opt/gfc/{sip-proxy,immortalwrt}`，用户 **gfcbuild**，Go 1.22+，`GOFLAGS=-buildvcs=false`
 - **刷盘镜像：** `*ext4*combined*efi*.img.gz`（分发用 `gfc-build-<gitsha>-*` 命名）

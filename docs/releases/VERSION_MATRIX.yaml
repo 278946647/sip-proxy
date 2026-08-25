@@ -4,11 +4,16 @@
 # 已发布行之 components / floors 钉扎禁止改写；纠错发新 Patch。
 
 policy.upgrade: same_major_only
-product.current: 1.1.9
+product.current: 2.0.0
+product.major: 2
 product.ota_baseline: 1.1.0
 
 releases:
-  - 1.1.9 (current, tag v1.1.9)
+  - 2.0.0 (current, tag v2.0.0)
+      gfc_client: 2.0.0-r1
+      notes: Major/Dataplane-Arch — first shipping bypass Option B; 1.x via bridge 1.1.9 + firmware
+
+  - 1.1.9 (supported, tag v1.1.9)
       gfc_client: 1.1.0-r23
       notes: checkpoint — bypass Option B spec + HANDOFF; no firmware bump
 

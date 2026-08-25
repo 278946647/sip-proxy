@@ -29,6 +29,35 @@ Patch | Minor | Major | Dataplane-Arch
 
 ---
 
+## [2.0.0] - 2026-08-25
+
+### 级别
+Major / Dataplane-Arch
+
+### 组件钉扎
+- control_plane_api: 0.1.0
+- node_agent: 0.3.1
+- gfc_client: 2.0.0-r1
+
+### 变更
+- **旁路首个可运行发版：** `proxy_mode=bypass` Option B（设备 Web 开局、`@customer_hosts` 可为公网、超时回滚）
+- nft：WAN 仅 `saddr @customer_hosts` 打标；客户无 WAN SNAT；OUTPUT `daddr @customer_hosts return`；策略路由保持 `0x2023→2022→gfctun`
+- unbound：`gfc-bypass-acl.conf` 按 customer_hosts 动态 ACL
+- 规范：`docs/BYPASS_MODE.md`；控制面 `proxy_mode` **文档只读**（API 拒绝写入为后续）
+- OEM 默认 LAN **未改**（仍以 UCI/`192.168.1.0/24` 常见值为准）
+- `verify-dataplane-dns.sh` 按旁路 NAT/`nft list chain` 验收
+
+### 升级
+- 同 Major 直升：仅 **2.x → 2.y**（当前尚无更新的 2.x）
+- 跨 Major：`1.x` **禁止**直跳 `2.0.0`；先到桥接 **v1.1.9**，再固件/人工安装（见 `docs/releases/notes/v2.0.0.md`）
+- OTA 基线：1.1.0（1.x Runtime OTA）；**2.0.0 数据面通道为 firmware，不得当普通 OTA Patch**
+
+### 验收探针
+- manifest `gfc-client 2.0.0-r1`（OEM 镜像宣称时）
+- `docs/BYPASS_MODE.md` 存在
+- 旁路：`nft list chain inet nat postrouting` 含 `ip saddr` masquerade；`ip rule` 含 `0x2023`
+- `git rev-parse v2.0.0`
+
 ## [1.1.9] - 2026-08-20
 
 ### 级别

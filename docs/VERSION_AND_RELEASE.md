@@ -233,10 +233,10 @@ scripts/version/
 
 | 项 | 值 |
 |----|-----|
-| 产品当前 | `v1.1.0`（Major **1**） |
-| OTA 基线 | 含 Runtime OTA 一期的客户端（源码 `gfc-client 1.1.0-r15` 级） |
-| 节点 Agent | `0.3.1`（钉在矩阵；产品 Major 仍为 1） |
-| 跨到 v2 | **未开放**；开放时必须写桥接路径 |
+| 产品当前 | `v2.0.0`（Major **2**） |
+| OTA 基线 | 1.x 含 Runtime OTA 的客户端（矩阵 `product.ota_baseline`） |
+| 节点 Agent | `0.3.1` |
+| 跨到 v2 | **已开放路径**：桥接 `v1.1.9` + `docs/releases/notes/v2.0.0.md`（固件/人工，禁止 1.x 直升 2.0.0） |
 
 历史 Git tag `v0.2.0` / `v0.3.0` / `v1.0.0` 仍可 checkout。  
 **建议尽快**在干净提交上执行一次 `cut_release` 打上正式 `v1.1.0`（若尚未存在），使矩阵 `git_tag` 与远端一致。
