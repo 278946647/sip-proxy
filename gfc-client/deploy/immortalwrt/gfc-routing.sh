@@ -382,6 +382,7 @@ apply_policy_table_architecture() {
     iifname \"$WAN_IFACE\" ip saddr @customer_hosts ip daddr @customer_hosts return
     iifname \"$WAN_IFACE\" ip saddr @customer_hosts udp dport { 53, 67, 68, 123 } return
     iifname \"$WAN_IFACE\" ip saddr @customer_hosts ip daddr @bypass_ip return
+    # WAN path: user overlay already jumped above (shared chain); system defaults follow
     iifname \"$WAN_IFACE\" ip saddr @customer_hosts ip daddr @ext_const ct mark $MARK meta mark set ct mark return
 ${cn_wan_rule}
     iifname \"$WAN_IFACE\" ip saddr @customer_hosts ct mark $MARK meta mark set ct mark"
@@ -417,6 +418,13 @@ $customer_set
     elements = { $ext_const }
   }
 
+  # User Overlay chains (docs/USER_POLICY_ROUTING.md §7) — rules filled by policy-routing apply
+  chain prerouting_user_overlay {
+  }
+
+  chain output_user_overlay {
+  }
+
   chain prerouting_mangle_ct {
     type filter hook prerouting priority mangle; policy accept;
 $ct_head
@@ -431,6 +439,9 @@ $route_head
     iifname "$LAN_IFACE" ip daddr $LAN_CIDR return
     iifname "$LAN_IFACE" udp dport { 53, 67, 68, 123 } return
     iifname "$LAN_IFACE" ip daddr @bypass_ip return
+    # --- GFC_USER_OVERLAY_BEGIN (after bypass_ip / before system default) ---
+    jump prerouting_user_overlay
+    # --- GFC_USER_OVERLAY_END ---
     iifname "$LAN_IFACE" ip daddr @ext_const ct mark $MARK meta mark set ct mark return
 ${cn_preroute_rule}
     iifname "$LAN_IFACE" ct mark $MARK meta mark set ct mark
@@ -454,6 +465,9 @@ $forward_customer
 ${output_customer_rule}
 ${cn_output_rule}
     ip daddr @bypass_ip counter return
+    # --- GFC_USER_OVERLAY_OUTPUT_BEGIN (after bypass_ip / before catch-all mark) ---
+    jump output_user_overlay
+    # --- GFC_USER_OVERLAY_OUTPUT_END ---
     meta mark set $MARK
     ct mark set meta mark
   }
@@ -639,6 +653,28 @@ load_bypass_set() {
 	echo "bypass ip set: $(wc -l < "$BYPASS_AUDIT" 2>/dev/null || echo 0) addresses ($BYPASS_AUDIT)"
 }
 
+load_user_overlay() {
+	# Re-apply device-Web Override after table recreate (docs/USER_POLICY_ROUTING.md).
+	local sh="${GFC_ETC}/policy-routing/user-overlay.sh"
+	local f="${GFC_ETC}/policy-routing/user-overlay.nft"
+	if [ -x "$sh" ]; then
+		if sh "$sh"; then
+			echo "user overlay: loaded via $sh"
+		else
+			echo "WARN: user overlay script failed: $sh" >&2
+		fi
+		return 0
+	fi
+	if [ ! -f "$f" ]; then
+		return 0
+	fi
+	if nft -f "$f"; then
+		echo "user overlay: loaded $f"
+	else
+		echo "WARN: user overlay load failed: $f" >&2
+	fi
+}
+
 load_cn_set() {
 	[ -f "$CN_LIST" ] || {
 		echo "WARN: CN IP list missing: $CN_LIST" >&2
@@ -686,6 +722,7 @@ start_rules() {
 	apply_output_policy
 	load_cn_set
 	load_bypass_set
+	load_user_overlay
 	write_bypass_unbound_acl
 	if [ "$(load_proxy_mode)" = "bypass" ]; then
 		apply_bypass_sysctl

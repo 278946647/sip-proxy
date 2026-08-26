@@ -202,6 +202,7 @@ func (c *Config) EnsureDirs() error {
 		c.Paths.DNSListsDir,
 		filepath.Join(c.Paths.Etc, "unbound"),
 		filepath.Join(c.Paths.Etc, "policy"),
+		filepath.Join(c.Paths.Etc, "policy-routing"),
 		c.Paths.Log,
 		c.Paths.BackupsDir,
 	}

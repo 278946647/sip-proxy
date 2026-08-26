@@ -142,6 +142,18 @@ func (s *Server) Router() *gin.Engine {
 
 		v1.GET("/policy/egress-routes", s.policyEgressRoutes)
 
+		v1.GET("/policy-routing/groups", s.getPolicyRoutingGroups)
+		v1.PUT("/policy-routing/groups", s.putPolicyRoutingGroups)
+		v1.POST("/policy-routing/groups", s.putPolicyRoutingGroups)
+		v1.GET("/policy-routing/policies", s.getPolicyRoutingPolicies)
+		v1.PUT("/policy-routing/policies", s.putPolicyRoutingPolicies)
+		v1.POST("/policy-routing/policies", s.putPolicyRoutingPolicies)
+		v1.POST("/policy-routing/apply", s.postPolicyRoutingApply)
+		v1.POST("/policy-routing/probe", s.postPolicyRoutingProbe)
+		v1.GET("/policy-routing/system-rules", s.getPolicyRoutingSystemRules)
+		v1.GET("/policy-routing/effective", s.getPolicyRoutingEffective)
+		v1.GET("/policy-routing/domain-map", s.getPolicyRoutingDomainMap)
+
 		v1.GET("/rules", s.listRules)
 		v1.POST("/rules/update", s.updateRules)
 		v1.GET("/routing", s.getRouting)
@@ -1238,9 +1250,22 @@ func (s *Server) unboundLookup(c *gin.Context) {
 }
 
 func (s *Server) policyEgressRoutes(c *gin.Context) {
+	// Legacy placeholder path kept for old LuCI; prefer /policy-routing/*.
+	eff, err := s.policyRouting().Effective()
+	if err != nil {
+		s.ok(c, map[string]any{
+			"status":  "ready_store",
+			"message": "请使用 /api/v1/policy-routing/（groups/policies/probe/system-rules）",
+		})
+		return
+	}
 	s.ok(c, map[string]any{
-		"status":  "planned",
-		"message": "策略路由（域名/IP → 指定出口）将通过 nft set + ip rule 实现，后续版本开放配置。",
+		"status":           "ready_store",
+		"message":          "用户策略路由存盘/试算已开放；nft usr_* overlay 待阶段 B 接线。",
+		"dataplane_note":   eff.DataplaneNote,
+		"policy_count":     len(eff.Policies),
+		"group_count":      len(eff.Groups),
+		"mark_path":        eff.MarkPath,
 	})
 }
 

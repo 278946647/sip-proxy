@@ -152,7 +152,30 @@ PY
   bypass_ips="$(resolve_policy_bypass_ips)"
   write_gfc_nft_policy_conf "$lan" "$lan_cidr" "$nft_policy" "$bypass_ips"
   apply_gfc_nft_policy_conf "$nft_policy"
+  load_gfc_user_overlay
   echo "    policy nft refreshed (lan=${lan}, bypass=${bypass_ips:-none})"
+}
+
+# Re-apply device-Web Override after inet gfc table recreate (USER_POLICY_ROUTING).
+load_gfc_user_overlay() {
+  local gfc_etc="${GFC_ETC:-/etc/gfc-client}"
+  local sh="${gfc_etc}/policy-routing/user-overlay.sh"
+  local f="${gfc_etc}/policy-routing/user-overlay.nft"
+  if [[ -x "$sh" ]]; then
+    if sh "$sh"; then
+      echo "    user overlay: loaded via ${sh}"
+    else
+      echo "    WARN: user overlay script failed: ${sh}" >&2
+    fi
+    return 0
+  fi
+  if [[ -f "$f" ]]; then
+    if nft -f "$f"; then
+      echo "    user overlay: loaded ${f}"
+    else
+      echo "    WARN: user overlay load failed: ${f}" >&2
+    fi
+  fi
 }
 
 teardown_gfc_nft_policy() {

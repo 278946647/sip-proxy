@@ -307,6 +307,7 @@ def render_architecture(cfg: dict) -> str:
     iifname "{wan}" ip saddr @customer_hosts ip daddr @customer_hosts return
     iifname "{wan}" ip saddr @customer_hosts udp dport {{ 53, 67, 68, 123 }} return
     iifname "{wan}" ip saddr @customer_hosts ip daddr @bypass_ip return
+    # WAN: shared prerouting_user_overlay jumped above; system defaults follow
     iifname "{wan}" ip saddr @customer_hosts ip daddr @ext_const ct mark {mark} meta mark set ct mark return{cn_wan}
     iifname "{wan}" ip saddr @customer_hosts ct mark {mark} meta mark set ct mark"""
         forward_customer = """
@@ -348,6 +349,13 @@ table inet gfc {{
     elements = {{ {ext_const} }}
   }}
 
+  # User Overlay (docs/USER_POLICY_ROUTING.md §7) — filled by policy-routing apply
+  chain prerouting_user_overlay {{
+  }}
+
+  chain output_user_overlay {{
+  }}
+
   chain prerouting_mangle_ct {{
     type filter hook prerouting priority mangle; policy accept;{ct_head}
     iifname "{lan}" ct mark set {mark} accept{ct_wan}
@@ -359,6 +367,9 @@ table inet gfc {{
     iifname "{lan}" ip daddr {lan_cidr} return
     iifname "{lan}" udp dport {{ 53, 67, 68, 123 }} return
     iifname "{lan}" ip daddr @bypass_ip return
+    # --- GFC_USER_OVERLAY_BEGIN (after bypass_ip / before system default) ---
+    jump prerouting_user_overlay
+    # --- GFC_USER_OVERLAY_END ---
     iifname "{lan}" ip daddr @ext_const ct mark {mark} meta mark set ct mark return{cn_lan}
     iifname "{lan}" ct mark {mark} meta mark set ct mark{route_wan}
   }}
@@ -377,6 +388,9 @@ table inet gfc {{
     ip daddr @TO_RFC1918 return
     ip daddr 127.0.0.0/8 return{customer_output}{cn_output}
     ip daddr @bypass_ip counter return
+    # --- GFC_USER_OVERLAY_OUTPUT_BEGIN (after bypass_ip / before catch-all mark) ---
+    jump output_user_overlay
+    # --- GFC_USER_OVERLAY_OUTPUT_END ---
     meta mark set {mark}
     ct mark set meta mark
   }}

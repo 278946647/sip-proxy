@@ -87,6 +87,14 @@
       "path": "gfc/policy-route"
     }
   },
+  "admin/gfc/config/system-split": {
+    "title": "系统分流规则",
+    "order": 45,
+    "action": {
+      "type": "view",
+      "path": "gfc/system-split"
+    }
+  },
   "admin/gfc/config/settings": {
     "title": "设备运行模式",
     "order": 50,
