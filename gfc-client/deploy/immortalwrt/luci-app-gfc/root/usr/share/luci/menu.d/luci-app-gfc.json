@@ -88,7 +88,7 @@
     }
   },
   "admin/gfc/config/system-split": {
-    "title": "系统分流规则",
+    "title": "系统 nft 规则",
     "order": 45,
     "action": {
       "type": "view",
