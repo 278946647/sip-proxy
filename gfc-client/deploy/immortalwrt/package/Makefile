@@ -91,7 +91,12 @@ endef
 define Package/gfc-client/postinst
 #!/bin/sh
 [ -n "$$IPKG_INSTROOT" ] && exit 0
-mkdir -p /etc/gfc-client /var/lib/gfc-client/state /var/lib/gfc-client/rules /var/lib/gfc-client/dns-lists /var/log/gfc-client
+mkdir -p /etc/gfc-client /etc/gfc-client/lib/state /etc/gfc-client/lib/rules /etc/gfc-client/lib/dns-lists /var/log/gfc-client
+if [ -f /usr/lib/gfc-client/deploy/immortalwrt/lib-gfc-paths.sh ]; then
+	. /usr/lib/gfc-client/deploy/immortalwrt/lib-gfc-paths.sh
+	GFC_PLATFORM=immortalwrt
+	gfc_migrate_volatile_lib
+fi
 /etc/init.d/unbound stop 2>/dev/null || true
 /etc/init.d/unbound disable 2>/dev/null || true
 /etc/init.d/gfc-api enable
@@ -100,10 +105,10 @@ mkdir -p /etc/gfc-client /var/lib/gfc-client/state /var/lib/gfc-client/rules /va
 /etc/init.d/gfc-sing-box enable
 /etc/init.d/gfc-routing enable
 /etc/init.d/gfc-lan-dhcp enable
-if [ -f /var/lib/gfc-client/state/config_bundle.json ]; then
-	gfc-bootstrap --reapply >/tmp/gfc-bootstrap.log 2>&1 || echo "gfc-bootstrap reapply failed; keeping existing config" >>/tmp/gfc-bootstrap.log
+if [ -f /etc/gfc-client/lib/state/config_bundle.json ]; then
+	GFC_PLATFORM=immortalwrt GFC_LIB=/etc/gfc-client/lib gfc-bootstrap --reapply >/tmp/gfc-bootstrap.log 2>&1 || echo "gfc-bootstrap reapply failed; keeping existing config" >>/tmp/gfc-bootstrap.log
 else
-	gfc-bootstrap >/tmp/gfc-bootstrap.log 2>&1 || true
+	GFC_PLATFORM=immortalwrt GFC_LIB=/etc/gfc-client/lib gfc-bootstrap >/tmp/gfc-bootstrap.log 2>&1 || true
 fi
 exit 0
 endef

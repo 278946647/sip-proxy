@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/278946647/sip-proxy/gfc-client/internal/config"
 )
 
 // OTAResult is persisted by upgrade-runtime.sh before restarting gfc-api/gfc-agent,
@@ -18,10 +20,7 @@ type OTAResult struct {
 }
 
 func stateDir() string {
-	if v := strings.TrimSpace(os.Getenv("GFC_LIB")); v != "" {
-		return filepath.Join(v, "state")
-	}
-	return "/var/lib/gfc-client/state"
+	return filepath.Join(config.ResolveLib(), "state")
 }
 
 func logDir() string {

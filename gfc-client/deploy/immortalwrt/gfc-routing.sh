@@ -29,7 +29,11 @@ CN_AUDIT="${GFC_ETC}/nftables-cn-ip.set"
 CN_LOAD="${GFC_ETC}/nftables-cn-ip-load.nft"
 BYPASS_AUDIT="${GFC_ETC}/nftables-bypass-ip.set"
 BYPASS_LOAD="${GFC_ETC}/nftables-bypass-ip-load.nft"
-BUNDLE="${GFC_LIB:-/var/lib/gfc-client}/state/config_bundle.json"
+if [ -f "$GFC_ROOT/deploy/immortalwrt/lib-gfc-paths.sh" ]; then
+	. "$GFC_ROOT/deploy/immortalwrt/lib-gfc-paths.sh"
+	gfc_resolve_lib
+fi
+BUNDLE="${GFC_LIB:-/etc/gfc-client/lib}/state/config_bundle.json"
 
 [ -n "$LAN_IFACE" ] || LAN_IFACE="br-lan"
 [ -n "$LAN_ADDR" ] || LAN_ADDR="192.168.1.1"

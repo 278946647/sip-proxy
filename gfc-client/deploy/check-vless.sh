@@ -6,7 +6,12 @@ GFC_ENV="${GFC_ENV_FILE:-/etc/gfc-client/gfc.env}"
 [[ -r "$GFC_ENV" ]] && set -a && source "$GFC_ENV" && set +a
 
 CFG="/etc/gfc-client/sing-box.json"
-BUNDLE="/var/lib/gfc-client/state/config_bundle.json"
+if [[ -f /etc/openwrt_release || "${GFC_PLATFORM:-}" == "immortalwrt" || "${GFC_PLATFORM:-}" == "openwrt" ]]; then
+  case "${GFC_LIB:-}" in
+    ""|/var/lib/gfc-client|/tmp/lib/gfc-client) GFC_LIB=/etc/gfc-client/lib ;;
+  esac
+fi
+BUNDLE="${GFC_LIB:-/var/lib/gfc-client}/state/config_bundle.json"
 LOG="/var/log/gfc-client/sing-box.log"
 CLASH_API="${GFC_CLASH_API:-127.0.0.1:9090}"
 

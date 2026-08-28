@@ -263,9 +263,66 @@ func (o *Orchestrator) LoadBundle() map[string]any {
 	return payload
 }
 
+func (o *Orchestrator) dataplaneMode() string {
+	data, err := os.ReadFile(o.cfg.Paths.DataplaneMode)
+	if err != nil {
+		return ""
+	}
+	var doc map[string]any
+	if json.Unmarshal(data, &doc) != nil {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(fmt.Sprint(doc["mode"])))
+}
+
+func (o *Orchestrator) singboxHasTunInbound() bool {
+	data, err := os.ReadFile(o.cfg.Paths.SingboxConfig)
+	if err != nil {
+		return false
+	}
+	var cfg map[string]any
+	if json.Unmarshal(data, &cfg) != nil {
+		return false
+	}
+	inbounds, ok := cfg["inbounds"].([]any)
+	if !ok {
+		return false
+	}
+	for _, item := range inbounds {
+		m, _ := item.(map[string]any)
+		if fmt.Sprint(m["type"]) == "tun" {
+			return true
+		}
+	}
+	return false
+}
+
+// hasLastGoodActiveTun is the reboot fuse: missing bundle must not overwrite a
+// working TUN config with IdleConfig (empty inbounds → no gfctun).
+func (o *Orchestrator) hasLastGoodActiveTun() bool {
+	if o.dataplaneMode() != "active" {
+		return false
+	}
+	return o.singboxHasTunInbound()
+}
+
+func (o *Orchestrator) keepLastGoodTun(restart bool) (bool, string) {
+	msgs := []string{"bundle missing; kept last-good tun"}
+	if !restart {
+		return true, joinMsgs(msgs)
+	}
+	msgs = append(msgs, o.postDataplaneRepair()...)
+	msgs = append(msgs, o.restartDataplaneServices()...)
+	return true, joinMsgs(msgs)
+}
+
 func (o *Orchestrator) ReapplyLocal(restart bool) (bool, string) {
 	p := o.LoadBundle()
 	if p == nil {
+		if o.hasLastGoodActiveTun() {
+			fmt.Printf("reapply local: bundle missing; keeping last-good tun config\n")
+			return o.keepLastGoodTun(restart)
+		}
 		return o.BootstrapIdle()
 	}
 	if payload.IsDirect(p) {
@@ -388,6 +445,9 @@ func (o *Orchestrator) applyTrafficShaping() []string {
 
 func (o *Orchestrator) ReloadDNS() (bool, string) {
 	if o.LoadBundle() == nil {
+		if o.hasLastGoodActiveTun() {
+			return true, "bundle missing; kept last-good dns"
+		}
 		return o.BootstrapIdle()
 	}
 	if err := o.unbound.Render(o.LoadBundle()); err != nil {

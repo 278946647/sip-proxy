@@ -5,14 +5,19 @@ STOP=20
 USE_PROCD=1
 
 start_service() {
-	mkdir -p /etc/gfc-client /var/lib/gfc-client /var/log/gfc-client
+	GFC_LIB=/etc/gfc-client/lib
+	mkdir -p /etc/gfc-client "$GFC_LIB" /var/log/gfc-client
+	if [ -f /usr/lib/gfc-client/deploy/immortalwrt/lib-gfc-paths.sh ]; then
+		. /usr/lib/gfc-client/deploy/immortalwrt/lib-gfc-paths.sh
+		gfc_migrate_volatile_lib
+	fi
 	procd_open_instance
 	procd_set_param command /usr/bin/gfc-api
 	procd_set_param env GFC_ENV_FILE=/etc/gfc-client/gfc.env
 	procd_set_param env GFC_PLATFORM=immortalwrt
 	procd_set_param env GFC_ROOT=/usr/lib/gfc-client
 	procd_set_param env GFC_ETC=/etc/gfc-client
-	procd_set_param env GFC_LIB=/var/lib/gfc-client
+	procd_set_param env GFC_LIB=/etc/gfc-client/lib
 	procd_set_param env GFC_LOG_DIR=/var/log/gfc-client
 	procd_set_param env GFC_WEB_MODE=api
 	procd_set_param env GFC_CLIENT_WEB_PORT=8080

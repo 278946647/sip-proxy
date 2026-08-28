@@ -3,7 +3,7 @@ set -eu
 
 GFC_ROOT="${GFC_ROOT:-/usr/lib/gfc-client}"
 GFC_ETC="${GFC_ETC:-/etc/gfc-client}"
-GFC_LIB="${GFC_LIB:-/var/lib/gfc-client}"
+GFC_LIB="${GFC_LIB:-/etc/gfc-client/lib}"
 GFC_LOG_DIR="${GFC_LOG_DIR:-/var/log/gfc-client}"
 GFC_WEB_PORT="${GFC_CLIENT_WEB_PORT:-8080}"
 GFC_MOSDNS_PORT="${GFC_MOSDNS_PORT:-1053}"
@@ -12,6 +12,11 @@ GFC_MOSDNS_UID="${GFC_MOSDNS_UID:-65353}"
 GFC_SINGBOX_USER="${GFC_SINGBOX_USER:-singbox}"
 GFC_SINGBOX_UID="${GFC_SINGBOX_UID:-65354}"
 INIT_SRC="${GFC_ROOT}/deploy/immortalwrt/package/files/etc/init.d"
+
+if [ -f "$GFC_ROOT/deploy/immortalwrt/lib-gfc-paths.sh" ]; then
+	. "$GFC_ROOT/deploy/immortalwrt/lib-gfc-paths.sh"
+	gfc_migrate_volatile_lib
+fi
 
 mkdir -p "$GFC_ROOT" "$GFC_ETC" "$GFC_LIB/state" "$GFC_LIB/rules" "$GFC_LIB/dns-lists" "$GFC_LOG_DIR"
 

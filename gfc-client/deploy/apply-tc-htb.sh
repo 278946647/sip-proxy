@@ -9,6 +9,12 @@ ENV_FILE="${GFC_ENV_FILE:-/etc/gfc-client/gfc.env}"
 
 GFC_ROOT="${GFC_ROOT:-/usr/lib/gfc-client}"
 GFC_LIB="${GFC_LIB:-/var/lib/gfc-client}"
+if [ -f /etc/openwrt_release ] || [ "${GFC_PLATFORM:-}" = "immortalwrt" ] || [ "${GFC_PLATFORM:-}" = "openwrt" ]; then
+	case "$GFC_LIB" in
+		/var/lib/gfc-client|/tmp/lib/gfc-client) GFC_LIB=/etc/gfc-client/lib ;;
+	esac
+	[ -n "$GFC_LIB" ] || GFC_LIB=/etc/gfc-client/lib
+fi
 IFACE="${GFC_TUN_INTERFACE:-gfctun}"
 IFB="${GFC_IFB_INTERFACE:-ifb-gfc}"
 BUNDLE="${GFC_LIB}/state/config_bundle.json"

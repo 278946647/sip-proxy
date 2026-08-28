@@ -87,7 +87,7 @@ return view.extend({
 					E('td', { 'class': 'th', 'style': 'width:140px' }, [ '重载本地配置' ]),
 					E('td', {}, [
 						'读取 ',
-						E('code', {}, [ '/var/lib/gfc-client/state/config_bundle.json' ]),
+						E('code', {}, [ '/etc/gfc-client/lib/state/config_bundle.json' ]),
 						'，按当前模板重新渲染 Unbound / sing-box / nft 规则，并重启相关服务。',
 						'不拉取控制面新配置，适用于改模板或修环境变量后恢复数据面。'
 					])

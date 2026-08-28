@@ -15,7 +15,9 @@ const (
 	DefaultRoot      = "/opt/gfc-client"
 	DefaultEtc       = "/etc/gfc-client"
 	DefaultLib       = "/var/lib/gfc-client"
-	DefaultLog       = "/var/log/gfc-client"
+	// DefaultLibOpenWrt is overlay-persistent. On ImmortalWrt /var → /tmp (tmpfs).
+	DefaultLibOpenWrt = "/etc/gfc-client/lib"
+	DefaultLog        = "/var/log/gfc-client"
 	DefaultAPIPort   = 8787
 	DefaultWebPort   = 8080
 	DefaultFlashPort = 80
@@ -91,7 +93,7 @@ func Load() *Config {
 
 	etc := env("GFC_ETC", DefaultEtc)
 	root := env("GFC_ROOT", DefaultRoot)
-	lib := env("GFC_LIB", DefaultLib)
+	lib := ResolveLib()
 	logDir := env("GFC_LOG_DIR", DefaultLog)
 	envFile = env("GFC_ENV_FILE", filepath.Join(etc, "gfc.env"))
 
@@ -140,6 +142,42 @@ func Load() *Config {
 		LanAddress:  env("GFC_LAN_ADDRESS", "192.168.68.1"),
 		LanCIDR:     env("GFC_LAN_CIDR", "192.168.68.0/24"),
 	}
+}
+
+// ResolveLib returns the state directory. On OpenWrt/ImmortalWrt, /var is tmpfs
+// (/var → /tmp), so bundle + client_state must live under /etc/gfc-client/lib.
+// Explicit GFC_LIB wins unless it is the known volatile default.
+func ResolveLib() string {
+	lib := strings.TrimSpace(os.Getenv("GFC_LIB"))
+	if isOpenWrtHost() {
+		if lib == "" || isLegacyVolatileLib(lib) {
+			return DefaultLibOpenWrt
+		}
+		return lib
+	}
+	if lib == "" {
+		return DefaultLib
+	}
+	return lib
+}
+
+func isOpenWrtHost() bool {
+	p := strings.ToLower(strings.TrimSpace(os.Getenv("GFC_PLATFORM")))
+	if p == "openwrt" || p == "immortalwrt" {
+		return true
+	}
+	if _, err := os.Stat("/etc/openwrt_release"); err == nil {
+		return true
+	}
+	return false
+}
+
+func isLegacyVolatileLib(lib string) bool {
+	switch strings.TrimRight(filepath.ToSlash(lib), "/") {
+	case DefaultLib, "/tmp/lib/gfc-client":
+		return true
+	}
+	return false
 }
 
 func env(key, def string) string {
@@ -211,7 +249,73 @@ func (c *Config) EnsureDirs() error {
 			return err
 		}
 	}
+	c.migrateVolatileLib()
 	return nil
+}
+
+func (c *Config) migrateVolatileLib() {
+	dest := strings.TrimRight(filepath.ToSlash(c.Paths.Lib), "/")
+	if dest == "" || dest == DefaultLib {
+		return
+	}
+	for _, src := range []string{DefaultLib, "/tmp/lib/gfc-client"} {
+		if strings.TrimRight(filepath.ToSlash(src), "/") == dest {
+			continue
+		}
+		migrateLibTree(src, c.Paths.Lib)
+	}
+}
+
+func migrateLibTree(src, dest string) {
+	files := []string{
+		filepath.Join("state", "config_bundle.json"),
+		filepath.Join("state", "client_state.json"),
+		filepath.Join("state", "ota-result.json"),
+		"gfc-client.db",
+		"status.json",
+	}
+	for _, rel := range files {
+		copyFileIfMissing(filepath.Join(src, rel), filepath.Join(dest, rel))
+	}
+	copyDirIfEmpty(filepath.Join(src, "rules"), filepath.Join(dest, "rules"))
+	copyDirIfEmpty(filepath.Join(src, "dns-lists"), filepath.Join(dest, "dns-lists"))
+	copyDirIfEmpty(filepath.Join(src, "backups"), filepath.Join(dest, "backups"))
+}
+
+func copyFileIfMissing(src, dest string) {
+	if _, err := os.Stat(dest); err == nil {
+		return
+	}
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return
+	}
+	_ = os.MkdirAll(filepath.Dir(dest), 0o755)
+	mode := os.FileMode(0o600)
+	if info, err := os.Stat(src); err == nil {
+		mode = info.Mode()
+	}
+	_ = os.WriteFile(dest, data, mode)
+}
+
+func copyDirIfEmpty(src, dest string) {
+	entries, err := os.ReadDir(src)
+	if err != nil || len(entries) == 0 {
+		return
+	}
+	if destEntries, err := os.ReadDir(dest); err == nil && len(destEntries) > 0 {
+		return
+	}
+	_ = os.MkdirAll(dest, 0o755)
+	for _, e := range entries {
+		from := filepath.Join(src, e.Name())
+		to := filepath.Join(dest, e.Name())
+		if e.IsDir() {
+			copyDirIfEmpty(from, to)
+			continue
+		}
+		copyFileIfMissing(from, to)
+	}
 }
 
 // ResolvedWanIface returns WAN interface from env or network-roles.json.

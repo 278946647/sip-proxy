@@ -68,7 +68,14 @@ func (s *Service) Flash(code string, resetState bool) (map[string]any, error) {
 }
 
 func (s *Service) Clear() error {
-	for _, p := range []string{s.cfg.Paths.ActivationFile, s.cfg.Paths.PlatformFile, s.cfg.Paths.StateFile} {
+	// Bundle must go with factory reset: it now lives on overlay (/etc), so
+	// leaving it would re-apply the old line after reboot.
+	for _, p := range []string{
+		s.cfg.Paths.ActivationFile,
+		s.cfg.Paths.PlatformFile,
+		s.cfg.Paths.StateFile,
+		s.cfg.Paths.ConfigBundle,
+	} {
 		_ = os.Remove(p)
 	}
 	_ = s.store.ClearDevice()
@@ -78,6 +85,8 @@ func (s *Service) Clear() error {
 
 // ClearLineCode removes local line activation code only (soft factory reset).
 // Keeps client_state.json / token so the device stays platform-managed.
+// Bundle stays so ReapplyLocal can keep the last applied line until the
+// platform assigns a new one.
 func (s *Service) ClearLineCode() error {
 	_ = os.Remove(s.cfg.Paths.ActivationFile)
 	return nil

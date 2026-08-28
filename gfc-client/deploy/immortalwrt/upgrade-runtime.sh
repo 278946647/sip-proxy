@@ -3,8 +3,12 @@ set -eu
 
 GFC_ROOT="${GFC_ROOT:-/usr/lib/gfc-client}"
 GFC_ETC="${GFC_ETC:-/etc/gfc-client}"
-GFC_LIB="${GFC_LIB:-/var/lib/gfc-client}"
+GFC_LIB="${GFC_LIB:-/etc/gfc-client/lib}"
 GFC_LOG_DIR="${GFC_LOG_DIR:-/var/log/gfc-client}"
+if [ -f "$GFC_ROOT/deploy/immortalwrt/lib-gfc-paths.sh" ]; then
+	. "$GFC_ROOT/deploy/immortalwrt/lib-gfc-paths.sh"
+	gfc_migrate_volatile_lib
+fi
 GFC_MOSDNS_USER="${GFC_MOSDNS_USER:-mosdns}"
 GFC_MOSDNS_UID="${GFC_MOSDNS_UID:-65353}"
 GFC_SINGBOX_USER="${GFC_SINGBOX_USER:-singbox}"
@@ -188,6 +192,7 @@ ensure_user "$GFC_MOSDNS_USER" "$GFC_MOSDNS_UID" "$GFC_MOSDNS_USER"
 ensure_group "$GFC_SINGBOX_USER" "$GFC_SINGBOX_UID"
 ensure_user "$GFC_SINGBOX_USER" "$GFC_SINGBOX_UID" "$GFC_SINGBOX_USER"
 env_set GFC_ROUTING_SCHEME "${GFC_ROUTING_SCHEME:-kernel-split}"
+env_set GFC_LIB "$GFC_LIB"
 env_set GFC_WEB_MODE api
 env_set GFC_ENABLE_OUTPUT_POLICY 1
 env_set GFC_POLICY_MARK "${GFC_POLICY_MARK:-0x2023}"
