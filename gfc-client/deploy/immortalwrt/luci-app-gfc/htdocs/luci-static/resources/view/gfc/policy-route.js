@@ -18,10 +18,22 @@ function parseJSON(res) {
 
 function execWget(args) {
 	return fs.exec('/usr/bin/wget', args).then(function(res) {
+		var parsed = null;
+		var out = (res.stdout || '').trim();
+		if (out) {
+			try {
+				parsed = JSON.parse(out);
+			} catch (e) {
+				parsed = null;
+			}
+		}
+		if (parsed && parsed.ok === false) {
+			throw new Error((parsed.error && parsed.error.message) || '请求失败');
+		}
 		if (res.code !== 0) {
 			throw new Error((res.stderr || res.stdout || ('wget exit ' + res.code)).trim());
 		}
-		return parseJSON(res);
+		return parsed || parseJSON(res);
 	});
 }
 
@@ -394,6 +406,17 @@ return view.extend({
 			editorPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 		}
 
+		function policyNeedsDangerAck(p) {
+			var hasSrc = !!(p.match_src_group_id);
+			var hasDst = !!(p.match_dst_group_id);
+			var hasDom = !!(p.match_domain_group_id);
+			if (hasSrc && !hasDst && !hasDom)
+				return true;
+			if (hasDst || hasDom)
+				return true;
+			return false;
+		}
+
 		var savePolicyBtn = E('button', { 'class': 'btn cbi-button cbi-button-apply', 'type': 'button' }, [ '写入列表' ]);
 		savePolicyBtn.addEventListener('click', function() {
 			if (pDst.value && pDom.value) {
@@ -402,6 +425,10 @@ return view.extend({
 			}
 			if (!pSrc.value && !pDst.value && !pDom.value) {
 				notifyErr('源与目的/域名不能同时为空');
+				return;
+			}
+			if ((pDst.value || pDom.value || (pSrc.value && !pDst.value && !pDom.value)) && !pDanger.checked) {
+				notifyErr('请勾选「高危确认」：仅源匹配或覆盖系统默认分流时必须确认');
 				return;
 			}
 			var item = {
@@ -565,6 +592,12 @@ return view.extend({
 
 		var saveApplyBtn = E('button', { 'class': 'btn cbi-button cbi-button-apply', 'type': 'button' }, [ '保存并应用' ]);
 		saveApplyBtn.addEventListener('click', function() {
+			for (var i = 0; i < policiesState.length; i++) {
+				if (policyNeedsDangerAck(policiesState[i]) && !policiesState[i].danger_ack) {
+					notifyErr('规则「' + (policiesState[i].name || (i + 1)) + '」须勾选高危确认后再保存');
+					return;
+				}
+			}
 			saveApplyBtn.disabled = true;
 			post('/policy-routing/apply', {
 				groups: groupsState,

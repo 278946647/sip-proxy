@@ -17,10 +17,22 @@ function parseJSON(res) {
 
 function execWget(args) {
 	return fs.exec('/usr/bin/wget', args).then(function(res) {
+		var parsed = null;
+		var out = (res.stdout || '').trim();
+		if (out) {
+			try {
+				parsed = JSON.parse(out);
+			} catch (e) {
+				parsed = null;
+			}
+		}
+		if (parsed && parsed.ok === false) {
+			throw new Error((parsed.error && parsed.error.message) || '请求失败');
+		}
 		if (res.code !== 0) {
 			throw new Error((res.stderr || res.stdout || ('wget exit ' + res.code)).trim());
 		}
-		return parseJSON(res);
+		return parsed || parseJSON(res);
 	});
 }
 
