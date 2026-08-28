@@ -10,6 +10,7 @@
 > [`docs/UNBOUND_ARCHITECTURE.md`](../../docs/UNBOUND_ARCHITECTURE.md) ·
 > [`docs/SINGBOX_ARCHITECTURE.md`](../../docs/SINGBOX_ARCHITECTURE.md) ·
 > [`docs/BYPASS_MODE.md`](../../docs/BYPASS_MODE.md) ·
+> [`docs/CLIENT_STATE.md`](../../docs/CLIENT_STATE.md)（OpenWrt `GFC_LIB` / 启动再应用） ·
 > [`NETWORK_APPLY.md`](NETWORK_APPLY.md)（OpenWrt WAN apply / 回滚）
 >
 > **本文后半 MosDNS / Ubuntu Phase 1 叙述为历史设计。** 生产 LAN DNS 是 **unbound :53**；旁路以 `BYPASS_MODE.md` 为准。冲突时禁止用本文覆盖架构文档。
@@ -365,11 +366,11 @@ Orchestrator 将此 **业务 JSON** 映射为各组件最终配置，不期望�
     ├── easymosdns/                 # MosDNS 默认规则包
     └── rules/                      # geosite/geoip .srs
 
-/etc/gfc-client/                    # 运行时配置（Agent 生成为主）
+/etc/gfc-client/                    # overlay 持久：渲染配置（Agent 生成为主）
 ├── agent.yaml                      # Agent 自身配置
 ├── gfc.env                         # 环境变量（安装时种子）
 ├── sing-box.json                   # Sing-box 最终配置
-├── mosdns.yaml                     # MosDNS 主配置（或 easymosdns/config.yaml）
+├── mosdns.yaml                     # 历史；生产 LAN DNS 为 unbound
 ├── dnsmasq.conf                    # → 链接到 /etc/dnsmasq.d/gfc-client.conf
 ├── nftables.conf                   # 防火墙主规则
 ├── nftables-dns.conf               # DNS 劫持
@@ -379,17 +380,18 @@ Orchestrator 将此 **业务 JSON** 映射为各组件最终配置，不期望�
 ├── policy/selector.json            # 出站策略选择
 ├── activation.b32                  # 线路码
 ├── platform.b32                    # 平台码（可选）
-└── dataplane-mode.json             # idle | active
+├── dataplane-mode.json             # idle | active
+└── lib/                            # OpenWrt/ImmortalWrt 的 GFC_LIB（见 docs/CLIENT_STATE.md）
+    ├── gfc-client.db
+    ├── state/
+    │   ├── client_state.json       # token、applied_version
+    │   └── config_bundle.json      # 最近业务 payload 副本
+    ├── rules/
+    ├── dns-lists/
+    └── backups/
 
-/var/lib/gfc-client/
-├── gfc-client.db                   # SQLite（节点、设备、本地策略）
-├── state/
-│   ├── client_state.json           # token、applied_version
-│   └── config_bundle.json          # 最近业务 payload 副本
-├── rules/                          # geosite-cn.srs, geoip-cn.srs, ...
-├── dns-lists/                      # 用户可编辑 DNS 列表
-└── backups/                        # 配置回滚快照
-    └── <version>-<ts>/
+# Ubuntu：GFC_LIB 仍为 /var/lib/gfc-client（磁盘，非 tmpfs），布局与 lib/ 相同。
+# 禁止在 OpenWrt 把 bundle/token 默认写到 /var/lib/gfc-client（/var → /tmp）。
 
 /var/log/gfc-client/
 ├── gfc-agent.log
@@ -419,9 +421,9 @@ orchestrator:
     mosdns: reload-or-restart
     singbox: reload-or-restart
 
-paths:                         # 可覆盖默认路径
+paths:                         # 可覆盖默认路径；OpenWrt lib 见 docs/CLIENT_STATE.md
   etc: /etc/gfc-client
-  lib: /var/lib/gfc-client
+  lib: /etc/gfc-client/lib     # ImmortalWrt；Ubuntu 为 /var/lib/gfc-client
   log: /var/log/gfc-client
 
 web:

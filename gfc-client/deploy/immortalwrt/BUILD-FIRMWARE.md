@@ -121,7 +121,8 @@ ls -lt "$IMT_SRC/bin/targets/x86/64/"*ext4*combined*efi*.img.gz | head -3
 | br-lan `list ports` | 末块物理网卡（如 eth1） |
 | LAN PC DHCP | 无需手动 `dnsmasq restart`（hotplug + `gfc-lan-dhcp`） |
 | `uci get dhcp.@dnsmasq[0].force` | `1` |
-| `nft list tables` | `nat`、`gfc_dns_hijack`、`gfc` |
+| `uci get dhcp.@dnsmasq[0].dns_redirect` | `0` |
+| `nft list tables` | `nat`、`gfc_dns_hijack`、`gfc`；**无** `dnsmasq` |
 | Web | `http://<LAN>/gfc/activate.html` |
 | 激活后 | `gfctun` 存在；**一条** `fwmark 0x2023 lookup 2022` |
 | SSH | 端口 **212**；密码 **`Wgh@125434`** |
@@ -283,7 +284,10 @@ GFC_ROUTING_TUN_WAIT=5 sh /usr/lib/gfc-client/deploy/immortalwrt/gfc-routing.sh 
 |------|------|
 | manifest 无 gfc | `.config`、feed 路径、ORIG 同步、是否跑了 defconfig |
 | package/install clash `/www/index.html` | ipk 是否又装了 index（应 r8+） |
-| 激活后无 `ip rule` | `ip link show gfctun`；`ls -l …/gfc-routing.sh`；`/tmp/gfc-routing-*.log` |
+| 激活后无 `ip rule` | `ip link show gfctun`；`ls -l …/gfc-routing.sh`；`/tmp/gfc-routing-*.log`；状态落盘见 `docs/CLIENT_STATE.md` |
+| 策略路由保存 `wget exit 8` | BusyBox wget 吃掉 HTTP 4xx；现网应显示中文 `danger_ack` 等。勾选「高危确认」。 |
+| 系统 网络→DHCP/DNS `uci/get` ubus 4 | 缺 `/etc/config/firewall`。跑 `disable-immortalwrt-fw4.sh` 写 stub，**不要**启用 fw4。 |
+| PC 指 WAN IP 做 DNS，UDP 超时 | `uci get dhcp.@dnsmasq[0].dns_redirect` 须为 `0`；`nft list tables` 无 `dnsmasq` |
 | Permission denied on routing | 脚本无 +x → 用 `sh` 或重刷 r9+ |
 | 密码仍空 | 是否 r10+；有无 `passwd`；firstboot 是否已跑过旧版 |
 | ensure-index 报 `kmod-sched-htb` | 假包名；用 `kmod-sched-core` |

@@ -19,6 +19,7 @@ if [ -z "$LAN_ADDR" ]; then
 fi
 
 uci set dhcp.@dnsmasq[0].port='0'
+uci set dhcp.@dnsmasq[0].dns_redirect='0'
 uci set dhcp.@dnsmasq[0].noresolv='1'
 # Force DHCP even if another server is detected on the segment (lab/cascade).
 # Without this, dnsmasq refuses DHCP and LAN clients get no address.
@@ -54,7 +55,7 @@ uci add_list dhcp.lan.dns="$LAN_ADDR" 2>/dev/null || true
 uci commit dhcp
 
 got="$(uci -q get dhcp.lan.dhcp_option 2>/dev/null || true)"
-echo "dnsmasq DHCP: port=0, force=1, dns=$LAN_ADDR, dhcp_option=$got"
+echo "dnsmasq DHCP: port=0, dns_redirect=0, force=1, dns=$LAN_ADDR, dhcp_option=$got"
 case " $got " in
 *" 6,$LAN_ADDR "*|*"6,$LAN_ADDR"*) ;;
 *)
@@ -66,4 +67,5 @@ esac
 # Apply immediately when running on a live device (not image build).
 if [ -z "${IPKG_INSTROOT:-}" ] && [ -x /etc/init.d/dnsmasq ]; then
 	/etc/init.d/dnsmasq restart 2>/dev/null || true
+	nft delete table inet dnsmasq 2>/dev/null || true
 fi

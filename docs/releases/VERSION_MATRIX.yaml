@@ -4,12 +4,16 @@
 # 已发布行之 components / floors 钉扎禁止改写；纠错发新 Patch。
 
 policy.upgrade: same_major_only
-product.current: 2.0.0
+product.current: 2.0.1
 product.major: 2
 product.ota_baseline: 1.1.0
 
 releases:
-  - 2.0.0 (current, tag v2.0.0)
+  - 2.0.1 (current, tag v2.0.1)
+      gfc_client: 2.0.1-r1
+      notes: Patch — OpenWrt state persist, last-good TUN, LuCI wget/firewall stub, dnsmasq dns_redirect=0
+
+  - 2.0.0 (supported, tag v2.0.0)
       gfc_client: 2.0.0-r1
       notes: Major/Dataplane-Arch — first shipping bypass Option B; 1.x via bridge 1.1.9 + firmware
 

@@ -34,7 +34,7 @@ alwaysApply: true
 
 ## 当前状态摘要
 
-- **产品当前（矩阵）：** `v2.0.0` / Makefile `gfc-client 2.0.0-r1`（旁路首发；新 OEM 须 rebuild 后 manifest 对齐）
+- **产品当前（矩阵）：** `v2.0.1` / Makefile `gfc-client 2.0.1-r1`（Patch：状态落盘 + DNS hijack 守卫；新 OEM 须 rebuild 后 manifest 对齐）
 - **上次已验证 OEM 构建（历史 2026-07-21）：** `437d990` → `gfc-build-437d990-client-1.1.0-r23-…`；manifest 当时为 `gfc-client 1.1.0-r23`
 - **r16 init.d 基线：** `config/gfc-initd-baseline.txt`；ORIG 缺则 build fail
 - **构建机：** Ubuntu，`/opt/gfc/{sip-proxy,immortalwrt}`，用户 **gfcbuild**，Go 1.22+，`GOFLAGS=-buildvcs=false`

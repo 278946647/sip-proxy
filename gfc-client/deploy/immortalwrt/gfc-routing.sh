@@ -106,6 +106,12 @@ CN_LIST="${GFC_CN_IP_LIST:-$GFC_ROOT/share/easymosdns/rules/china_ip_list.txt}"
 [ -f "$CN_LIST" ] || CN_LIST="$GFC_ETC/rules/china_ip_list.txt"
 [ -f "$CN_LIST" ] || CN_LIST="$GFC_ROOT/share/easymosdns/rules/china_ip_list.txt"
 
+# Stock OpenWrt dnsmasq dns_redirect installs table inet dnsmasq (priority -95).
+# With port=0 that becomes redirect to :0 (UDP/53 blackhole). Not a GFC table.
+purge_dnsmasq_dns_hijack() {
+	nft delete table inet dnsmasq 2>/dev/null || true
+}
+
 stop_proxy_only() {
 	_clear_fwmark_rules
 	ip -4 route flush table "$TABLE" 2>/dev/null || true
@@ -120,6 +126,7 @@ start_direct() {
 	[ -f "$_fw4_sh" ] && sh "$_fw4_sh" 2>/dev/null || true
 	nft delete table inet gfc_dns_hijack 2>/dev/null || true
 	nft delete table inet nat 2>/dev/null || true
+	purge_dnsmasq_dns_hijack
 	apply_wan_nat
 	apply_dns_hijack
 	echo "gfc routing: direct mode (dns hijack + snat, proxy disabled)"
@@ -221,6 +228,7 @@ table inet gfc_dns_hijack {$set_block
   }
 }
 EOF
+	purge_dnsmasq_dns_hijack
 }
 
 fmt_ext_const_elements() {
@@ -748,6 +756,7 @@ start_rules() {
 		/etc/init.d/firewall stop 2>/dev/null || true
 		/etc/init.d/firewall disable 2>/dev/null || true
 	}
+	purge_dnsmasq_dns_hijack
 	apply_wan_nat
 	apply_dns_hijack
 	apply_policy_table

@@ -36,6 +36,7 @@ alwaysApply: true
 ## 绝对禁止（未经架构评审 + 用户批准）
 
 - 让 dnsmasq 监听 `:53` 或 `server=127.0.0.1#1053`（legacy MosDNS）
+- 在 `port=0` 时保留 `dns_redirect=1`（stock `inet dnsmasq` 会 `redirect to :0`，UDP/53 黑洞）
 - 将 `forward-zone` 放入 `server:` 块内
 - 用 MosDNS / easymosdns 替代 unbound 作为 LAN DNS
 - 用 sing-box DNS inbound / fake-ip 替代 unbound 服务 LAN
@@ -50,8 +51,10 @@ alwaysApply: true
 | 项 | 要求 |
 |----|------|
 | `dhcp.@dnsmasq[0].port` | `0` |
+| `dhcp.@dnsmasq[0].dns_redirect` | `0`（禁止 `1`：与 `port=0` 组合会 `redirect to :0`） |
 | `dhcp.lan.dhcp_option` | 含 `6,<LAN网关IP>` |
 | DNS 解析 | 仅 unbound `:53` |
+| `table inet dnsmasq` | **不得存在** |
 
 ## 允许的无须批准操作
 

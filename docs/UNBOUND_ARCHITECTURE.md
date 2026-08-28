@@ -6,7 +6,7 @@
 
 If generated runtime config differs from this document, **the generator is wrong** — not this document.
 
-**Companion:** [`docs/NFT_ARCHITECTURE.md`](NFT_ARCHITECTURE.md) (DNS hijack, `ext_const`), [`docs/SINGBOX_ARCHITECTURE.md`](SINGBOX_ARCHITECTURE.md) (TUN 内国际 DNS IP 出站), [`docs/BYPASS_MODE.md`](BYPASS_MODE.md) (旁路 ACL / 设备 Web).
+**Companion:** [`docs/NFT_ARCHITECTURE.md`](NFT_ARCHITECTURE.md) (DNS hijack, `ext_const`), [`docs/SINGBOX_ARCHITECTURE.md`](SINGBOX_ARCHITECTURE.md) (TUN 内国际 DNS IP 出站), [`docs/BYPASS_MODE.md`](BYPASS_MODE.md) (旁路 ACL / 设备 Web), [`docs/CLIENT_STATE.md`](CLIENT_STATE.md) (OpenWrt 状态落盘；与 DNS 生成器无关).
 
 ---
 
@@ -159,12 +159,22 @@ Unbound does **not** configure dnsmasq. Separate script: `configure-dnsmasq-dhcp
 | UCI key | Required value |
 |---------|----------------|
 | `dhcp.@dnsmasq[0].port` | `0` |
+| `dhcp.@dnsmasq[0].dns_redirect` | **`0`** |
 | `dhcp.@dnsmasq[0].noresolv` | `1` |
 | `dhcp.@dnsmasq[0].server` | **deleted** (no `127.0.0.1#1053`) |
 | `dhcp.@dnsmasq[0].cachesize` | `0` |
 | `dhcp.lan.dhcp_option` | `6,<network.lan.ipaddr>` |
 
 **Rationale:** `port=0` disables dnsmasq DNS service; without explicit option 6, LAN clients receive **no DNS**.
+
+**Stock `dns_redirect`:** ImmortalWrt dnsmasq with `dns_redirect=1` installs `table inet dnsmasq` (prerouting **priority -95**, after GFC `gfc_dns_hijack` dstnat -100). Combined with `port=0` this becomes **`redirect to :0`**, which blackholes **UDP/53** (ICMP unreachable; conntrack `sport=0`). TCP DNS (`dig +tcp` / `nslookup -vc`) may still work. Local `dig @127.0.0.1` skips prerouting and is not a valid LAN-client test.
+
+| Item | Required |
+|------|----------|
+| `table inet dnsmasq` / comment `DNSMASQ HIJACK` | **must not exist** at runtime |
+| `redirect to :0` | **forbidden**; `verify-dataplane-dns.sh` must fail |
+
+`configure-dnsmasq-dhcp.sh` sets `dns_redirect=0`. `gfc-routing.sh` deletes `inet dnsmasq` on apply (stock table, **not** a GFC table; do not merge into `inet gfc`). Restarting dnsmasq must not recreate the hijack while `dns_redirect=0`.
 
 ---
 
@@ -202,6 +212,8 @@ AI / generators must **never** (without approval):
 - Re-enable MosDNS / `gfc-mosdns` / `127.0.0.1#1053` dnsmasq forward
 - Point LAN DNS to sing-box / fake-ip / DoH inbound
 - Use `systemd-resolved` or `dnsmasq` as authoritative DNS on :53 alongside unbound
+- Leave `dhcp.@dnsmasq[0].dns_redirect=1` while `port=0` (creates `inet dnsmasq` `redirect to :0`)
+- Keep `table inet dnsmasq` / `DNSMASQ HIJACK` alongside GFC `gfc_dns_hijack`
 - Collapse CN list into single `local-zone` without forward-zone
 - Enable QNAME minimisation without CDN regression test
 - Replace DoT international forward with plain UDP 8.8.8.8 as default zone default
@@ -229,7 +241,7 @@ Generated / rendered unbound config must:
 | Bypass ACL | `/etc/unbound/conf.d/gfc-bypass-acl.conf` | From `customer-hosts.json`; `gfc-routing.sh` + renderer |
 | Snippet includes | `share/unbound/local.d/*.conf`, `conf.d/gfc-domestic-forward.conf` | Required at bootstrap |
 | Init | `deploy/immortalwrt/package/files/etc/init.d/gfc-unbound` | Aligned |
-| dnsmasq DHCP DNS | `deploy/immortalwrt/configure-dnsmasq-dhcp.sh` | Aligned (`v0.3.0`) |
+| dnsmasq DHCP DNS | `deploy/immortalwrt/configure-dnsmasq-dhcp.sh` | Aligned (`port=0`, `dns_redirect=0`) |
 | Post-install verify | `deploy/immortalwrt/verify-dataplane-dns.sh` | Aligned |
 | NFT DNS hijack | `gfc-routing.sh` / `lib-unbound-nft.sh` | Aligned (redirect :53) |
 | Legacy MosDNS docs | `GATEWAY_CORE.md` | Aligned (references unbound) |

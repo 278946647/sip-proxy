@@ -10,7 +10,7 @@ system integration layer with ImmortalWrt/OpenWrt primitives.
 - `/usr/bin/gfc-bootstrap`: first boot, dataplane reapply, and network apply helper.
 - `/usr/lib/gfc-client/web`: prebuilt Vue static UI.
 - `/etc/gfc-client`: device config, rendered sing-box/unbound configs, network JSON.
-- `/var/lib/gfc-client`: local state, sqlite DB, rule data, backups.
+- `/etc/gfc-client/lib`: local state, sqlite, bundle, token, backups (OpenWrt; `/var` is tmpfs). Ubuntu keeps `/var/lib/gfc-client`. See `docs/CLIENT_STATE.md`.
 
 ## Build with ImmortalWrt SDK
 
@@ -80,7 +80,7 @@ WAN is handled the same way:
   overwrite WAN unless that file already existed.
 - To force WAN apply without a saved file, set `GFC_MANAGE_WAN=1`.
 - Before any WAN UCI write, `/etc/config/network` is snapshotted under
-  `/var/lib/gfc-client/backups/network-<timestamp>/`.
+  `$GFC_LIB/backups/network-<timestamp>/` (OpenWrt: `/etc/gfc-client/lib/backups/...`).
 - Roll back with:
 
 ```sh
@@ -152,11 +152,28 @@ LAN clients -> dnsmasq (DHCP only, port=0) -> DHCP option 6 = gateway
              -> unbound :53 (GFC gfc-unbound)
 ```
 
-`configure-dnsmasq-dhcp.sh` sets `dhcp.@dnsmasq[0].port=0` and advertises the LAN
-gateway as DNS. GFC nft DNS hijack redirects external DNS to local unbound.
+`configure-dnsmasq-dhcp.sh` sets `dhcp.@dnsmasq[0].port=0`, `dns_redirect=0`, and
+advertises the LAN gateway as DNS. GFC nft DNS hijack (`inet gfc_dns_hijack`)
+redirects external DNS to local unbound. Stock `table inet dnsmasq` must **not**
+exist (`dns_redirect=1` + `port=0` → `redirect to :0` blackholes UDP/53).
 
 **fw4:** Stock ImmortalWrt `firewall` (fw4) must be **disabled** — GFC `gfc-routing` owns
 `inet nat` / `inet gfc` / `inet gfc_dns_hijack`. See `disable-immortalwrt-fw4.sh`.
+OEM images omit firewall4, so `/etc/config/firewall` is often missing. LuCI
+**网络 → DHCP/DNS** still calls `uci.load('firewall')`; without the file the page
+raises `RPC uci/get` ubus code 4. The disable script writes a **comment-only stub**
+`/etc/config/firewall` and does **not** start fw4.
+
+Client bundle/token on OpenWrt live under `/etc/gfc-client/lib` (not `/var/lib`,
+which is tmpfs). See [`docs/CLIENT_STATE.md`](../../../docs/CLIENT_STATE.md).
+
+## LuCI coexistence
+
+- **策略路由保存：** luci-app-gfc uses BusyBox `wget` to `127.0.0.1:8080`. Policy-routing
+  validation errors return HTTP **200** + `{ok:false,error.message}` so the UI is not
+  `wget exit 8`. Destination/domain Override and src-only rules require **高危确认**
+  (`danger_ack`) before apply. Details: `docs/USER_POLICY_ROUTING.md` §5.3.
+- **系统 DHCP/DNS 页：** needs stub `/etc/config/firewall` as above; GFC still owns nft.
 
 ## Dataplane Split
 

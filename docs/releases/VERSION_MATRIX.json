@@ -8,15 +8,52 @@
     "deploy_order_default": ["control_plane", "forward_node", "client"]
   },
   "product": {
-    "current": "2.0.0",
+    "current": "2.0.1",
     "major": 2,
     "ota_baseline": "1.1.0",
     "ota_baseline_notes": "Boxes without Runtime OTA must bootstrap via install.sh / OEM image, then use platform OTA. Cross-major 1.x→2.0.0 is firmware/manual (not Runtime OTA Patch)."
   },
   "releases": [
     {
-      "version": "2.0.0",
+      "version": "2.0.1",
       "status": "current",
+      "git_tag": "v2.0.1",
+      "released": "2026-08-28",
+      "components": {
+        "control_plane_api": "0.1.0",
+        "node_agent": "0.3.1",
+        "gfc_client": "2.0.1-r1",
+        "client_proto": 1,
+        "node_proto": 1
+      },
+      "floors": {
+        "gfc_client": "2.0.0-r1",
+        "node_agent": "0.3.0",
+        "client_proto": 1,
+        "node_proto": 1
+      },
+      "upgrade_path": {
+        "from_any_in_major": true,
+        "from_majors": [2],
+        "bridge": "1.1.9",
+        "migration_doc": "docs/releases/notes/v2.0.0.md"
+      },
+      "channels": {
+        "client_runtime": "ota",
+        "dataplane_arch": "firmware"
+      },
+      "probes": [
+        "opkg/manifest gfc-client == 2.0.1-r1 when OEM image claim",
+        "docs/CLIENT_STATE.md exists",
+        "uci get dhcp.@dnsmasq[0].dns_redirect == 0",
+        "nft list tables has no inet dnsmasq",
+        "git rev-parse v2.0.1"
+      ],
+      "notes": "Patch: persist OpenWrt GFC_LIB under /etc/gfc-client/lib; keep last-good TUN when bundle missing; LuCI policy-routing errors + firewall UCI stub; dnsmasq dns_redirect=0 (no redirect to :0)."
+    },
+    {
+      "version": "2.0.0",
+      "status": "supported",
       "git_tag": "v2.0.0",
       "released": "2026-08-25",
       "components": {

@@ -23,4 +23,5 @@ esac
 
 echo "$(date -Iseconds 2>/dev/null || date) ACTION=$ACTION INTERFACE=$INTERFACE DEVICE=$DEVICE → dnsmasq restart" >>"$LOG"
 /etc/init.d/dnsmasq restart >>"$LOG" 2>&1 || true
+nft delete table inet dnsmasq 2>/dev/null || true
 exit 0

@@ -29,6 +29,33 @@ Patch | Minor | Major | Dataplane-Arch
 
 ---
 
+## [2.0.1] - 2026-08-28
+
+### 级别
+Patch
+
+### 组件钉扎
+- control_plane_api: 0.1.0
+- node_agent: 0.3.1
+- gfc_client: 2.0.1-r1
+
+### 变更
+- **状态落盘：** OpenWrt `GFC_LIB` 改为 `/etc/gfc-client/lib`（`/var`→tmpfs 不再丢 bundle/token）；权威文档 `docs/CLIENT_STATE.md`
+- **启动保险丝：** bundle 缺失且 last-good TUN 仍在时，不 `BootstrapIdle` 覆盖 `sing-box.json`；出厂 `Clear()` 删除 bundle
+- **LuCI：** 策略路由校验对 BusyBox wget 回 HTTP 200 `{ok:false}`；保存前强制 `danger_ack`；`/etc/config/firewall` stub（不启 fw4）修系统 DHCP/DNS 页 ubus 4
+- **DNS：** `dns_redirect=0`；删除 stock `table inet dnsmasq`（`port=0` + hijack 会 `redirect to :0` 黑洞 UDP/53）
+
+### 升级
+- 同 Major 直升：是（`2.0.0` → `2.0.1`）
+- 跨 Major：仍须 `v1.1.9` 桥接 + 固件/人工（见 `docs/releases/notes/v2.0.0.md`）
+- OTA 基线：1.1.0；本版客户端运行时通道为 **OTA**；OEM 镜像须 rebuild 后 manifest `2.0.1-r1`
+
+### 验收探针
+- manifest `gfc-client 2.0.1-r1`（OEM 宣称时）
+- `docs/CLIENT_STATE.md` 存在
+- `uci get dhcp.@dnsmasq[0].dns_redirect` → `0`；`nft list tables` 无 `dnsmasq`
+- `git rev-parse v2.0.1`
+
 ## [2.0.0] - 2026-08-25
 
 ### 级别

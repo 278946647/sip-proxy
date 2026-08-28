@@ -90,6 +90,20 @@ esac
 PORT="$(uci -q get dhcp.@dnsmasq[0].port 2>/dev/null || true)"
 [ "$PORT" = "0" ] && ok "dnsmasq port=0" || fail "dnsmasq port=$PORT (expected 0)"
 
+REDIR="$(uci -q get dhcp.@dnsmasq[0].dns_redirect 2>/dev/null || true)"
+[ "$REDIR" = "0" ] && ok "dnsmasq dns_redirect=0" || fail "dnsmasq dns_redirect=$REDIR (expected 0; 1 + port=0 → redirect to :0)"
+
+if nft list table inet dnsmasq >/dev/null 2>&1; then
+	hijack_dnsmasq="$(nft list table inet dnsmasq 2>/dev/null || true)"
+	if echo "$hijack_dnsmasq" | grep -qE 'redirect to :0|DNSMASQ HIJACK'; then
+		fail "stock inet dnsmasq DNS hijack present (redirect to :0 blackholes UDP/53)"
+	else
+		fail "table inet dnsmasq exists (run gfc-routing start / configure-dnsmasq-dhcp.sh)"
+	fi
+else
+	ok "no stock inet dnsmasq hijack"
+fi
+
 if nft list table inet gfc_dns_hijack >/dev/null 2>&1; then
 	ok "nft gfc_dns_hijack"
 else

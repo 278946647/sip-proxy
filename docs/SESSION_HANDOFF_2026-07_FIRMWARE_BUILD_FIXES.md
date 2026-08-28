@@ -146,7 +146,7 @@ uci get dropbear.@dropbear[0].Port    # 212
 ```bash
 # 盒子
 logread -e gfc-agent | tail -30
-ls -la /etc/gfc-client/activation.b32 /var/lib/gfc-client/client_state.json
+ls -la /etc/gfc-client/activation.b32 /etc/gfc-client/lib/state/client_state.json
 
 # 错误对照
 # hard-retired          → reclaim（device_key 与 MAC 一致）
