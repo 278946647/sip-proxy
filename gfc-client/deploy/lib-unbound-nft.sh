@@ -55,7 +55,7 @@ write_gfc_nft_dns_conf() {
   local hosts_file="${GFC_ETC:-/etc/gfc-client}/customer-hosts.json"
   local mode_file="${GFC_ETC:-/etc/gfc-client}/proxy-mode.json"
   python3 - "$outfile" "$lan" "$port" "$wan" "$mode" "$hosts_file" "$mode_file" <<'PY'
-import json, sys
+import json, re, subprocess, sys
 from pathlib import Path
 outfile, lan, port, wan, mode, hosts_file, mode_file = sys.argv[1:8]
 file_mode = ""
@@ -75,6 +75,33 @@ if Path(hosts_file).is_file():
         hosts = [str(x).strip() for x in raw if str(x).strip()]
     except (OSError, json.JSONDecodeError, TypeError):
         hosts = []
+
+def wan_ipv4s(iface):
+    if not iface:
+        return []
+    try:
+        out = subprocess.check_output(
+            ["ip", "-4", "-o", "addr", "show", "dev", iface],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return []
+    ips = []
+    for line in out.splitlines():
+        parts = line.split()
+        try:
+            inet_at = parts.index("inet")
+            token = parts[inet_at + 1]
+        except (ValueError, IndexError):
+            continue
+        addr = token.split("/", 1)[0]
+        if addr == "127.0.0.1" or not re.match(r"^\d{1,3}(\.\d{1,3}){3}$", addr):
+            continue
+        if addr not in ips:
+            ips.append(addr)
+    return ips
+
 set_block = ""
 wan_rules = ""
 if mode == "bypass":
@@ -86,11 +113,28 @@ if mode == "bypass":
     flags interval{body}
   }}"""
     if wan:
-        wan_rules = f"""
-    iifname "{wan}" ip saddr @customer_hosts udp dport 53 fib daddr type local return
-    iifname "{wan}" ip saddr @customer_hosts tcp dport 53 fib daddr type local return
-    iifname "{wan}" ip saddr @customer_hosts udp dport 53 redirect to :{port}
-    iifname "{wan}" ip saddr @customer_hosts tcp dport 53 redirect to :{port}"""
+        skip_lines = []
+        ipset = ", ".join(wan_ipv4s(wan))
+        if ipset:
+            skip_lines.append(
+                f'    iifname "{wan}" ip saddr @customer_hosts udp dport 53 ip daddr {{ {ipset} }} return'
+            )
+            skip_lines.append(
+                f'    iifname "{wan}" ip saddr @customer_hosts tcp dport 53 ip daddr {{ {ipset} }} return'
+            )
+        skip_lines.append(
+            f'    iifname "{wan}" ip saddr @customer_hosts udp dport 53 meta nfproto ipv4 fib daddr . iif type local return'
+        )
+        skip_lines.append(
+            f'    iifname "{wan}" ip saddr @customer_hosts tcp dport 53 meta nfproto ipv4 fib daddr . iif type local return'
+        )
+        skip_lines.append(
+            f'    iifname "{wan}" ip saddr @customer_hosts udp dport 53 redirect to :{port}'
+        )
+        skip_lines.append(
+            f'    iifname "{wan}" ip saddr @customer_hosts tcp dport 53 redirect to :{port}'
+        )
+        wan_rules = "\n" + "\n".join(skip_lines)
 text = f"""#!/usr/sbin/nft -f
 # DNS hijack — docs/NFT_ARCHITECTURE.md (no skuid OUTPUT bypass)
 table inet gfc_dns_hijack {{{set_block}

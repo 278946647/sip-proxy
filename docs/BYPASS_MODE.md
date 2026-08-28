@@ -33,7 +33,7 @@
 |---|------|
 | 1 | **Option B**：WAN 仅当 `saddr @customer_hosts` 才 ct mark / 分类 / DNS 劫持。禁止 WAN 全量新连接 mark。 |
 | 2 | `@customer_hosts` 仅 **设备 Web** 录入。可为私网或 **公网**。≠ 控制面下发。≠ 自动等于旁路 WAN 掩码（禁止把整个公网 `/24` 自动灌进集合）。 |
-| 3 | DNS：LAN 两条劫持保留 + WAN customer local-return×2 + redirect×2。解析仍走 unbound `:53`。 |
+| 3 | DNS：LAN 两条劫持保留 + WAN customer 本机目的 skip（运行时 WAN IPv4 + `fib daddr . iif type local`）+ redirect×2。解析仍走 unbound `:53`。 |
 | 4 | 客户不做 WAN SNAT；管理 LAN 小网关受限 masquerade。 |
 | 5 | `proxy_mode` **仅设备 Web 可写**。控制面 **只读上报**；平台 API 若仍接受写入，客户端必须忽略（后续可改 API 拒绝，本迭代只定文档）。 |
 | 6 | LAN 永不与 WAN 桥接。 |
@@ -90,7 +90,7 @@ LuCI settings.js                        # 设备 Web 表单
 # proxy=bypass；customer_hosts 含实测客户源（可公网）
 nft list set inet gfc customer_hosts
 nft list chain inet gfc output_mangle_route   # 须有 ip daddr @customer_hosts return
-nft list table inet gfc_dns_hijack            # WAN + customer 四条
+nft list table inet gfc_dns_hijack            # WAN：本机 skip（WAN IP + fib）+ redirect×2
 nft list chain inet nat postrouting           # masquerade 含 ip saddr <lan>
 ip rule | grep 0x2023
 sysctl net.ipv4.conf.all.rp_filter            # 旁路期望 2

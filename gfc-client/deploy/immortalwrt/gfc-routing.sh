@@ -79,6 +79,24 @@ is_ipv4() {
 	} { exit 1 }'
 }
 
+# Comma-separated IPv4 addresses on an iface (no prefix). Bypass DNS pointed
+# at the WAN IP must skip redirect; inet `fib daddr type local` may not match.
+list_iface_ipv4_csv() {
+	local dev="$1" addr csv=""
+	[ -n "$dev" ] || return 0
+	for addr in $(ip -4 -o addr show dev "$dev" 2>/dev/null | awk '{print $4}'); do
+		addr="${addr%%/*}"
+		is_ipv4 "$addr" || continue
+		[ "$addr" = "127.0.0.1" ] && continue
+		if [ -n "$csv" ]; then
+			csv="$csv, $addr"
+		else
+			csv="$addr"
+		fi
+	done
+	echo "$csv"
+}
+
 LAN_CIDR="${GFC_LAN_CIDR:-$(network_cidr "$LAN_ADDR" "$(mask_prefix "$LAN_MASK")")}"
 CN_LIST="${GFC_CN_IP_LIST:-$GFC_ROOT/share/easymosdns/rules/china_ip_list.txt}"
 [ -f "$CN_LIST" ] || CN_LIST="$GFC_ETC/rules/china_ip_list.txt"
@@ -154,7 +172,10 @@ apply_dns_hijack() {
 	# LAN clients may point DNS at 8.8.8.8 or other resolvers. Redirect them
 	# to local unbound:53 (dnsmasq is DHCP-only with port=0).
 	# Bypass: also hijack WAN DNS from @customer_hosts (not LAN-only).
-	local proxy_mode hosts wan_rules set_block
+	# Already-local dest (WAN IP as DNS) must not redirect: inet
+	# `fib daddr type local` can miss IPv4 in prerouting → UDP sport 0 /
+	# ICMP port unreachable. Skip runtime WAN IPv4 first, then fib+iif.
+	local proxy_mode hosts wan_rules set_block wan_local wan_ips
 	proxy_mode="$(load_proxy_mode)"
 	hosts="$(load_customer_host_elements)"
 	wan_rules=""
@@ -174,9 +195,16 @@ apply_dns_hijack() {
     flags interval
   }"
 		fi
-		wan_rules="
-    iifname \"$WAN_IFACE\" ip saddr @customer_hosts udp dport 53 fib daddr type local return
-    iifname \"$WAN_IFACE\" ip saddr @customer_hosts tcp dport 53 fib daddr type local return
+		wan_local=""
+		wan_ips="$(list_iface_ipv4_csv "$WAN_IFACE")"
+		if [ -n "$wan_ips" ]; then
+			wan_local="
+    iifname \"$WAN_IFACE\" ip saddr @customer_hosts udp dport 53 ip daddr { $wan_ips } return
+    iifname \"$WAN_IFACE\" ip saddr @customer_hosts tcp dport 53 ip daddr { $wan_ips } return"
+		fi
+		wan_rules="$wan_local
+    iifname \"$WAN_IFACE\" ip saddr @customer_hosts udp dport 53 meta nfproto ipv4 fib daddr . iif type local return
+    iifname \"$WAN_IFACE\" ip saddr @customer_hosts tcp dport 53 meta nfproto ipv4 fib daddr . iif type local return
     iifname \"$WAN_IFACE\" ip saddr @customer_hosts udp dport 53 redirect to :$DNS_PORT
     iifname \"$WAN_IFACE\" ip saddr @customer_hosts tcp dport 53 redirect to :$DNS_PORT"
 	fi

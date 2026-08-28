@@ -300,12 +300,17 @@ add chain inet nat postrouting { type nat hook postrouting priority srcnat; poli
 add rule inet nat postrouting oifname "<wan_iface>" ip saddr <lan_subnet> masquerade
 
 # 2. DNS hijack — LAN unchanged; WAN only for @customer_hosts
+#    Already-local dest must not redirect. inet `fib daddr type local` can miss
+#    IPv4 in prerouting (UDP conntrack sport=0 / ICMP port unreachable).
+#    Skip runtime WAN IPv4 first; fib uses nfproto + iif. <wan_ipv4s> is not hardcoded.
 add table inet gfc_dns_hijack
 add chain inet gfc_dns_hijack prerouting { type nat hook prerouting priority dstnat; policy accept; }
 add rule inet gfc_dns_hijack prerouting iifname "<lan_iface>" udp dport 53 redirect to :53
 add rule inet gfc_dns_hijack prerouting iifname "<lan_iface>" tcp dport 53 redirect to :53
-add rule inet gfc_dns_hijack prerouting iifname "<wan_iface>" ip saddr @customer_hosts udp dport 53 fib daddr type local return
-add rule inet gfc_dns_hijack prerouting iifname "<wan_iface>" ip saddr @customer_hosts tcp dport 53 fib daddr type local return
+add rule inet gfc_dns_hijack prerouting iifname "<wan_iface>" ip saddr @customer_hosts udp dport 53 ip daddr { <wan_ipv4s> } return
+add rule inet gfc_dns_hijack prerouting iifname "<wan_iface>" ip saddr @customer_hosts tcp dport 53 ip daddr { <wan_ipv4s> } return
+add rule inet gfc_dns_hijack prerouting iifname "<wan_iface>" ip saddr @customer_hosts udp dport 53 meta nfproto ipv4 fib daddr . iif type local return
+add rule inet gfc_dns_hijack prerouting iifname "<wan_iface>" ip saddr @customer_hosts tcp dport 53 meta nfproto ipv4 fib daddr . iif type local return
 add rule inet gfc_dns_hijack prerouting iifname "<wan_iface>" ip saddr @customer_hosts udp dport 53 redirect to :53
 add rule inet gfc_dns_hijack prerouting iifname "<wan_iface>" ip saddr @customer_hosts tcp dport 53 redirect to :53
 

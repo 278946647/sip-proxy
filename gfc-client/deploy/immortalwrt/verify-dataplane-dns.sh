@@ -127,6 +127,12 @@ if [ "$PROXY_MODE" = "bypass" ]; then
 	else
 		fail "bypass missing fwmark 0x2023 policy rule"
 	fi
+	hijack="$(nft list table inet gfc_dns_hijack 2>/dev/null || true)"
+	if echo "$hijack" | grep -q 'type local return'; then
+		ok "bypass DNS hijack local-dest skip"
+	else
+		fail "bypass DNS hijack missing local dest return (WAN IP as DNS would redirect)"
+	fi
 	if [ -f /etc/unbound/conf.d/gfc-bypass-acl.conf ] && grep -q 'access-control:' /etc/unbound/conf.d/gfc-bypass-acl.conf; then
 		if grep -q '0.0.0.0/0' /etc/unbound/conf.d/gfc-bypass-acl.conf; then
 			fail "unbound bypass ACL must not allow 0.0.0.0/0"
