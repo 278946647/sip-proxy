@@ -1,5 +1,6 @@
 # 会话交接：用户策略路由 / 系统分流规则（2026-08-26）
 
+> **后续（泛域名）：** [`SESSION_HANDOFF_2026-08-31_WILDCARD_FQDN.md`](SESSION_HANDOFF_2026-08-31_WILDCARD_FQDN.md) — 2026-08 已拍板一层 `*` 并落地代码；新会话从 08-31 文档进入，不要按下面「Agent 未开始」重开。  
 > 写给**无本对话上下文**的新会话：按本文 + 权威规格开发。  
 > **产品/UI/合成语义唯一真相：** [`docs/USER_POLICY_ROUTING.md`](USER_POLICY_ROUTING.md)  
 > 数据面仍服从：[`NFT_ARCHITECTURE.md`](NFT_ARCHITECTURE.md)、[`UNBOUND_ARCHITECTURE.md`](UNBOUND_ARCHITECTURE.md)、[`SINGBOX_ARCHITECTURE.md`](SINGBOX_ARCHITECTURE.md)、[`BYPASS_MODE.md`](BYPASS_MODE.md)  

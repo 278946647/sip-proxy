@@ -233,8 +233,8 @@ scripts/version/
 
 | 项 | 值 |
 |----|-----|
-| 产品当前 | `v2.0.1`（Major **2**） |
-| 客户端包 | `gfc-client 2.0.1-r1` |
+| 产品当前 | `v2.1.0`（Major **2**） |
+| 客户端包 | `gfc-client 2.1.0-r1` |
 | OTA 基线 | 1.x 含 Runtime OTA 的客户端（矩阵 `product.ota_baseline`） |
 | 节点 Agent | `0.3.1` |
 | 跨到 v2 | **已开放路径**：桥接 `v1.1.9` + `docs/releases/notes/v2.0.0.md`（固件/人工，禁止 1.x 直升 2.0.0） |

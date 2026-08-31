@@ -72,14 +72,29 @@ func normalizeIPOrCIDR(token string) (string, error) {
 	return ip.To4().String(), nil
 }
 
-func normalizeFQDN(token string) (string, error) {
-	token = strings.TrimSpace(strings.ToLower(token))
-	token = strings.TrimSuffix(token, ".")
+func canonDomain(token string) string {
+	return strings.TrimSpace(strings.ToLower(strings.TrimSuffix(token, ".")))
+}
+
+func isWildcardMember(token string) bool {
+	return strings.HasPrefix(canonDomain(token), "*.")
+}
+
+func wildcardSuffix(member string) string {
+	m := canonDomain(member)
+	if !strings.HasPrefix(m, "*.") {
+		return ""
+	}
+	return strings.TrimPrefix(m, "*.")
+}
+
+func normalizeExactFQDN(token string) (string, error) {
+	token = canonDomain(token)
 	if token == "" {
 		return "", fmt.Errorf("空域名")
 	}
 	if strings.Contains(token, "*") {
-		return "", fmt.Errorf("一期域名组不支持通配符: %s", token)
+		return "", fmt.Errorf("无效通配符写法: %s", token)
 	}
 	if ip := net.ParseIP(token); ip != nil {
 		return "", fmt.Errorf("域名组成员必须是 FQDN，不是 IP: %s", token)
@@ -105,6 +120,85 @@ func normalizeFQDN(token string) (string, error) {
 		}
 	}
 	return token, nil
+}
+
+func normalizeFQDN(token string) (string, error) {
+	token = canonDomain(token)
+	if token == "" {
+		return "", fmt.Errorf("空域名")
+	}
+	if strings.HasPrefix(token, "*.") {
+		rest, err := normalizeExactFQDN(strings.TrimPrefix(token, "*."))
+		if err != nil {
+			return "", fmt.Errorf("无效通配符: %s", token)
+		}
+		if strings.Count(rest, ".") < 1 {
+			return "", fmt.Errorf("通配符后须为完整域名（至少两个标签）: %s", token)
+		}
+		return "*." + rest, nil
+	}
+	if strings.Contains(token, "*") {
+		return "", fmt.Errorf("通配符仅允许最左一层 *.example.com: %s", token)
+	}
+	return normalizeExactFQDN(token)
+}
+
+func normalizeProbeQName(token string) (string, error) {
+	token = canonDomain(token)
+	if token == "" {
+		return "", fmt.Errorf("空域名")
+	}
+	if strings.Contains(token, "*") {
+		return "", fmt.Errorf("试算请填实际访问的域名，不要填通配符")
+	}
+	return normalizeExactFQDN(token)
+}
+
+// qnameMatchesMember: exact member = equality only; *.example.com = exactly one label.
+func qnameMatchesMember(qname, member string) bool {
+	qname = canonDomain(qname)
+	member = canonDomain(member)
+	if qname == "" || member == "" {
+		return false
+	}
+	if isWildcardMember(member) {
+		suffix := wildcardSuffix(member)
+		if suffix == "" || qname == suffix {
+			return false // apex excluded
+		}
+		if !strings.HasSuffix(qname, "."+suffix) {
+			return false
+		}
+		prefix := strings.TrimSuffix(qname, "."+suffix)
+		return prefix != "" && !strings.Contains(prefix, ".")
+	}
+	return qname == member
+}
+
+func matchingPattern(qname string, members []string) string {
+	for _, m := range members {
+		if qnameMatchesMember(qname, m) {
+			return canonDomain(m)
+		}
+	}
+	return ""
+}
+
+func membersMayMatchSameQName(a, b string) bool {
+	a, b = canonDomain(a), canonDomain(b)
+	if a == "" || b == "" {
+		return false
+	}
+	if a == b {
+		return true
+	}
+	if isWildcardMember(a) && !isWildcardMember(b) {
+		return qnameMatchesMember(b, a)
+	}
+	if isWildcardMember(b) && !isWildcardMember(a) {
+		return qnameMatchesMember(a, b)
+	}
+	return false
 }
 
 func parseIPv4(raw string) net.IP {
@@ -199,20 +293,7 @@ func cidrsOverlap(a, b *net.IPNet) bool {
 }
 
 func domainMatches(probe string, members []string) bool {
-	probe = strings.TrimSpace(strings.ToLower(strings.TrimSuffix(probe, ".")))
-	if probe == "" {
-		return false
-	}
-	for _, m := range members {
-		m = strings.TrimSpace(strings.ToLower(strings.TrimSuffix(m, ".")))
-		if m == "" {
-			continue
-		}
-		if probe == m || strings.HasSuffix(probe, "."+m) {
-			return true
-		}
-	}
-	return false
+	return matchingPattern(probe, members) != ""
 }
 
 func nftSetName(kind, id string) string {

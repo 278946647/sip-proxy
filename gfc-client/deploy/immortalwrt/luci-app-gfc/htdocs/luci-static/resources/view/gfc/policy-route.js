@@ -316,7 +316,8 @@ return view.extend({
 				if (g.kind === 'domain' && domainMap.groups && domainMap.groups[g.id]) {
 					var dm = domainMap.groups[g.id];
 					mapHint = E('div', { 'style': 'font-size:11px;color:#666;margin-top:2px' }, [
-						'→ ' + (dm.usr_dom_set || '') + ' · ' + ((dm.ips || []).length) + ' IP'
+						'→ ' + (dm.usr_dom_set || '') + ' · ' + ((dm.ips || []).length) + ' IP' +
+						((dm.learned && dm.learned.length) ? (' · 嗅探 ' + dm.learned.length + ' 个子域') : '')
 					]);
 				}
 				var edit = E('button', { 'class': 'btn cbi-button', 'type': 'button' }, [ '编辑' ]);
@@ -501,7 +502,7 @@ return view.extend({
 		var gMembers = E('textarea', {
 			'class': 'cbi-input-textarea',
 			'style': 'width:28em;min-height:5em',
-			'placeholder': '每行一个 IP/CIDR 或 FQDN'
+			'placeholder': '每行一个。域名组：linkedin.com 或 *.linkedin.com（一层 *，不含顶点）'
 		});
 		var gDesc = E('input', { 'class': 'cbi-input-text', 'placeholder': '备注（可选）' });
 		var gEditId = null;
@@ -577,7 +578,12 @@ return view.extend({
 		]));
 		groupEditor.appendChild(E('div', { 'class': 'cbi-value' }, [
 			E('label', { 'class': 'cbi-value-title' }, [ '成员' ]),
-			E('div', { 'class': 'cbi-value-field' }, [ gMembers ])
+			E('div', { 'class': 'cbi-value-field' }, [
+				gMembers,
+				E('p', { 'class': 'hint', 'style': 'margin:4px 0 0' }, [
+					'域名组：精确名 apply 时解析；*.example.com 仅匹配一层子域（如 platform.example.com），不含顶点，由客户端 DNS 嗅探学习 IP。'
+				])
+			])
 		]));
 		groupEditor.appendChild(E('div', { 'class': 'cbi-value' }, [
 			E('label', { 'class': 'cbi-value-title' }, [ '备注' ]),
@@ -655,7 +661,7 @@ return view.extend({
 		return E('div', { 'class': 'cbi-map' }, [
 			E('h2', {}, [ '策略路由' ]),
 			E('p', { 'class': 'hint' }, [
-				'用户 Override：列表越靠上优先级越高。动作仅「直连」或「进代理」。当前模式 ',
+				'用户 Override：列表越靠上优先级越高。动作仅「直连」或「进代理」。域名组支持 *.example.com（一层，不含顶点）。当前模式 ',
 				tag(proxyMode, '#e8eef5'),
 				applied ? tag('Overlay 已应用', '#d4edda') : tag('Overlay 未应用', '#fff3cd')
 			]),

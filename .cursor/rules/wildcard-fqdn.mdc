@@ -1,0 +1,52 @@
+---
+description: GFC 泛域名 / FQDN 通配开发规范 — 一层 *、不含顶点、嗅探写 usr_dom_*
+globs:
+  - "**/policyrouting/**"
+  - "**/policy-route.js"
+  - "**/system-split.js"
+  - "**/USER_POLICY_ROUTING.md"
+alwaysApply: true
+---
+
+# 泛域名（用户策略路由）变更协议（强制）
+
+## 权威来源
+
+1. `docs/USER_POLICY_ROUTING.md` **§2.3**（匹配、嗅探、TTL、禁止项）
+2. `docs/SESSION_HANDOFF_2026-08-31_WILDCARD_FQDN.md`（本批完成态 / 下一会话入口）
+3. `docs/UNBOUND_ARCHITECTURE.md` / `docs/NFT_ARCHITECTURE.md`（LAN DNS 与 nft 骨架）
+
+冲突以 §2.3 为准；不得用实现倒逼改规格。
+
+## 已拍板（禁止当未决重开）
+
+- 一层 `*.example.com`；**不含**顶点；**不含** `a.b.example.com`
+- 精确名只全等，禁止当任意后缀
+- 嗅探 UDP/53 应答写 `usr_dom_*`；接受首包竞态
+- 一期不上 nfqueue、不改 unbound.conf、不改 DNS hijack 目标
+
+## 修改前
+
+1. 读 `USER_POLICY_ROUTING.md` §2.3
+2. 输出规范 vs 实现差异表
+3. 涉及 nft 表/链/hook 或 unbound 生成器：等「确认修改」+ 点名文件
+4. 只改点名文件
+
+## 绝对禁止
+
+- MosDNS / sing-box DNS inbound 替代 unbound LAN `:53`
+- 学习 IP 写入 `TO_CN` / `bypass_ip` / `ext` / `ext_const`
+- kernel-split 用 `domain_suffix` / `rule_set` 做中外分流
+- 只抓 lo（漏 LAN 客户 DNS）
+- apply flush `usr_dom_*` 后不恢复未过期 `learned`
+- 试编本功能 bump 产品版本 / `PKG_RELEASE`
+
+## 允许的无须批准操作
+
+- 只读：`domain-map.json`、试算、对照 §2.3 做 gap
+- 按用户点名修 Agent/LuCI 泛域名逻辑（不改生成器）
+- 用户要求时更新 §2.3 / 08-31 交接
+
+## 口令
+
+> 严格按 `USER_POLICY_ROUTING.md` §2.3，只改我点名的文件；nft/unbound 生成器改前先 diff，我确认后再写。

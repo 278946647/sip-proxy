@@ -23,8 +23,9 @@ import (
 	"github.com/278946647/sip-proxy/gfc-client/internal/envfile"
 	"github.com/278946647/sip-proxy/gfc-client/internal/logtail"
 	"github.com/278946647/sip-proxy/gfc-client/internal/network"
-	"github.com/278946647/sip-proxy/gfc-client/internal/proxymode"
 	"github.com/278946647/sip-proxy/gfc-client/internal/payload"
+	"github.com/278946647/sip-proxy/gfc-client/internal/policyrouting"
+	"github.com/278946647/sip-proxy/gfc-client/internal/proxymode"
 	"github.com/278946647/sip-proxy/gfc-client/internal/render/unbound"
 	"github.com/278946647/sip-proxy/gfc-client/internal/render/singbox"
 	"github.com/278946647/sip-proxy/gfc-client/internal/reversessh"
@@ -69,6 +70,7 @@ func NewServer(cfg *config.Config, st *store.Store, mode string) *Server {
 	s.proxyMode = proxymode.NewController(cfg, netMgr.ApplyWAN, s.lanCIDR)
 	s.proxyMode.SetDataplaneApply(s.applyProxyModeDataplane)
 	s.proxyMode.Resume()
+	policyrouting.StartDNSSnoop(cfg, s.policyRoutingEnv)
 	return s
 }
 

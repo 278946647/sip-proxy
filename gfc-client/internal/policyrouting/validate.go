@@ -255,11 +255,8 @@ func destCompatible(a, b Policy, gm map[string]Group) bool {
 			return false
 		}
 		for _, da := range ga.Members {
-			if domainMatches(da, gb.Members) {
-				return true
-			}
 			for _, db := range gb.Members {
-				if domainMatches(db, ga.Members) {
+				if membersMayMatchSameQName(da, db) {
 					return true
 				}
 			}

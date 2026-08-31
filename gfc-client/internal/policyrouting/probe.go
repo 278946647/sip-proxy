@@ -29,7 +29,7 @@ func Probe(req ProbeRequest, groups []Group, policies []Policy, env Env, snap Sn
 		}
 	}
 	if domain != "" {
-		if _, err := normalizeFQDN(domain); err != nil {
+		if _, err := normalizeProbeQName(domain); err != nil {
 			return ProbeResult{}, err
 		}
 		if len(resolved) == 0 {

@@ -29,6 +29,34 @@ Patch | Minor | Major | Dataplane-Arch
 
 ---
 
+## [2.1.0] - 2026-08-31
+
+### 级别
+Minor
+
+### 组件钉扎
+- control_plane_api: 0.1.0
+- node_agent: 0.3.1
+- gfc_client: 2.1.0-r1
+
+### 变更
+- **泛域名（飞塔同类）：** 域名组支持一层 `*.example.com`（不含顶点、不含两层子域）；精确名只全等
+- **嗅探：** `gfc-api` AF_PACKET 看 UDP/53 应答，学习 A 写入 `usr_dom_*` 与 `domain-map.json` `learned[]`；TTL 60s–1h
+- **apply：** 通配不 LookupIP；flush 后合并未过期 learned
+- **LuCI：** 策略路由 / 系统 nft 规则页文案与 learned 展示
+- **不改** nft 表链 hook、unbound.conf、sing-box kernel-split 生成器
+- 策略路由泛域名开发收口；后续透明模式另开
+
+### 升级
+- 同 Major 直升：是（`2.0.x` → `2.1.0`）
+- 跨 Major：仍须 `v1.1.9` 桥接 + 固件/人工（见 `docs/releases/notes/v2.0.0.md`）
+- OTA 基线：1.1.0；本版客户端运行时通道为 **OTA**；OEM 镜像须 rebuild 后 manifest `2.1.0-r1`
+
+### 验收探针
+- manifest `gfc-client 2.1.0-r1`（OEM 宣称时）
+- `docs/USER_POLICY_ROUTING.md` 含 §2.3
+- `git rev-parse v2.1.0`
+
 ## [2.0.1] - 2026-08-28
 
 ### 级别

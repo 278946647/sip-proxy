@@ -18,8 +18,45 @@ func TestNormalizeMembers(t *testing.T) {
 	if _, err := normalizeMembers(KindDomain, []string{"Example.COM."}); err != nil {
 		t.Fatal(err)
 	}
+	gotW, err := normalizeMembers(KindDomain, []string{"*.LinkedIn.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(gotW) != 1 || gotW[0] != "*.linkedin.com" {
+		t.Fatalf("wildcard got=%v", gotW)
+	}
 	if _, err := normalizeMembers(KindDomain, []string{"*"}); err == nil {
 		t.Fatal("expected wildcard reject")
+	}
+	if _, err := normalizeMembers(KindDomain, []string{"*.com"}); err == nil {
+		t.Fatal("expected *.com reject")
+	}
+	if _, err := normalizeMembers(KindDomain, []string{"foo.*.com"}); err == nil {
+		t.Fatal("expected mid-star reject")
+	}
+}
+
+func TestQnameMatchesMemberOneLevel(t *testing.T) {
+	if !qnameMatchesMember("platform.linkedin.com", "*.linkedin.com") {
+		t.Fatal("one-level should match")
+	}
+	if qnameMatchesMember("linkedin.com", "*.linkedin.com") {
+		t.Fatal("apex must not match wildcard")
+	}
+	if qnameMatchesMember("a.b.linkedin.com", "*.linkedin.com") {
+		t.Fatal("two-level must not match")
+	}
+	if qnameMatchesMember("platform.linkedin.com", "linkedin.com") {
+		t.Fatal("exact must not suffix-match")
+	}
+	if !qnameMatchesMember("linkedin.com", "linkedin.com") {
+		t.Fatal("exact equality")
+	}
+	if !domainMatches("www.linkedin.com", []string{"linkedin.com", "*.linkedin.com"}) {
+		t.Fatal("group with both members should match www")
+	}
+	if domainMatches("linkedin.com", []string{"*.linkedin.com"}) {
+		t.Fatal("apex vs wildcard-only group")
 	}
 }
 
@@ -64,6 +101,50 @@ func TestValidateDstDomainMutex(t *testing.T) {
 	}}, groups, nil)
 	if err == nil {
 		t.Fatal("expected mutex")
+	}
+}
+
+func TestProbeWildcardOneLevel(t *testing.T) {
+	groups := []Group{{ID: "dom", Name: "li", Kind: KindDomain, Members: []string{"*.linkedin.com"}}}
+	policies := []Policy{{
+		ID: "ovr_1", Name: "li-direct", Enabled: true, Rank: 0, Action: ActionDirect,
+		MatchDomainGroupID: "dom", DangerAck: true,
+	}}
+	res, err := Probe(ProbeRequest{ProbeDomain: "platform.linkedin.com"}, groups, policies, DefaultEnv(), Snapshot{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.WinnerID != "ovr_1" || res.Action != ActionDirect {
+		t.Fatalf("child should hit wildcard: %+v", res)
+	}
+	res, err = Probe(ProbeRequest{ProbeDomain: "linkedin.com"}, groups, policies, DefaultEnv(), Snapshot{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.WinnerLayer != LayerSystem {
+		t.Fatalf("apex must not hit *.linkedin.com: %+v", res)
+	}
+	res, err = Probe(ProbeRequest{ProbeDomain: "a.b.linkedin.com"}, groups, policies, DefaultEnv(), Snapshot{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.WinnerLayer != LayerSystem {
+		t.Fatalf("two-level must not hit: %+v", res)
+	}
+}
+
+func TestProbeExactNotSuffix(t *testing.T) {
+	groups := []Group{{ID: "dom", Name: "li", Kind: KindDomain, Members: []string{"linkedin.com"}}}
+	policies := []Policy{{
+		ID: "ovr_1", Name: "apex", Enabled: true, Rank: 0, Action: ActionDirect,
+		MatchDomainGroupID: "dom", DangerAck: true,
+	}}
+	res, err := Probe(ProbeRequest{ProbeDomain: "platform.linkedin.com"}, groups, policies, DefaultEnv(), Snapshot{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.WinnerLayer != LayerSystem {
+		t.Fatalf("exact must not suffix-match: %+v", res)
 	}
 }
 

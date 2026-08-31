@@ -18,7 +18,7 @@ const (
 	OverlayBakFile  = "user-overlay.nft.bak"
 	OverlaySHFile   = "user-overlay.sh"
 	OverlayMetaFile = "overlay-meta.json"
-	DataplaneOK     = "nft usr_* overlay 已应用；域名组经 unbound:53 分流解析写入 usr_dom_* 与 domain-map.json；proxy 复用 0x2023→2022→gfctun。"
+	DataplaneOK     = "nft usr_* overlay 已应用；精确域名经 unbound:53，通配经 UDP/53 嗅探写入 usr_dom_*；proxy 复用 0x2023→2022→gfctun。"
 )
 
 func (s *Service) overlayPath() string {
@@ -60,12 +60,14 @@ func (s *Service) ApplyDataplane(groups []Group, policies []Policy, env Env) err
 	gm := groupMap(groups)
 	needed := collectNeededGroups(policies, gm)
 
-	// Resolve ALL domain groups via unbound (mapping for UI); sync sets only for referenced.
-	domMap, allResolved, err := buildDomainMap(groups)
+	domainMapFileMu.Lock()
+	prevMap := loadDomainMapFileLocked(s.domainMapPath())
+	domMap, allResolved, err := buildDomainMap(groups, prevMap)
 	if err != nil {
+		domainMapFileMu.Unlock()
 		return err
 	}
-	_ = s.saveDomainMap(domMap)
+
 	resolved := map[string][]string{}
 	domainWarn := 0
 	for _, g := range needed {
@@ -73,6 +75,9 @@ func (s *Service) ApplyDataplane(groups []Group, policies []Policy, env Env) err
 			resolved[g.ID] = allResolved[g.ID]
 			if entry, ok := domMap.Groups[g.ID]; ok {
 				for _, de := range entry.Domains {
+					if de.Source == ResolveWildcard {
+						continue
+					}
 					if de.Error != "" || len(de.IPs) == 0 {
 						domainWarn++
 					}
@@ -87,9 +92,16 @@ func (s *Service) ApplyDataplane(groups []Group, policies []Policy, env Env) err
 			elems = resolved[g.ID]
 		}
 		if err := syncUserSet(g, elems); err != nil {
+			domainMapFileMu.Unlock()
 			return err
 		}
 	}
+	if err := saveDomainMapFileLocked(s.domainMapPath(), domMap); err != nil {
+		domainMapFileMu.Unlock()
+		return err
+	}
+	domainMapFileMu.Unlock()
+	NotifySnoopReload()
 
 	script, err := buildOverlayChainNFT(groups, policies, env, lan, wan, mark)
 	if err != nil {
@@ -225,6 +237,28 @@ func nftChainExists(name string) bool {
 
 func nftSetExists(name string) bool {
 	return exec.Command("nft", "list", "set", "inet", "gfc", name).Run() == nil
+}
+
+func addSetElementsTimeout(set string, ips []string, timeout time.Duration) error {
+	if set == "" || len(ips) == 0 {
+		return nil
+	}
+	sec := int(timeout.Seconds())
+	if sec < 1 {
+		sec = 1
+	}
+	parts := make([]string, 0, len(ips))
+	for _, ip := range ips {
+		parts = append(parts, fmt.Sprintf("%s timeout %ds", ip, sec))
+	}
+	line := fmt.Sprintf("add element inet gfc %s { %s }\n", set, strings.Join(parts, ", "))
+	cmd := exec.Command("nft", "-f", "-")
+	cmd.Stdin = strings.NewReader(line)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("nft add %s: %v (%s)", set, err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 func normalizeMark(mark string) string {

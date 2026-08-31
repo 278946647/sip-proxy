@@ -4,12 +4,16 @@
 # 已发布行之 components / floors 钉扎禁止改写；纠错发新 Patch。
 
 policy.upgrade: same_major_only
-product.current: 2.0.1
+product.current: 2.1.0
 product.major: 2
 product.ota_baseline: 1.1.0
 
 releases:
-  - 2.0.1 (current, tag v2.0.1)
+  - 2.1.0 (current, tag v2.1.0)
+      gfc_client: 2.1.0-r1
+      notes: Minor — one-level wildcard FQDN via UDP/53 snoop; last FQDN snapshot before transparent mode
+
+  - 2.0.1 (supported, tag v2.0.1)
       gfc_client: 2.0.1-r1
       notes: Patch — OpenWrt state persist, last-good TUN, LuCI wget/firewall stub, dnsmasq dns_redirect=0
 

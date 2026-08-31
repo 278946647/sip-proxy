@@ -227,7 +227,7 @@ return view.extend({
 		var domBody = E('tbody', {});
 		if (!domKeys.length) {
 			domBody.appendChild(E('tr', {}, [
-				E('td', { 'colspan': '4', 'style': 'color:#888' }, [ '尚无域名组映射。在策略路由创建域名组并「保存并应用」后，经 unbound:53 解析写入。' ])
+				E('td', { 'colspan': '4', 'style': 'color:#888' }, [ '尚无域名组映射。精确名在「保存并应用」时经 unbound:53 解析；*.example.com 由客户端访问时的 DNS 应答嗅探写入。' ])
 			]));
 		} else {
 			domKeys.forEach(function(id) {
@@ -236,7 +236,13 @@ return view.extend({
 				var domains = g.domains || {};
 				Object.keys(domains).forEach(function(d) {
 					var e = domains[d] || {};
-					pairs.push(d + ' → ' + ((e.ips && e.ips.length) ? e.ips.join(',') : (e.error || '未解析')));
+					if (e.source === 'wildcard')
+						pairs.push(d + ' → 嗅探学习中');
+					else
+						pairs.push(d + ' → ' + ((e.ips && e.ips.length) ? e.ips.join(',') : (e.error || '未解析')));
+				});
+				(g.learned || []).forEach(function(L) {
+					pairs.push((L.qname || '') + ' → ' + ((L.ips && L.ips.length) ? L.ips.join(',') : '') + '（嗅探）');
 				});
 				domBody.appendChild(E('tr', {}, [
 					E('td', {}, [ g.group_name || id ]),
@@ -323,9 +329,9 @@ return view.extend({
 				setBody
 			]),
 
-			E('h3', {}, [ '域名组 → IP（unbound:53）' ]),
+			E('h3', {}, [ '域名组 → IP（unbound:53 + UDP/53 嗅探）' ]),
 			E('p', { 'class': 'hint' }, [
-				'解析出口遵循 unbound 中外分流；映射供 usr_dom_* 匹配。resolver=',
+				'精确名走 unbound 中外分流；*.example.com 从 LAN DNS 应答学习（一层 *，不含顶点，接受首包竞态）。resolver=',
 				(domainMap.resolver || 'unbound:53'),
 				domainMap.updated_at ? (' · 更新 ' + domainMap.updated_at) : ''
 			]),

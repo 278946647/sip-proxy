@@ -1,7 +1,8 @@
 # GFC 用户策略路由与系统分流规则（设备 Web）
 
-**Status:** 规格定稿（讨论冻结）；**实现未开始**。改 nft / unbound / 生成器前仍须「确认修改」+ 点名文件。  
-**会话交接（下一会话入口）：** [`SESSION_HANDOFF_2026-08-26_USER_POLICY_ROUTING.md`](SESSION_HANDOFF_2026-08-26_USER_POLICY_ROUTING.md)  
+**Status:** 规格定稿。泛域名一期已打产品 tag **`v2.1.0`**（`gfc-client 2.1.0-r1`）；后续开发透明模式。改 nft 表/链/unbound 生成器前仍须「确认修改」+ 点名文件。  
+**会话交接（下一会话入口）：** [`SESSION_HANDOFF_2026-08-31_WILDCARD_FQDN.md`](SESSION_HANDOFF_2026-08-31_WILDCARD_FQDN.md)  
+**策略路由总交接（历史）：** [`SESSION_HANDOFF_2026-08-26_USER_POLICY_ROUTING.md`](SESSION_HANDOFF_2026-08-26_USER_POLICY_ROUTING.md)  
 **权威 nft：** [`NFT_ARCHITECTURE.md`](NFT_ARCHITECTURE.md)（表/链/hook/默认 mark 不变；本能力为规定插入点上的 User Overlay）  
 **权威 DNS：** [`UNBOUND_ARCHITECTURE.md`](UNBOUND_ARCHITECTURE.md)（LAN DNS 仍为 unbound；域名组结果写入用户动态 set）  
 **权威 sing-box：** [`SINGBOX_ARCHITECTURE.md`](SINGBOX_ARCHITECTURE.md)（kernel-split 契约不因本能力改 `auto_route` / `route.final`）  
@@ -25,6 +26,8 @@
 | 8 | `gateway` / `bypass` / 未来 `transparent` **同一策略模型** | 只变入向匹配，不变裁决 |
 
 **一期动作空间：** `direct`（WAN 直连）| `proxy`（打标进默认 `0x2023 → 2022 → gfctun`）。多线路出站不在本期字段内。
+
+**泛域名拍板（2026-08-28，不得重开选型）：** 一层 `*`；通配**不含**顶点；嗅探 UDP/53 应答写 `usr_dom_*`；**接受首包竞态**（一期不上 nfqueue）。详见 §2.3。
 
 ---
 
@@ -71,10 +74,116 @@ Effective Policy
 |-----------|-------------------|------|
 | `src_cidr` | `usr_src_<id>` | 源 IP/CIDR |
 | `dst_cidr` | `usr_dst_<id>` | 目的 IP/CIDR |
-| `domain` | `usr_dom_<id>` | 域名解析结果（动态，建议 timeout）；域名列表存 store |
+| `domain` | `usr_dom_<id>` | 域名解析结果（动态，timeout）；store 存精确 FQDN 与一层通配 |
 
 **禁止** 将用户成员写入系统 set。  
-域名：store 存 FQDN → DNS 路径将 A/AAAA 写入 `usr_dom_<id>` → nft 匹配 `daddr`。
+域名：store 存成员 → 精确名经 unbound `:53` 解析 A；`*.example.com` 由 DNS 嗅探学习 A → 写入 `usr_dom_<id>` → nft 匹配 `daddr`。AAAA 不写入（与 unbound `do-ip6: no` 一致）。
+
+### 2.3 泛域名开发规范（飞塔同类 · 一期 · 强制）
+
+本节是泛域名的**开发规范**。实现与本节冲突报 **bug**，不得改本节迁就代码。改匹配深度 / 顶点语义 / 挂钩方式须用户明确批准。
+
+#### 2.3.1 产品意图
+
+管理员在域名组填写 `*.linkedin.com`（不必手填 `platform.linkedin.com`）。LAN 客户端用浏览器打开站点时，页面若再查询子域，查询仍走现有 DNS 劫持 → unbound `:53`。网关从这次**真实 DNS 应答**学习 A 记录，写入该组 `usr_dom_*`，供用户 Override 按目的 IP 匹配。
+
+**不是**对 `*.linkedin.com` 做一次递归枚举。**不是**解析每个网页/HTTPS 包。**不是**用 sing-box `domain_suffix` 做中外分流。
+
+`*.linkedin.com` **盖不住** `static.licdn.com` 等其它后缀（飞塔同样如此）。首页与子域都要覆盖时，组成员写两行：`linkedin.com` + `*.linkedin.com`。
+
+系统默认分流对非 CN 已进代理时，「整站进代理」可能看不出差异；本能力的主价值是 **Override**（例如整站强制直连，或源组 + 域名组组合）。
+
+#### 2.3.2 已拍板（禁止重开）
+
+| 项 | 取值 |
+|----|------|
+| 通配形态 | 仅最左一层 `*.example.com` |
+| 顶点 | **不含**。`*.linkedin.com` 不匹配 `linkedin.com` |
+| 多层子域 | **不匹配**。`*.linkedin.com` 不匹配 `a.b.linkedin.com` |
+| 精确名 | 仅 QNAME 全等；**禁止**把精确名当任意深度后缀 |
+| 挂钩 | 嗅探 UDP/53 应答（AF_PACKET + BPF）；**接受首包竞态** |
+| 一期不做 | nfqueue；改 hijack 目标；改 unbound.conf；TCP/53；DoH/DoT；AAAA；拆 SNI/HTTPS |
+
+#### 2.3.3 匹配算法（规范）
+
+成员先规范化：小写、去尾点。
+
+| 成员 | 命中 QNAME | 不命中 |
+|------|------------|--------|
+| `linkedin.com` | 仅 `linkedin.com` | `www.linkedin.com`、`platform.linkedin.com` |
+| `*.linkedin.com` | 恰好一层：`platform.linkedin.com`、`www.linkedin.com` | 顶点；`a.b.linkedin.com`；`static.licdn.com` |
+
+**合法通配：** `*` 仅允许最左标签；其后必须是 ≥2 个标签的 FQDN（`linkedin.com` 合法，`com` 非法）。
+
+**非法：** `*`、`*.com`、`foo.*.com`、中缀 `*`。
+
+试算 `probe_domain` 必须是**实际 QNAME**，不得填通配符。试算匹配必须与本节算法一致（精确 ≠ 后缀）。
+
+代码锚点：`qnameMatchesMember` / `normalizeFQDN` / `normalizeProbeQName`（`gfc-client/internal/policyrouting/members.go`）。
+
+#### 2.3.4 识别路径（规范）
+
+```
+浏览器查询 platform.linkedin.com（客户端自己发起，管理员不用手查）
+  → nft inet gfc_dns_hijack redirect :53     （已有，不改）
+  → unbound (gfc-unbound) :53                （已有，不改 conf）
+  → 应答 UDP sport 53 回到客户端
+  → gfc-api 嗅探该应答（QNAME + 同包 A，含 additional）
+  → 一层命中 *.linkedin.com
+  → nft add element inet gfc usr_dom_<id> { ip timeout <TTL> }
+  → 后续 TCP/UDP 在 user overlay 按 ip daddr @usr_dom_* 走 Override
+```
+
+- 只处理 **DNS 报文**（UDP/53）。禁止为对本功能做全流量 DPI / SNI。
+- 嗅探网卡：**lo** + 运行时 LAN；`proxy_mode=bypass` 时再加 WAN（客户 DNS 从 WAN 入向劫持）。**禁止只抓 lo**（会漏掉 LAN 客户查询）。
+- 无「被启用策略引用的域名组」时不挂接口。
+- 进程：`gfc-api` **进程级单例**（`mode=both` 不得开两份）。`gfc-agent` 不重复嗅探。
+- BPF 过滤 UDP/53；禁止无过滤地 AF_PACKET 全量 IPv4（尤其 WAN）。
+
+#### 2.3.5 喂数、TTL、落盘
+
+| 成员类型 | apply | 运行时 |
+|----------|-------|--------|
+| 精确 FQDN | `LookupIP` → `127.0.0.1:53`（与 LAN 同一 unbound 分流） | 嗅探到该 QNAME 的应答可刷新 IP |
+| `*.example.com` | **禁止** LookupIP 字面量 | 仅嗅探学习 |
+
+- 只写入 **A**；忽略 AAAA（与 unbound `do-ip6: no` 一致）。
+- nft timeout = DNS TTL，**下限 60s、上限 1h**（与 `usr_dom_*` 默认 timeout 对齐）。
+- 同包 CNAME：用同一 DNS 报文内的 A（含 additional）。无 A 则本期可不追问。
+- 学习条目写入 `/etc/gfc-client/policy-routing/domain-map.json` 的 `groups.<id>.learned[]`（`qname` / `pattern` / `ips` / `expires_at` / `source=dns-snoop`）。
+- **apply / `inet gfc` 表重建：** flush `usr_dom_*` 后必须恢复 **精确解析 IP ∪ 未过期且仍匹配当前成员的 learned**。禁止只写 apply 瞬时 LookupIP 而冲掉嗅探结果。
+- learned 在过期、或 QNAME 不再匹配当前组成员时丢弃。
+
+#### 2.3.6 首包竞态（一期接受）
+
+嗅探异步：DNS 应答照常交给客户端，随后才 `nft add`。第一条业务连接可能仍走系统默认分流；IP 入集后后续连接命中 Override。
+
+- 策略与系统默认同向（例如国际本就进代理）时，现场往往看不出。
+- 策略与系统默认相反（例如 LinkedIn 强制直连）时，**第一条可能仍进代理**。二期若用户要求「第一条必须准」，再单独立项 nfqueue（须 nft「确认修改」）。
+
+#### 2.3.7 绝对禁止
+
+- 用 MosDNS / sing-box DNS inbound / fake-ip 替代 unbound 服务 LAN `:53`
+- 改 `gfc_dns_hijack` 目标端口或在 unbound 前再插一层 DNS 代理
+- 改 unbound.conf（`log-replies` / dnstap 等）作为一期路径
+- 用户域名 IP 写入 `TO_CN` / `bypass_ip` / `ext` / `ext_const`
+- kernel-split 用 sing-box `domain_suffix` / `rule_set` 做中外分流
+- 为试编本功能 bump 产品版本 / `PKG_RELEASE`（§1.5）
+- 默认改为任意深度后缀或把顶点算进 `*.example.com`（除非用户改规格）
+
+#### 2.3.8 实现锚点（代码已按本节落地，下一会话以差异表核对）
+
+| 职责 | 路径 |
+|------|------|
+| 匹配 / 校验 | `gfc-client/internal/policyrouting/members.go` |
+| apply 合并 learned | `domain_resolve.go`、`apply.go` |
+| UDP/53 解析 | `dns_msg.go` |
+| 嗅探单例 | `dns_snoop.go`；Linux AF_PACKET：`dns_snoop_linux.go` |
+| `gfc-api` 启动 | `gfc-client/internal/api/server.go` → `StartDNSSnoop` |
+| LuCI | `policy-route.js`、`system-split.js` |
+| 落盘 | `groups.json` / `policies.json` / `domain-map.json` |
+
+**不改：** `gfc-routing.sh` 表/链骨架、unbound 模板/生成器、sing-box 生成器、`NFT_ARCHITECTURE.md` / `UNBOUND_ARCHITECTURE.md`（除非补「不改」备注且用户要求）。
 
 ---
 
@@ -164,7 +273,7 @@ Store (groups + policies)     Control plane / CN sync
 | `id` | 系统生成 | 稳定；改名不改 id |
 | `name` | 是 | 显示名 |
 | `kind` | 是 | `src_cidr` \| `dst_cidr` \| `domain` |
-| `members[]` | 是 | IP/CIDR 或 FQDN（一行一个） |
+| `members[]` | 是 | IP/CIDR 或 FQDN（一行一个）；域名组允许 `*.example.com`（一层 `*`，不含顶点） |
 | `description` | 否 | |
 | `ref_count` | 只读 | 被引用数；>0 删除须拦截或确认解绑 |
 
@@ -212,7 +321,7 @@ Store (groups + policies)     Control plane / CN sync
 - `winner_id` / `winner_layer`  
 - `action`  
 - `reason`（人话）  
-- 域名时：解析 IP 列表、所属 `usr_dom_*`  
+- 域名时：解析 IP 列表、所属 `usr_dom_*`；试算填 **实际 QNAME**（如 `platform.linkedin.com`），不得填通配符；精确成员不再按任意深度后缀命中  
 - `ingress_eligible` + 当前 `proxy_mode` 说明  
 - 目的 ∈ `bypass_ip` 时明确安全轨结果  
 
@@ -246,12 +355,13 @@ Store (groups + policies)     Control plane / CN sync
 | POST | `probe` | 冲突试算 |
 | GET | `system-rules` | 系统分流规则页只读模型 |
 | GET | `effective` | 可选：生效摘要 |
+| GET | `domain-map` | 精确解析 + `learned` 嗅探快照（只读） |
 
 - 写路径：**仅设备 Web**；控制面只读上报（若协议需要）。  
 - `bypass_ip` 成员删除 API：**拒绝**（系统成员）。  
 
 存储路径建议（实现可调整，须进固件文档）：  
-`/etc/gfc-client/policy-routing/groups.json`、`policies.json`。
+`/etc/gfc-client/policy-routing/groups.json`、`policies.json`、`domain-map.json`。
 
 ---
 
@@ -264,6 +374,7 @@ Store (groups + policies)     Control plane / CN sync
 - `direct` 动作：对该匹配 **return / 不打标**（与现直连语义一致）。  
 - 新增 nft set 仅 `usr_*`；不得改名现有强制 set。  
 - 域名组与 unbound 的接线不得用 MosDNS / sing-box DNS inbound 替代 LAN `:53`。  
+- 泛域名一期：仅嗅探 UDP/53 应答写 `usr_dom_*`；不改表名/链/hook、不改 unbound.conf、不上 nfqueue。  
 
 **未获用户「确认修改」+ 点名生成器文件前，禁止改生成器代码。**
 
@@ -279,6 +390,10 @@ Store (groups + policies)     Control plane / CN sync
 - [ ] 网关与旁路同一 policies；旁路非 `customer_hosts` 源试算显示不可入向  
 - [ ] 系统分流规则页只读；策略路由可写  
 - [ ] apply 失败可回滚；不破坏 `0x2023→2022→gfctun` 骨架  
+- [ ] `*.linkedin.com` 可保存；`platform.linkedin.com` 经嗅探进入 `usr_dom_*`；顶点与 `a.b.linkedin.com` 不因该通配命中  
+- [ ] apply 不冲掉未过期的嗅探学习 IP  
+- [ ] 试算 `platform.linkedin.com` 命中 `*.linkedin.com`；试算顶点 / 两层子域不命中  
+- [ ] 学习 IP 不出现在 `TO_CN` / `bypass_ip` / `ext_const`  
 
 ---
 
@@ -286,7 +401,8 @@ Store (groups + policies)     Control plane / CN sync
 
 | 文档 | 关系 |
 |------|------|
-| 本文 | 用户策略 / UI / 合成语义 **唯一产品真相** |
+| 本文 | 用户策略 / UI / 合成语义 / **泛域名开发规范 §2.3** **唯一产品真相** |
+| `SESSION_HANDOFF_2026-08-31_WILDCARD_FQDN.md` | 泛域名会话交接与下一会话开发入口 |
 | `NFT_ARCHITECTURE.md` | 插入点与 mark；改链须架构评审 |
 | `BYPASS_MODE.md` | 旁路入向；不另建旁路策略模型 |
 | `UNBOUND_ARCHITECTURE.md` | 域名组解析落点 |
@@ -298,4 +414,6 @@ Store (groups + policies)     Control plane / CN sync
 
 | 日期 | 说明 |
 |------|------|
+| 2026-08-31 | §2.3 升为开发规范（匹配算法、识别路径、禁止项、代码锚点）；交接改指向 08-31 |
+| 2026-08-28 | 泛域名一期拍板：一层 `*`、通配不含顶点、UDP/53 嗅探写 `usr_dom_*`、接受首包竞态 |
 | 2026-08-26 | 讨论冻结定稿：usr_*、Override、上移优先、仅源匹配、系统分流规则页、网关/旁路/透明同模型 |
