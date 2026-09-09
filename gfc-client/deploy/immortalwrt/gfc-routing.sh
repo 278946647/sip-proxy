@@ -462,6 +462,10 @@ apply_trans_bridge() {
 		echo "WARN: isp/cpe must not be management LAN $LAN_IFACE" >&2
 		return 1
 	fi
+	if [ -d "/sys/class/net/$LAN_IFACE/brif/$isp" ] || [ -d "/sys/class/net/$LAN_IFACE/brif/$cpe" ]; then
+		echo "WARN: isp/cpe must not be a $LAN_IFACE bridge port" >&2
+		return 1
+	fi
 	ensure_dummy gfc-ce
 	ensure_dummy gfc-dns
 	ip link show br-trans >/dev/null 2>&1 || ip link add name br-trans type bridge 2>/dev/null || true
@@ -505,8 +509,10 @@ apply_trans_addrs() {
 		if [ -n "$pe_mac" ]; then
 			ip neigh replace "$gw" lladdr "$pe_mac" nud permanent dev "$isp" 2>/dev/null || true
 		fi
+		# Only install a hitch default when the box has none left (WAN was reused as isp).
+		# Never replace an existing management/WAN default — that blackholes LuCI/SSH/VLESS.
 		cur="$(ip -4 route show default 2>/dev/null | awk '{print $5; exit}')"
-		if [ -z "$cur" ] || [ "$cur" = "$isp" ]; then
+		if [ -z "$cur" ]; then
 			if is_ipv4 "$ce"; then
 				ip route replace default via "$gw" dev "$isp" src "$ce" 2>/dev/null || true
 			else
@@ -621,25 +627,40 @@ $mac_cpe
   }
 }
 EOF
-	nft list set inet gfc bypass_ip 2>/dev/null | awk '
-		BEGIN{ins=0}
-		/elements/ {ins=1}
-		ins {
-			while (match($0, /([0-9]+\.){3}[0-9]+(\/[0-9]+)?/)) {
-				print substr($0, RSTART, RLENGTH)
-				$0 = substr($0, RSTART+RLENGTH)
-			}
-		}
-	' | while read -r cidr; do
-		[ -n "$cidr" ] || continue
-		nft add element netdev gfc_trans no_steal_dst { "$cidr" } 2>/dev/null || true
-	done
-	if [ "$(load_routing_mode)" != "global" ] && [ -f "$CN_LIST" ]; then
-		awk '/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\/[0-9]+/ { print $1 }' "$CN_LIST" | while read -r cidr; do
-			nft add element netdev gfc_trans no_steal_dst { "$cidr" } 2>/dev/null || true
-		done
-	fi
+	fill_netdev_no_steal
 	echo "transparent netdev gfc_trans: isp=$isp cpe=$cpe hijack=$hijack tun=$tun_up vip=$vip"
+}
+
+fill_netdev_no_steal() {
+	local tmp
+	tmp="$(mktemp)" || return 0
+	{
+		nft list set inet gfc bypass_ip 2>/dev/null | awk '
+			BEGIN{ins=0}
+			/elements/ {ins=1}
+			ins {
+				while (match($0, /([0-9]+\.){3}[0-9]+(\/[0-9]+)?/)) {
+					print substr($0, RSTART, RLENGTH)
+					$0 = substr($0, RSTART+RLENGTH)
+				}
+			}
+		'
+		if [ "$(load_routing_mode)" != "global" ] && [ -f "$CN_LIST" ]; then
+			awk '/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\/[0-9]+/ { print $1 }' "$CN_LIST"
+		fi
+	} | awk 'BEGIN{n=0; started=0}
+		NF && $1 !~ /^$/ {
+			if (!started) { printf "add element netdev gfc_trans no_steal_dst { "; started=1; }
+			if (n > 0) printf ", ";
+			printf "%s", $1;
+			n++;
+			if (n == 200) { print " }"; n=0; started=0; }
+		}
+		END{ if (started) print " }"; }' > "$tmp"
+	if [ -s "$tmp" ]; then
+		nft -f "$tmp" 2>/dev/null || true
+	fi
+	rm -f "$tmp"
 }
 
 refresh_trans() {

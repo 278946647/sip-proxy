@@ -29,7 +29,12 @@ let poll: ReturnType<typeof setInterval> | null = null
 
 const interfaces = computed(() => {
   const raw = settings.value.interfaces
-  return Array.isArray(raw) ? raw.map(String).filter((n) => !['br-lan', 'gfctun', 'gfc-ce', 'gfc-dns', 'br-trans', 'lo'].includes(n)) : []
+  const skip = new Set(['br-lan', 'gfctun', 'gfc-ce', 'gfc-dns', 'br-trans', 'lo'])
+  const slaves = settings.value.lan_bridge_ports
+  if (Array.isArray(slaves)) {
+    for (const n of slaves) skip.add(String(n))
+  }
+  return Array.isArray(raw) ? raw.map(String).filter((n) => !skip.has(n)) : []
 })
 
 async function load() {

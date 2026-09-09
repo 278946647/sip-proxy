@@ -12,14 +12,19 @@ import (
 	"github.com/278946647/sip-proxy/gfc-client/internal/platform"
 )
 
+const refreshDebounce = 2 * time.Second
+
 // Supervisor runs passive learning while proxy_mode=transparent.
 type Supervisor struct {
 	cfg *config.Config
 
-	mu     sync.Mutex
-	stop   func()
-	last   string
-	now    func() time.Time
+	mu       sync.Mutex
+	stop     func()
+	last     string
+	learned  Learned
+	timer    *time.Timer
+	refresh  bool
+	now      func() time.Time
 }
 
 func NewSupervisor(cfg *config.Config) *Supervisor {
@@ -46,6 +51,7 @@ func (s *Supervisor) Notify(mode string) {
 	if st.CECandidates == nil {
 		st.CECandidates = map[string]int{}
 	}
+	s.learned = st
 	cancel := startCapture(ports, func(role Role, frame []byte) {
 		s.onFrame(role, frame)
 	})
@@ -54,31 +60,70 @@ func (s *Supervisor) Notify(mode string) {
 }
 
 func (s *Supervisor) stopLocked() {
+	if s.timer != nil {
+		s.timer.Stop()
+		s.timer = nil
+	}
 	if s.stop != nil {
 		s.stop()
 		s.stop = nil
 	}
 	s.last = ""
+	s.refresh = false
 }
 
 func (s *Supervisor) onFrame(role Role, frame []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	cur := LoadLearned(s.cfg)
+	if s.stop == nil {
+		return
+	}
+	cur := s.learned
 	if cur.CECandidates == nil {
 		cur.CECandidates = map[string]int{}
 	}
 	before := cur.State + "|" + cur.CEIP + "|" + cur.CPEMAC + "|" + cur.PEMAC + "|" + cur.GWIP
 	ApplyFrame(role, frame, &cur)
 	after := cur.State + "|" + cur.CEIP + "|" + cur.CPEMAC + "|" + cur.PEMAC + "|" + cur.GWIP
+	s.learned = cur
 	if before == after {
 		return
 	}
-	if err := SaveLearned(s.cfg, cur); err != nil {
-		log.Printf("transparent: save learned: %v", err)
+	s.scheduleFlushLocked()
+}
+
+func (s *Supervisor) scheduleFlushLocked() {
+	if s.timer != nil {
 		return
 	}
-	go refreshDataplane(s.cfg)
+	s.timer = time.AfterFunc(refreshDebounce, s.flush)
+}
+
+func (s *Supervisor) flush() {
+	s.mu.Lock()
+	s.timer = nil
+	if s.stop == nil {
+		s.mu.Unlock()
+		return
+	}
+	if s.refresh {
+		s.scheduleFlushLocked()
+		s.mu.Unlock()
+		return
+	}
+	snap := s.learned
+	s.refresh = true
+	cfg := s.cfg
+	s.mu.Unlock()
+
+	if err := SaveLearned(cfg, snap); err != nil {
+		log.Printf("transparent: save learned: %v", err)
+	}
+	refreshDataplane(cfg)
+
+	s.mu.Lock()
+	s.refresh = false
+	s.mu.Unlock()
 }
 
 func refreshDataplane(cfg *config.Config) {

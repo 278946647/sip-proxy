@@ -2,6 +2,8 @@ package transparent
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -36,5 +38,30 @@ func ValidatePorts(p Ports, lanIface string) error {
 	if p.ISP == lan || p.CPE == lan {
 		return fmt.Errorf("isp/cpe 不能占用管理 LAN 口 %s", lan)
 	}
+	for _, slave := range BridgePorts(lan) {
+		if p.ISP == slave || p.CPE == slave {
+			return fmt.Errorf("isp/cpe 不能占用管理 LAN 桥成员 %s（属于 %s）", slave, lan)
+		}
+	}
 	return nil
+}
+
+// BridgePorts lists current slaves of a Linux bridge (empty on non-Linux / missing sysfs).
+func BridgePorts(bridge string) []string {
+	bridge = strings.TrimSpace(bridge)
+	if bridge == "" {
+		return nil
+	}
+	ents, err := os.ReadDir(filepath.Join("/sys/class/net", bridge, "brif"))
+	if err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(ents))
+	for _, e := range ents {
+		name := strings.TrimSpace(e.Name())
+		if name != "" {
+			out = append(out, name)
+		}
+	}
+	return out
 }

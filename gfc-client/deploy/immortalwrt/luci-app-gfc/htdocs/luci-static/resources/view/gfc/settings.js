@@ -151,8 +151,12 @@ return view.extend({
 		function ifaceSelect(selected) {
 			var sel = E('select', { 'class': 'cbi-input-select' });
 			sel.appendChild(option('', '（选择网卡）', selected || ''));
+			var skip = {
+				'br-lan': 1, 'gfctun': 1, 'gfc-ce': 1, 'gfc-dns': 1, 'br-trans': 1, 'lo': 1
+			};
+			(settings.lan_bridge_ports || []).forEach(function(n) { skip[n] = 1; });
 			ifaces.forEach(function(name) {
-				if (name === 'br-lan' || name === 'gfctun' || name === 'gfc-ce' || name === 'gfc-dns' || name === 'br-trans')
+				if (skip[name])
 					return;
 				sel.appendChild(option(name, name, selected || ''));
 			});

@@ -797,6 +797,12 @@ func (s *Server) getSettings(c *gin.Context) {
 	settings["learned_ce"] = pm.LearnedCE
 	settings["ingress_eligible_hint"] = pm.IngressEligibleHint
 	settings["interfaces"] = network.ListInterfaces()
+	lanIf := strings.TrimSpace(s.cfg.LanIface)
+	if lanIf == "" {
+		lanIf = "br-lan"
+	}
+	settings["lan_iface"] = lanIf
+	settings["lan_bridge_ports"] = transparent.BridgePorts(lanIf)
 	settings["routing_mode"] = singbox.NewRenderer(s.cfg).RoutingMode()
 	liveMode := "standard"
 	if bundle := s.engine.LoadBundle(); bundle != nil {
