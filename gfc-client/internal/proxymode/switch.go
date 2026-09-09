@@ -230,17 +230,30 @@ func (c *Controller) Apply(req SwitchRequest) (Status, error) {
 			}
 		}
 	}
-	if err := c.applyModeLocked(req.Mode); err != nil {
+
+	applyFn := c.applyMode
+	toMode := req.Mode
+	fromMode := pending.FromMode
+	c.armTimerLocked(pending)
+	c.mu.Unlock()
+	var applyErr error
+	if applyFn != nil {
+		applyErr = applyFn(toMode)
+	}
+	c.mu.Lock()
+	if applyErr != nil {
 		_ = c.restoreFiles(pending)
 		if pending.WANBefore != nil && c.applyWAN != nil {
 			_, _ = c.applyWAN(pending.WANBefore)
 		}
-		_ = c.applyModeLocked(pending.FromMode)
+		if applyFn != nil {
+			_ = applyFn(fromMode)
+		}
 		_ = ClearPending(c.cfg)
-		return Status{}, fmt.Errorf("数据面应用失败，已回滚: %w", err)
+		c.stopTimerLocked()
+		return Status{}, fmt.Errorf("数据面应用失败，已回滚: %w", applyErr)
 	}
 
-	c.armTimerLocked(pending)
 	return c.statusLocked(), nil
 }
 

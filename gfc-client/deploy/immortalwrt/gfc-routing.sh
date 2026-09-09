@@ -420,9 +420,21 @@ teardown_trans_bridge() {
 		ip link set "$cpe" nomaster 2>/dev/null || true
 		ip link set "$cpe" promisc off 2>/dev/null || true
 	fi
-	ip link del br-trans 2>/dev/null || true
-	ip link del gfc-ce 2>/dev/null || true
-	ip link del gfc-dns 2>/dev/null || true
+	del_trans_dev br-trans
+	del_trans_dev gfc-ce
+	del_trans_dev gfc-dns
+}
+
+del_trans_dev() {
+	local d="$1"
+	[ -n "$d" ] || return 0
+	ip link show "$d" >/dev/null 2>&1 || return 0
+	ip link set "$d" down 2>/dev/null || true
+	if command -v timeout >/dev/null 2>&1; then
+		timeout 2 ip link del "$d" 2>/dev/null || true
+	else
+		ip link del "$d" 2>/dev/null || true
+	fi
 }
 
 ensure_dummy() {
@@ -719,9 +731,13 @@ write_bypass_unbound_acl() {
 		ensure_unbound_bypass_include
 		need_restart=1
 	fi
-	if [ "$need_restart" -eq 1 ] && [ -x /etc/init.d/gfc-unbound ]; then
-		/etc/init.d/gfc-unbound restart >/dev/null 2>&1 || true
-		echo "unbound bypass ACL updated ($dest)"
+	if [ "$need_restart" -eq 1 ]; then
+		if command -v unbound-control >/dev/null 2>&1 && unbound-control reload >/dev/null 2>&1; then
+			echo "unbound ACL reloaded ($dest)"
+		elif [ -x /etc/init.d/gfc-unbound ]; then
+			/etc/init.d/gfc-unbound restart >/dev/null 2>&1 || true
+			echo "unbound bypass ACL updated ($dest)"
+		fi
 	fi
 }
 
@@ -1199,6 +1215,7 @@ case "$ACTION" in
 	stop) stop_rules ;;
 	restart) stop_rules; start_rules ;;
 	refresh-trans) refresh_trans ;;
+	leave-trans) teardown_trans_bridge ;;
 	status)
 		echo "scheme=$ROUTING_SCHEME proxy=$(load_proxy_mode) lan=$LAN_IFACE wan=$WAN_IFACE cidr=$LAN_CIDR tun=$TUN_IFACE mark=$MARK table=$TABLE redirect=$REDIRECT_PORT ssh=$SSH_PORT"
 		echo "dns_hijack=$(nft list table inet gfc_dns_hijack >/dev/null 2>&1 && echo yes || echo no)"
@@ -1214,5 +1231,5 @@ case "$ACTION" in
 		ip -4 rule list | grep "$TABLE" || true
 		ip -4 route show table "$TABLE" 2>/dev/null || true
 		;;
-	*) echo "usage: $0 {start|direct|stop|restart|status}" >&2; exit 2 ;;
+	*) echo "usage: $0 {start|direct|stop|restart|status|refresh-trans|leave-trans}" >&2; exit 2 ;;
 esac

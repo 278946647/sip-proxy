@@ -1,8 +1,10 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -10,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -51,6 +54,7 @@ type Server struct {
 	revSSH     *reversessh.Manager
 	unboundMgr *unboundmgr.Manager
 	mode       string // admin | flash | api
+	dpMu       sync.Mutex
 }
 
 func NewServer(cfg *config.Config, st *store.Store, mode string) *Server {
@@ -85,15 +89,47 @@ func (s *Server) applyProxyModeDataplane(mode string) error {
 	}
 	_ = os.Setenv("GFC_PROXY_MODE", mode)
 	s.cfg.ProxyMode = mode
-	ok, msg := s.engine.ReloadRoutingPolicy()
-	if !ok {
-		return fmt.Errorf("%s", msg)
-	}
-	if ok, msg := s.engine.ReloadDNS(); !ok {
-		return fmt.Errorf("unbound reload: %s", msg)
-	}
+	// Stop AF_PACKET before nft/unbound work or LuCI's ~15s XHR dies on the way back to gateway.
 	if s.trans != nil {
 		s.trans.Notify(mode)
+	}
+	if mode != proxymode.ModeTransparent {
+		if err := s.runRoutingAction("leave-trans"); err != nil {
+			log.Printf("proxy-mode leave-trans: %v", err)
+		}
+	}
+	go s.reloadProxyModeDataplane(mode)
+	return nil
+}
+
+func (s *Server) reloadProxyModeDataplane(mode string) {
+	s.dpMu.Lock()
+	defer s.dpMu.Unlock()
+	if proxymode.NormalizeMode(s.cfg.ProxyMode) != mode {
+		return
+	}
+	if ok, msg := s.engine.ReloadRoutingPolicy(); !ok {
+		log.Printf("proxy-mode routing apply: %s", msg)
+		return
+	}
+	if ok, msg := s.engine.ReloadDNS(); !ok {
+		log.Printf("proxy-mode dns apply: %s", msg)
+	}
+}
+
+func (s *Server) runRoutingAction(action string) error {
+	root := s.cfg.Paths.Root
+	script := filepath.Join(root, "deploy", "immortalwrt", "gfc-routing.sh")
+	if _, err := os.Stat(script); err != nil {
+		script = filepath.Join(root, "deploy", "gfc-routing.sh")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "sh", script, action)
+	cmd.Env = append(os.Environ(), "GFC_PROXY_MODE="+proxymode.NormalizeMode(s.cfg.ProxyMode))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s: %w (%s)", action, err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }

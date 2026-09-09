@@ -22,8 +22,8 @@ function execWget(args) {
 }
 
 // BusyBox wget only supports GET and POST (--post-data), not --method=PUT.
-function request(path, body) {
-	var args = [ '-qO-', '-T', '15', '--header=Content-Type: application/json' ];
+function request(path, body, timeoutSec) {
+	var args = [ '-qO-', '-T', String(timeoutSec || 15), '--header=Content-Type: application/json' ];
 	if (body !== undefined) {
 		args.push('--post-data=' + JSON.stringify(body || {}));
 	}
@@ -304,7 +304,7 @@ return view.extend({
 				body.isp_port = ispSelect.value;
 				body.cpe_port = cpeSelect.value;
 			}
-			request('/settings/proxy-mode', body).then(function(res) {
+			request('/settings/proxy-mode', body, 30).then(function(res) {
 				showResult(result, res, '路由模式');
 				var st = (res || {}).data || {};
 				renderPending(st.pending || null);
