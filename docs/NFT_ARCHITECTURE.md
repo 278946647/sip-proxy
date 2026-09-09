@@ -4,7 +4,7 @@
 **Scope:** GFC Client (ImmortalWrt / Ubuntu gateway) and GFC Forward Node.  
 **Supersedes:** Any conflicting nft descriptions in `GFC_GATEWAY_CORE.md`, `ARCHITECTURE.md`, generator comments, or AI-generated shortcuts.
 
-**Companion:** [`docs/UNBOUND_ARCHITECTURE.md`](UNBOUND_ARCHITECTURE.md) · [`docs/SINGBOX_ARCHITECTURE.md`](SINGBOX_ARCHITECTURE.md) · [`docs/BYPASS_MODE.md`](BYPASS_MODE.md)
+**Companion:** [`docs/UNBOUND_ARCHITECTURE.md`](UNBOUND_ARCHITECTURE.md) · [`docs/SINGBOX_ARCHITECTURE.md`](SINGBOX_ARCHITECTURE.md) · [`docs/BYPASS_MODE.md`](BYPASS_MODE.md) · [`docs/TRANSPARENT_MODE.md`](TRANSPARENT_MODE.md) (transparent ingress; steal layer `netdev gfc_trans`)
 
 If generated runtime rules differ from this document, **the generator is wrong** — not this document.
 
@@ -61,6 +61,18 @@ OUTPUT → policy routing → WAN / gfctun   (identical to gateway)
 ```
 
 LAN remains an independent management network for the life of the device. In bypass, LAN keeps **mini-gateway** capability (management hosts may use GFC as default gateway for domestic + cross-border).
+
+**Transparent (`proxy_mode=transparent`) — ratified in [`TRANSPARENT_MODE.md`](TRANSPARENT_MODE.md); steal layer §9.4:**
+
+```
+isp_port + cpe_port = br-trans (L2 cable; no interconnect IP; management LAN never enslaved)
+Default: L2 forward (no customer SNAT, no TTL decrement, no ARP ownership of CE once learned)
+netdev gfc_trans steal: recursive DNS :53 (if dns_hijack on, or dest=DNS VIP) and international TCP
+     → fwd to gfc-ce → existing inet gfc classification / mark 0x2023 → table 2022 → gfctun
+GFC originated: hitchhike learned CE IP; return 5-tuple @hitch_reply punt to local
+```
+
+IPv4-only classification for stolen traffic matches the rest of this document. Untagged IPv6 / PPPoE / tagged frames: L2 pass unless `TRANSPARENT_MODE.md` says otherwise. `bridge-nf-call-iptables` stays **0**.
 
 ### GFC Forward Node
 
@@ -137,11 +149,12 @@ Changing hook priority is prohibited without user approval and an update to this
 
 | Table | Family | Purpose |
 |-------|--------|---------|
-| `nat` | `inet` | SNAT / masquerade. Gateway: all `oif WAN`. Bypass: **only** `ip saddr <lan_subnet>` (management mini-gateway). |
-| `gfc_dns_hijack` | `inet` | DNS redirect to local `:53`. Gateway: `iif LAN`. Bypass: `iif LAN` plus `iif WAN` + `saddr @customer_hosts` (with local-dest skip). |
+| `nat` | `inet` | SNAT / masquerade. Gateway: all `oif WAN`. Bypass: **only** `ip saddr <lan_subnet>` (management mini-gateway). Transparent: management `oif isp` `ip saddr <lan_subnet>` SNAT to learned CE; DNS reply `snat to ct original daddr`. |
+| `gfc_dns_hijack` | `inet` | DNS redirect to local `:53`. Gateway: `iif LAN`. Bypass: `iif LAN` plus `iif WAN` + `saddr @customer_hosts` (with local-dest skip). Transparent: **no** naked `redirect` on the cable; trampoline `dnat` to DNS VIP on `iif gfc-ce` (see §9.4). |
 | `gfc` | `inet` | Classification, forward sync, output routing |
+| `gfc_trans` | `netdev` | **Transparent only.** Steal + TX MAC on isp/cpe. Not an inet table; do not merge into `gfc`. |
 
-Do not merge tables. Do not rename tables.
+Do not merge tables. Do not rename tables. Do not open `bridge-nf-call-iptables` to pull L2 frames into inet conntrack.
 
 ---
 
@@ -155,8 +168,12 @@ Do not merge tables. Do not rename tables.
 | `prerouting_mangle_route` | prerouting | filter (0) | in table `inet gfc` |
 | `gfc_forward` | forward | filter | in table `inet gfc` |
 | `output_mangle_route` | output | route / filter | in table `inet gfc` |
+| `in_isp` | ingress | filter | in table `netdev gfc_trans` (device `<isp_port>`) |
+| `in_cpe` | ingress | filter | in table `netdev gfc_trans` (device `<cpe_port>`) |
+| `eg_isp` | egress | filter | in table `netdev gfc_trans` (device `<isp_port>`) |
+| `eg_cpe` | egress | filter | in table `netdev gfc_trans` (device `<cpe_port>`) |
 
-Chain names are API. Never rename.
+Chain names are API. Never rename. inet names stay as in gateway/bypass. netdev names are the only steal-layer API (2026-09-09).
 
 ---
 
@@ -170,6 +187,9 @@ Chain names are API. Never rename.
 | `ext` | `ipv4_addr`, **timeout**, dynamic add/delete | International / proxy destinations |
 | `ext_const` | `ipv4_addr` | Fixed international DNS upstream IPs |
 | `customer_hosts` | `ipv4_addr`, interval | **Bypass only.** Sources allowed to be marked / DNS-hijacked on WAN. Populated from **device Web UI** (not control plane). |
+| `hitch_reply` | `inet_proto . ipv4_addr . inet_service . ipv4_addr . inet_service`, timeout, dynamic | **Transparent only** (`netdev gfc_trans`). Reverse 5-tuple of box-originated hitchhike. Never a source-port range. |
+| `no_steal_dst` | `ipv4_addr`, interval | **Transparent only** (`netdev gfc_trans`). Destinations that stay L2 (RFC1918, learned CE/GW, `bypass_ip`, and `TO_CN` in split). Not written into inet `TO_CN` / `bypass_ip` / `ext`. |
+| `dns_exclude` | `ipv4_addr`, interval | **Transparent / shared hijack.** Dest IPs whose :53 is never stolen (`dns_hijack_exclude`). |
 
 `ext` must support runtime updates and survive reloads. Never replace with static-only rules.
 
@@ -183,15 +203,17 @@ Interfaces and CIDRs below use **example names** (`eth0`, `br-lan`, `192.168.1.0
 
 Placeholders:
 
-| Token | Gateway | Bypass |
-|-------|---------|--------|
-| `<wan_iface>` | WAN device | Same; holds customer-assigned IP |
-| `<lan_iface>` | Customer LAN / `br-lan` | **Management-only** LAN; never bridged to WAN |
-| `<lan_subnet>` | Customer LAN CIDR | Management CIDR (mini-gateway SNAT source) |
-| `@customer_hosts` | unused | Device-Web CIDR/host set (sources that use GFC as GW) |
-| `<tun_iface>` | `gfctun` | `gfctun` |
+| Token | Gateway | Bypass | Transparent (§9.4) |
+|-------|---------|--------|-------------------|
+| `<wan_iface>` | WAN device | Same; holds customer-assigned IP | Not the customer interconnect; management/uplink naming stays runtime-discovered |
+| `<lan_iface>` | Customer LAN / `br-lan` | **Management-only** LAN; never bridged to WAN | **Management-only** LAN; never bridged to isp/cpe / `br-trans` |
+| `<lan_subnet>` | Customer LAN CIDR | Management CIDR (mini-gateway SNAT source) | Same as bypass (management mini-gateway) |
+| `@customer_hosts` | unused | Device-Web CIDR/host set (sources that use GFC as GW) | unused (learning replaces hosts; do not copy learned IPs here) |
+| `<tun_iface>` | `gfctun` | `gfctun` | `gfctun` |
+| `<isp_port>` / `<cpe_port>` | unused | unused | Device-Web port roles; enslaved to `br-trans` |
+| `<dns_vip>` | unused (DNS = LAN IP) | unused (DNS = WAN IP) | Default `172.31.253.53/32` on dummy `gfc-dns` |
 
-`split` vs `global` applies to **both** proxy modes: `global` omits `@TO_CN return` in prerouting/output classify.
+`split` vs `global` applies to **gateway, bypass, and transparent**: `global` omits `@TO_CN return` in prerouting/output classify. Transparent only classifies **stolen** packets (`iif gfc-ce`); L2-passed frames never hit these chains.
 
 ### 9.1 Gateway vs bypass — delta
 
@@ -210,6 +232,8 @@ Placeholders:
 | `rp_filter` on WAN | Strict OK | Loose (`2`) required for China hairpin |
 | Mode switch write path | Device Web | Device Web **only**; control plane read-only |
 | Switch safety | — | Confirm-within-timeout or rollback |
+
+Transparent row-level delta is §9.4 (`netdev gfc_trans`). inet table/chain/hook/default mark names do not change.
 
 ### 9.2 Gateway mode — reference rules
 
@@ -398,6 +422,98 @@ add rule inet gfc output_mangle_route ct mark set meta mark
 | Apply model | Single orchestrated apply (not ad-hoc script pile); validate then generate nft/WAN/sysctl |
 | Safety net | Confirm within timeout or automatic rollback to previous mode/WAN |
 
+### 9.4 Transparent mode — `netdev gfc_trans` (ratified 2026-09-09)
+
+Same inet tables `nat` / `gfc_dns_hijack` / `gfc`, same chain names, same mark `0x00002023`, same `0x2023 → 2022 → gfctun`. Steal happens **before** the bridge, in **family `netdev`**, so L2-passed frames never enter inet conntrack.
+
+Non-nft companions (mandatory with these rules):
+
+- `br-trans`: slaves `<isp_port>` + `<cpe_port>` only; **no** IP; **never** enslave `<lan_iface>` / `br-lan`
+- Dummy `gfc-ce`: learned CE `/32` for hitch source (`noprefixroute`; dest-CE on-link via cpe so tun replies are not swallowed by `local`)
+- Dummy `gfc-dns`: DNS VIP `/32` (default `172.31.253.53`)
+- Hitch bind address on `gfc-ce`: `172.31.253.1/32` (reserved pool; not fake-ip `198.18.0.0/15`)
+- `net.bridge.bridge-nf-call-iptables=0` (and ip6/arp if the module is loaded)
+- `net.ipv4.conf.<isp|cpe|br-trans|gfc-ce|gfc-dns>.rp_filter=2`
+- `arp_ignore=2` on isp/cpe/`br-trans` so the box never answers CE ARP once a real customer has been learned
+- Fail-open: if `netdev gfc_trans` apply fails, keep `br-trans` forwarding (pure L2)
+- DNS steal fail-open when `gfctun` is down (do not blackhole 53 during install)
+- Device Web: isp/cpe roles, `dns_hijack`, exclude list, VIP; confirm-within-timeout rollback (same as bypass)
+
+```nft
+# netdev steal + TX MAC. Devices are runtime isp/cpe names (never hardcoded eth0).
+add table netdev gfc_trans
+
+add set netdev gfc_trans hitch_reply { type inet_proto . ipv4_addr . inet_service . ipv4_addr . inet_service; timeout 2m; size 65536; flags dynamic,timeout; }
+add set netdev gfc_trans no_steal_dst { type ipv4_addr; flags interval; }
+# populated: RFC1918, learned CE, learned GW, bypass_ip copy, and TO_CN copy when routing_mode=split
+add set netdev gfc_trans dns_exclude { type ipv4_addr; flags interval; }
+
+# in_isp: hitch 5-tuple → local (gfc-ce); everything else L2 to CPE
+add chain netdev gfc_trans in_isp { type filter hook ingress device "<isp_port>" priority -500; policy accept; }
+add rule netdev gfc_trans in_isp meta l4proto { tcp, udp } meta l4proto . ip saddr . th sport . ip daddr . th dport @hitch_reply fwd to "gfc-ce"
+
+# in_cpe: order is mandatory (first match wins). Default verdict accept = L2.
+add chain netdev gfc_trans in_cpe { type filter hook ingress device "<cpe_port>" priority -500; policy accept; }
+add rule netdev gfc_trans in_cpe ether type 8021q accept
+add rule netdev gfc_trans in_cpe ether type ip6 accept
+add rule netdev gfc_trans in_cpe ether type 0x8863 accept
+add rule netdev gfc_trans in_cpe ether type 0x8864 accept
+add rule netdev gfc_trans in_cpe ether type != ip accept
+add rule netdev gfc_trans in_cpe ip protocol { 4, 47, 50, 51, 115 } accept
+add rule netdev gfc_trans in_cpe udp dport { 500, 4500, 1701 } accept
+# DNS VIP always punted (even when dns_hijack=off)
+add rule netdev gfc_trans in_cpe udp dport 53 ip daddr <dns_vip> fwd to "gfc-ce"
+add rule netdev gfc_trans in_cpe tcp dport 53 ip daddr <dns_vip> fwd to "gfc-ce"
+# dns_hijack=on and tun up: steal remaining :53 except exclude (including dest=private GW)
+add rule netdev gfc_trans in_cpe udp dport 53 ip daddr @dns_exclude accept
+add rule netdev gfc_trans in_cpe tcp dport 53 ip daddr @dns_exclude accept
+add rule netdev gfc_trans in_cpe udp dport 53 fwd to "gfc-ce"
+add rule netdev gfc_trans in_cpe tcp dport 53 fwd to "gfc-ce"
+# data: never steal dest RFC1918 / CE / GW / bypass / split TO_CN
+add rule netdev gfc_trans in_cpe ip daddr @no_steal_dst accept
+# international TCP only (phase 1); other UDP (QUIC) L2
+add rule netdev gfc_trans in_cpe meta l4proto tcp fwd to "gfc-ce"
+
+# eg_isp: rewrite MAC only on locally originated frames (src MAC = NIC hardware MAC)
+add chain netdev gfc_trans eg_isp { type filter hook egress device "<isp_port>" priority 0; policy accept; }
+add rule netdev gfc_trans eg_isp ether saddr <isp_hw_mac> meta l4proto { tcp, udp } update @hitch_reply { meta l4proto . ip daddr . th dport . ip saddr . th sport timeout 2m }
+add rule netdev gfc_trans eg_isp ether saddr <isp_hw_mac> ether saddr set <cpe_mac> ether daddr set <pe_mac>
+
+# eg_cpe: DNS / proxy return originated by the box (src MAC = CPE NIC hardware)
+add chain netdev gfc_trans eg_cpe { type filter hook egress device "<cpe_port>" priority 0; policy accept; }
+add rule netdev gfc_trans eg_cpe ether saddr <cpe_hw_mac> ether saddr set <pe_mac>
+```
+
+inet delta (existing chains; extra **match** rows only):
+
+```nft
+# nat — management mini-gateway + DNS trampoline SNAT (never bare oif isp masquerade)
+add rule inet nat postrouting oifname "<isp_port>" ip saddr <lan_subnet> snat to <ce_ip>
+add rule inet nat postrouting oifname "<cpe_port>" udp sport 53 snat to ct original ip daddr
+add rule inet nat postrouting oifname "<cpe_port>" tcp sport 53 snat to ct original ip daddr
+
+# gfc_dns_hijack — LAN mini-gateway redirect kept when dns_hijack=on (same as gateway LAN).
+# Cable DNS: dnat to VIP (source stays CE). Forbidden: redirect that exposes the box address.
+add rule inet gfc_dns_hijack prerouting iifname "gfc-ce" udp dport 53 ip daddr <dns_vip> return
+add rule inet gfc_dns_hijack prerouting iifname "gfc-ce" tcp dport 53 ip daddr <dns_vip> return
+add rule inet gfc_dns_hijack prerouting iifname "gfc-ce" udp dport 53 ip daddr @dns_exclude return
+add rule inet gfc_dns_hijack prerouting iifname "gfc-ce" tcp dport 53 ip daddr @dns_exclude return
+add rule inet gfc_dns_hijack prerouting iifname "gfc-ce" udp dport 53 dnat to <dns_vip>
+add rule inet gfc_dns_hijack prerouting iifname "gfc-ce" tcp dport 53 dnat to <dns_vip>
+
+# inet gfc — stolen packets look like LAN mini-gateway (iif gfc-ce)
+add rule inet gfc prerouting_mangle_ct iifname "gfctun" return
+add rule inet gfc prerouting_mangle_ct fib daddr type { local, broadcast, multicast } return
+add rule inet gfc prerouting_mangle_ct iifname "<lan_iface>" ct mark set 0x00002023 accept
+add rule inet gfc prerouting_mangle_ct iifname "gfc-ce" ct mark set 0x00002023 accept
+# prerouting_mangle_route / gfc_forward: same classify order as §9.2 LAN, with iifname "gfc-ce"
+# output_mangle_route: identical to §9.2 (plus ip daddr <ce_ip> return so hitch replies are not marked)
+```
+
+`dns_hijack=off`: omit LAN `redirect` (gateway) or WAN customer `redirect` (bypass); on transparent omit the non-VIP `:53 fwd` rules in `in_cpe`. Unbound stays on `:53`. Do not write learned CE/GW into `TO_CN` / `bypass_ip` / `ext` / `ext_const`.
+
+---
+
 ### Client business rules (never proxy)
 
 Controller, forward node, China DNS, SSH (port **212**), LAN local, RFC1918, China IP (`TO_CN`), health check, Reality handshake — enforced at nft layer via `bypass_ip` and `TO_CN`.
@@ -413,7 +529,7 @@ Traffic mode is configured per device as `routingScheme` in the control-plane co
 | `split` (default) | **Present** — China IP stays on WAN | CN direct; international → mark → gfctun |
 | `global` | **Omitted** — China IP gets mark `0x2023` | All public IP (except bypass) → gfctun → VLESS |
 
-**Unchanged in both routing modes:** `bypass_ip`, RFC1918, LAN CIDR (and bypass `@customer_hosts`), DNS/DHCP/NTP port returns, `ext_const`, fwmark → table `2022` → `gfctun`, DNS hijack → unbound `:53`. LAN DNS resolution (domestic/international upstream split in unbound) is **not** tied to routing mode. `split`/`global` is orthogonal to `proxy_mode` gateway/bypass.
+**Unchanged in both routing modes:** `bypass_ip`, RFC1918, LAN CIDR (and bypass `@customer_hosts`), DNS/DHCP/NTP port returns, `ext_const`, fwmark → table `2022` → `gfctun`, DNS hijack → unbound `:53`. LAN DNS resolution (domestic/international upstream split in unbound) is **not** tied to routing mode. `split`/`global` is orthogonal to `proxy_mode` gateway/bypass/transparent.
 
 **Global mode requirements:** `bypass_ip` must include forward-node and control-plane IPs (bundle `node.address` + `controlPlaneServers`) so VLESS can establish on WAN.
 
@@ -489,13 +605,13 @@ WAN masquerade must remain enabled.
 
 ## 14. Policy routing (mandatory)
 
-### Client (gateway and bypass)
+### Client (gateway, bypass, and transparent)
 
 ```
 fwmark 0x2023 → table 2022 → default dev gfctun
 ```
 
-Bypass must **enable** this rule. Disabling policy routing in `proxy_mode=bypass` is a bug.
+Bypass and transparent must **enable** this rule. Disabling policy routing in `proxy_mode=bypass` or `transparent` is a bug.
 ### Forward Node — local egress
 
 ```
@@ -521,7 +637,8 @@ Generated nft code must:
 - Be idempotent (safe to re-apply)
 - Support dynamic interfaces and LAN subnet
 - Support bypass `@customer_hosts` from device Web config (never hardcode; never reuse management `<lan_subnet>` as a substitute for customer hosts)
-- Support runtime-generated sets (especially `ext`, `bypass_ip`, and bypass `customer_hosts`)
+- Support transparent `netdev gfc_trans` + `br-trans` / `gfc-ce` / `gfc-dns` from device Web port roles and learned state (never write learned IPs into `TO_CN` / `bypass_ip` / `ext` / `ext_const`)
+- Support runtime-generated sets (especially `ext`, `bypass_ip`, bypass `customer_hosts`, and transparent `hitch_reply`)
 
 Generated code must **never** simplify or replace this architecture with alternate schemes (e.g. `gfc_client_mangle`, `classify`-only chains, skuid bypass, or mark `0x1` for TPROXY on forward nodes).
 
@@ -531,11 +648,11 @@ Generated code must **never** simplify or replace this architecture with alterna
 
 | Component | Generator | Status |
 |-----------|-----------|--------|
-| GFC Client (kernel-split) | `gfc-client/deploy/gen-nft-policy.py` | Gateway aligned. Bypass §9.3 **not implemented**. |
-| GFC Client (ImmortalWrt) | `gfc-client/deploy/immortalwrt/gfc-routing.sh` | Gateway aligned. Bypass §9.3 **not implemented**. |
-| GFC Client DNS hijack | `gfc-client/deploy/lib-unbound-nft.sh` | Gateway aligned (LAN only). Bypass WAN+customer **not implemented**. |
-| GFC Client NAT | `gfc-client/deploy/apply-network.sh` | Gateway aligned (full WAN masq). Bypass management-only masq **not implemented**. |
-| GFC Client bypass `proxy_mode` | generators + device Web | Spec ratified §9.3; code pending chat 「确认修改」 on named files |
+| GFC Client (kernel-split) | `gfc-client/deploy/gen-nft-policy.py` | Gateway + bypass §9.3 + transparent §9.4 (`iif gfc-ce`) |
+| GFC Client (ImmortalWrt) | `gfc-client/deploy/immortalwrt/gfc-routing.sh` | Gateway + bypass §9.3 + transparent §9.4 (`netdev gfc_trans`) |
+| GFC Client DNS hijack | `gfc-client/deploy/lib-unbound-nft.sh` | Gateway LAN; bypass WAN+customer; transparent trampoline on `gfc-ce` |
+| GFC Client NAT | `gfc-client/deploy/apply-network.sh` | Gateway full WAN masq; bypass/transparent management-only SNAT |
+| GFC Client `proxy_mode` | generators + device Web | gateway / bypass / transparent; confirm-timeout rollback |
 | Forward Node | `gfc-platform/node-agent/node_agent/nft_render.py` | Aligned |
 | Forward Node policy routes | `gfc-platform/node-agent/node_agent/routes.py` | Aligned (`0x100` / `0x1`) |
 
@@ -562,6 +679,17 @@ nft list chain inet gfc output_mangle_route
 nft list set inet gfc customer_hosts
 nft list table inet gfc_dns_hijack
 
+# Transparent — steal layer + dummies; management LAN not in br-trans
+nft list table netdev gfc_trans
+nft list chain netdev gfc_trans in_isp
+nft list chain netdev gfc_trans in_cpe
+nft list set netdev gfc_trans hitch_reply
+bridge link
+ip -4 addr show dev gfc-ce
+ip -4 addr show dev gfc-dns
+sysctl net.bridge.bridge-nf-call-iptables   # expect 0
+ip rule | grep 0x2023
+
 # Forward node — expect: ip gfc-nat, inet gfc with full prerouting order
 nft list table inet gfc
 nft list table ip gfc-nat
@@ -571,4 +699,4 @@ ip route show table 100
 
 ---
 
-*Document version: 2026-08-20. Maintained by project owner. AI agents must read this file before any nft-related code change.*
+*Document version: 2026-09-09. Maintained by project owner. AI agents must read this file before any nft-related code change.*

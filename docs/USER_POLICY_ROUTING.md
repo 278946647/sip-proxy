@@ -6,7 +6,9 @@
 **权威 nft：** [`NFT_ARCHITECTURE.md`](NFT_ARCHITECTURE.md)（表/链/hook/默认 mark 不变；本能力为规定插入点上的 User Overlay）  
 **权威 DNS：** [`UNBOUND_ARCHITECTURE.md`](UNBOUND_ARCHITECTURE.md)（LAN DNS 仍为 unbound；域名组结果写入用户动态 set）  
 **权威 sing-box：** [`SINGBOX_ARCHITECTURE.md`](SINGBOX_ARCHITECTURE.md)（kernel-split 契约不因本能力改 `auto_route` / `route.final`）  
-**旁路：** [`BYPASS_MODE.md`](BYPASS_MODE.md)（入向条件不同；策略模型相同）
+**旁路：** [`BYPASS_MODE.md`](BYPASS_MODE.md)（入向条件不同；策略模型相同）  
+**透明：** [`TRANSPARENT_MODE.md`](TRANSPARENT_MODE.md)（一期已合入；入向不同；策略模型相同）  
+**透明交接：** [`SESSION_HANDOFF_2026-09-09_TRANSPARENT_MODE.md`](SESSION_HANDOFF_2026-09-09_TRANSPARENT_MODE.md)
 
 若实现与本文冲突，报 **bug**，不得用实现迁就后改本文掩盖。
 
@@ -23,7 +25,7 @@
 | 5 | 用户 IP/域名进 **自建 `usr_*` set**，禁止写入 `TO_CN` / `bypass_ip` / `ext_const` | 语义隔离 |
 | 6 | UI：**列表上移 = 更高优先级**；底层再映射 pref/链序 | 降低填错 |
 | 7 | **允许仅源匹配、目的任意**（单机/少主机强制出口） | 合法；须高危确认 |
-| 8 | `gateway` / `bypass` / 未来 `transparent` **同一策略模型** | 只变入向匹配，不变裁决 |
+| 8 | `gateway` / `bypass` / `transparent` **同一策略模型** | 只变入向匹配，不变裁决；透明契约见 `TRANSPARENT_MODE.md` |
 
 **一期动作空间：** `direct`（WAN 直连）| `proxy`（打标进默认 `0x2023 → 2022 → gfctun`）。多线路出站不在本期字段内。
 
@@ -221,8 +223,8 @@ Store (groups + policies)     Control plane / CN sync
 ### 3.3 模式（gateway / bypass / transparent）
 
 - 同一 `policies[]` / `groups[]`。  
-- 入向是否进入分类链：遵循 `NFT_ARCHITECTURE` + `BYPASS_MODE`（及未来透明）。  
-- 试算 API 必须返回：`ingress_eligible` + 人话原因（例如旁路源不在 `customer_hosts`）。
+- 入向是否进入分类链：遵循 `NFT_ARCHITECTURE` + `BYPASS_MODE` + [`TRANSPARENT_MODE.md`](TRANSPARENT_MODE.md)。  
+- 试算 API 必须返回：`ingress_eligible` + 人话原因（例如旁路源不在 `customer_hosts`；透明尚未 `dual`）。
 
 ### 3.4 控制面合并
 
@@ -237,7 +239,7 @@ Store (groups + policies)     Control plane / CN sync
 - skuid / 应用名分流  
 - 多 mark 多线路（`action` 指定线路 A/B）  
 - Detach 编辑系统原文（可列为二期）  
-- `transparent` 未开放前不得在 UI 启用该模式（与 `BYPASS_MODE` 一致）
+- 透明一期已按 `TRANSPARENT_MODE.md` 在设备 Web 开放；切换须确认/超时回滚（与旁路对齐）
 
 ---
 
@@ -405,6 +407,8 @@ Store (groups + policies)     Control plane / CN sync
 | `SESSION_HANDOFF_2026-08-31_WILDCARD_FQDN.md` | 泛域名会话交接与下一会话开发入口 |
 | `NFT_ARCHITECTURE.md` | 插入点与 mark；改链须架构评审 |
 | `BYPASS_MODE.md` | 旁路入向；不另建旁路策略模型 |
+| `TRANSPARENT_MODE.md` | 透明入向 / ARP / DNS VIP；不另建策略模型 |
+| `SESSION_HANDOFF_2026-09-09_TRANSPARENT_MODE.md` | 透明开发入口（已授权实现） |
 | `UNBOUND_ARCHITECTURE.md` | 域名组解析落点 |
 | `SINGBOX_ARCHITECTURE.md` | 一期不改 kernel-split 出站契约 |
 
@@ -414,6 +418,8 @@ Store (groups + policies)     Control plane / CN sync
 
 | 日期 | 说明 |
 |------|------|
+| 2026-09-09 | 透明一期合入：设备 Web 开放 `transparent`；试算 `ingress_eligible` 仅 `dual` |
+| 2026-08-31 | 透明模式规格冻结（见 `TRANSPARENT_MODE.md`）；§3.3 交叉引用；当时 UI 尚未交付 |
 | 2026-08-31 | §2.3 升为开发规范（匹配算法、识别路径、禁止项、代码锚点）；交接改指向 08-31 |
 | 2026-08-28 | 泛域名一期拍板：一层 `*`、通配不含顶点、UDP/53 嗅探写 `usr_dom_*`、接受首包竞态 |
 | 2026-08-26 | 讨论冻结定稿：usr_*、Override、上移优先、仅源匹配、系统分流规则页、网关/旁路/透明同模型 |

@@ -13,6 +13,8 @@ export const maintenanceApi = {
   upgradeCheck: (manifestUrl = '') => post<Record<string, unknown>>('/upgrade/check', { manifest_url: manifestUrl }),
   settings: () => get<Record<string, unknown>>('/settings'),
   updateSettings: (payload: Record<string, unknown>) => put<Record<string, unknown>>('/settings', payload),
+  confirmProxyMode: (token?: string) => post<Record<string, unknown>>('/settings/proxy-mode/confirm', { token: token || '' }),
+  rollbackProxyMode: () => post<Record<string, unknown>>('/settings/proxy-mode/rollback', {}),
   updateSingboxLogging: (level: string) => put<Record<string, unknown>>('/settings/singbox/logging', { level }),
   diagnostic: (type: 'dns' | 'ping' | 'tun', payload: Record<string, unknown> = {}) => post<Record<string, unknown>>(`/diagnostics/${type}`, payload),
 }

@@ -323,6 +323,7 @@ func buildOverlayChainNFT(groups []Group, policies []Policy, env Env, lan, wan, 
 
 	sortPoliciesByRank(policies)
 	bypassMode := strings.EqualFold(strings.TrimSpace(env.ProxyMode), "bypass")
+	transMode := strings.EqualFold(strings.TrimSpace(env.ProxyMode), "transparent")
 
 	for _, p := range policies {
 		if !p.Enabled {
@@ -342,6 +343,12 @@ func buildOverlayChainNFT(groups []Group, policies []Policy, env Env, lan, wan, 
 			b.WriteString(fmt.Sprintf(
 				"add rule inet gfc prerouting_user_overlay iifname %q ip saddr @customer_hosts %s %s comment %q\n",
 				wan, match, action, comment+" wan",
+			))
+		}
+		if transMode {
+			b.WriteString(fmt.Sprintf(
+				"add rule inet gfc prerouting_user_overlay iifname %q %s %s comment %q\n",
+				"gfc-ce", match, action, comment+" trans",
 			))
 		}
 		b.WriteString(fmt.Sprintf("add rule inet gfc output_user_overlay %s %s comment %q\n", match, action, comment+" out"))

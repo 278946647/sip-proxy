@@ -60,9 +60,18 @@ func TestValidateGatewayOK(t *testing.T) {
 	}
 }
 
-func TestValidateTransparentRejected(t *testing.T) {
+func TestValidateTransparentRequiresPorts(t *testing.T) {
 	if err := ValidateSwitch(SwitchRequest{Mode: ModeTransparent}); err == nil {
-		t.Fatal("expected transparent to fail")
+		t.Fatal("expected missing ports to fail")
+	}
+	err := ValidateSwitch(SwitchRequest{
+		Mode:     ModeTransparent,
+		IspPort:  "eth1",
+		CpePort:  "eth2",
+		LANIface: "br-lan",
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 

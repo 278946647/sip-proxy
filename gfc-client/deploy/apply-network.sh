@@ -25,9 +25,11 @@ BRIDGE_NAME="${GFC_BRIDGE_NAME:-bridge_lan}"
 
 [[ -f "$GFC_ENV" ]] && set -a && source "$GFC_ENV" && set +a
 PROXY_MODE="${GFC_PROXY_MODE:-$PROXY_MODE}"
-if [[ "$PROXY_MODE" != "bypass" && -f "${GFC_ETC}/proxy-mode.json" ]]; then
+if [[ "$PROXY_MODE" != "bypass" && "$PROXY_MODE" != "transparent" && -f "${GFC_ETC}/proxy-mode.json" ]]; then
   if grep -q '"mode"[[:space:]]*:[[:space:]]*"bypass"' "${GFC_ETC}/proxy-mode.json" 2>/dev/null; then
     PROXY_MODE="bypass"
+  elif grep -q '"mode"[[:space:]]*:[[:space:]]*"transparent"' "${GFC_ETC}/proxy-mode.json" 2>/dev/null; then
+    PROXY_MODE="transparent"
   fi
 fi
 export GFC_PROXY_MODE="$PROXY_MODE"
@@ -256,7 +258,7 @@ ssh_port = int(os.environ.get("GFC_SSH_PORT", "212"))
 admin_tcp = sorted({22, ssh_port})
 admin_tcp_set = ", ".join(str(p) for p in admin_tcp)
 masq_rule = f'    oifname "{wan}" masquerade' if wan else ""
-if wan and proxy_mode == "bypass":
+if wan and proxy_mode in ("bypass", "transparent"):
     masq_rule = f'    oifname "{wan}" ip saddr {lan_cidr} masquerade'
 masq = ""
 if masq_rule:
@@ -462,6 +464,48 @@ if [[ "$PROXY_MODE" == "bypass" ]]; then
     sysctl -w "net.ipv4.conf.${WAN}.rp_filter=2" >/dev/null 2>&1 || true
   fi
   echo "    sysctl: ip_forward=1 rp_filter=2 (bypass hairpin)"
+fi
+
+if [[ "$PROXY_MODE" == "transparent" ]]; then
+  python3 - "${GFC_ETC}/transparent-ports.json" "${LAN:-}" <<'PY'
+import json, os, subprocess, sys
+from pathlib import Path
+ports_file, lan = sys.argv[1:3]
+isp = cpe = ""
+p = Path(ports_file)
+if p.is_file():
+    try:
+        data = json.loads(p.read_text())
+        isp = str(data.get("isp_port") or "").strip()
+        cpe = str(data.get("cpe_port") or "").strip()
+    except Exception:
+        pass
+if not isp or not cpe or isp == cpe or isp == lan or cpe == lan:
+    sys.exit(0)
+
+def run(cmd):
+    subprocess.run(cmd, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+for name in ("gfc-ce", "gfc-dns"):
+    run(["ip", "link", "add", name, "type", "dummy"])
+    run(["ip", "link", "set", name, "up"])
+    run(["ip", "link", "set", name, "arp", "off"])
+run(["ip", "link", "add", "name", "br-trans", "type", "bridge"])
+for dev in (isp, cpe):
+    run(["ip", "link", "set", dev, "nomaster"])
+    run(["ip", "addr", "flush", "dev", dev])
+    run(["ip", "link", "set", dev, "master", "br-trans"])
+    run(["ip", "link", "set", dev, "up"])
+    run(["ip", "link", "set", dev, "promisc", "on"])
+run(["ip", "link", "set", "br-trans", "up"])
+run(["ip", "addr", "flush", "dev", "br-trans"])
+print(f"    br-trans: {isp} + {cpe} (lan={lan} excluded)")
+PY
+  sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true
+  sysctl -w net.ipv4.ip_nonlocal_bind=1 >/dev/null 2>&1 || true
+  sysctl -w net.ipv4.conf.all.rp_filter=2 >/dev/null 2>&1 || true
+  sysctl -w net.bridge.bridge-nf-call-iptables=0 >/dev/null 2>&1 || true
+  echo "    sysctl: bridge-nf-call-iptables=0 rp_filter=2 (transparent)"
 fi
 
 echo "==> network apply done"

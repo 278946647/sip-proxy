@@ -13,6 +13,8 @@ ENV_FILE="${GFC_ENV_FILE:-/etc/gfc-client/gfc.env}"
 LAN_ADDR="${GFC_LAN_ADDRESS:-$(uci -q get network.lan.ipaddr 2>/dev/null || true)}"
 LAN_ADDR="$(echo "$LAN_ADDR" | tr ' \t' '\n' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -n1)"
 [ -n "$LAN_ADDR" ] || LAN_ADDR="192.168.1.1"
+LAN_IFACE="${GFC_LAN_IFACE:-$(uci -q get network.lan.device 2>/dev/null || true)}"
+[ -n "$LAN_IFACE" ] || LAN_IFACE="br-lan"
 
 load_proxy_mode() {
 	env_mode="$(echo "${GFC_PROXY_MODE:-}" | tr 'A-Z' 'a-z')"
@@ -32,8 +34,12 @@ load_proxy_mode() {
 	fi
 	case "$file_mode" in
 		bypass) echo "bypass"; return 0 ;;
+		transparent) echo "transparent"; return 0 ;;
 	esac
-	echo "gateway"
+	case "$env_mode" in
+		transparent) echo "transparent" ;;
+		*) echo "gateway" ;;
+	esac
 }
 
 PROXY_MODE="$(load_proxy_mode)"
@@ -111,13 +117,15 @@ else
 fi
 
 NAT_CHAIN="$(nft list chain inet nat postrouting 2>/dev/null || nft list table inet nat 2>/dev/null || true)"
-if echo "$NAT_CHAIN" | grep -q masquerade; then
+if echo "$NAT_CHAIN" | grep -qE 'masquerade|snat'; then
 	if [ "$PROXY_MODE" = "bypass" ]; then
 		if echo "$NAT_CHAIN" | grep -q 'ip saddr'; then
 			ok "WAN masquerade (bypass LAN-only SNAT)"
 		else
 			fail "bypass NAT must be oif WAN ip saddr <lan> masquerade (not bare WAN masquerade)"
 		fi
+	elif [ "$PROXY_MODE" = "transparent" ]; then
+		ok "transparent NAT (management SNAT / DNS trampoline)"
 	else
 		ok "WAN masquerade"
 	fi
@@ -155,6 +163,58 @@ if [ "$PROXY_MODE" = "bypass" ]; then
 		fi
 	else
 		fail "bypass missing unbound customer_hosts ACL (/etc/unbound/conf.d/gfc-bypass-acl.conf)"
+	fi
+fi
+
+if [ "$PROXY_MODE" = "transparent" ]; then
+	if nft list table netdev gfc_trans >/dev/null 2>&1; then
+		ok "nft netdev gfc_trans"
+	else
+		fail "transparent missing table netdev gfc_trans"
+	fi
+	if nft list chain netdev gfc_trans in_cpe >/dev/null 2>&1 && nft list chain netdev gfc_trans in_isp >/dev/null 2>&1; then
+		ok "gfc_trans in_isp/in_cpe"
+	else
+		fail "transparent missing in_isp/in_cpe"
+	fi
+	if ip link show br-trans >/dev/null 2>&1; then
+		ok "br-trans exists"
+		if bridge link 2>/dev/null | grep -q br-trans; then
+			if bridge link 2>/dev/null | grep br-trans | grep -qw "$LAN_IFACE"; then
+				fail "management LAN $LAN_IFACE must not be in br-trans"
+			else
+				ok "br-trans has slaves; $LAN_IFACE not enslaved"
+			fi
+		fi
+	else
+		fail "transparent missing br-trans"
+	fi
+	if ip -4 addr show dev gfc-dns 2>/dev/null | grep -q 'inet '; then
+		ok "gfc-dns dummy has VIP"
+	else
+		fail "transparent missing gfc-dns VIP"
+	fi
+	if ip -4 rule list 2>/dev/null | grep -q '0x2023'; then
+		ok "policy rule fwmark 0x2023"
+	else
+		fail "transparent missing fwmark 0x2023 policy rule"
+	fi
+	brnf="$(sysctl -n net.bridge.bridge-nf-call-iptables 2>/dev/null || echo 0)"
+	[ "$brnf" = "0" ] && ok "bridge-nf-call-iptables=0" || fail "bridge-nf-call-iptables=$brnf (must be 0)"
+	if grep -q '0.0.0.0/0' /etc/unbound/conf.d/gfc-bypass-acl.conf 2>/dev/null; then
+		fail "unbound ACL must not allow 0.0.0.0/0"
+	else
+		ok "unbound extra ACL has no 0.0.0.0/0"
+	fi
+	if nft list table inet gfc_dns_hijack 2>/dev/null | grep -q 'redirect to'; then
+		if nft list table inet gfc_dns_hijack 2>/dev/null | grep -q 'gfc-ce'; then
+			fail "transparent cable DNS must not use naked redirect on gfc-ce"
+		fi
+	fi
+	if nft list table inet gfc_dns_hijack 2>/dev/null | grep -q 'gfc-ce'; then
+		ok "transparent DNS trampoline iif gfc-ce"
+	else
+		fail "transparent missing gfc-ce DNS trampoline"
 	fi
 fi
 

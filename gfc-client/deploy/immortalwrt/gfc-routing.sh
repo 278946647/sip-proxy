@@ -139,6 +139,7 @@ stop_rules() {
 	nft delete table inet gfc_client_mangle 2>/dev/null || true
 	nft delete table inet gfc_dns_hijack 2>/dev/null || true
 	nft delete table inet nat 2>/dev/null || true
+	nft delete table netdev gfc_trans 2>/dev/null || true
 	[ -x "$GFC_ROOT/deploy/apply-tc-htb.sh" ] && sh "$GFC_ROOT/deploy/apply-tc-htb.sh" remove 2>/dev/null || true
 }
 
@@ -163,11 +164,25 @@ _clear_fwmark_rules() {
 }
 
 apply_wan_nat() {
-	local proxy_mode masq_match
+	local proxy_mode masq_match isp cpe ce
 	proxy_mode="$(load_proxy_mode)"
 	masq_match="    oifname \"$WAN_IFACE\" masquerade"
 	if [ "$proxy_mode" = "bypass" ]; then
 		masq_match="    oifname \"$WAN_IFACE\" ip saddr $LAN_CIDR masquerade"
+	elif [ "$proxy_mode" = "transparent" ]; then
+		isp="$(load_trans_isp)"
+		cpe="$(load_trans_cpe)"
+		ce="$(load_trans_ce)"
+		masq_match=""
+		if [ -n "$isp" ] && is_ipv4 "$ce"; then
+			masq_match="    oifname \"$isp\" ip saddr $LAN_CIDR snat to $ce"
+		fi
+		if [ -n "$cpe" ]; then
+			masq_match="$masq_match
+    oifname \"$cpe\" udp sport 53 snat to ct original ip daddr
+    oifname \"$cpe\" tcp sport 53 snat to ct original ip daddr"
+		fi
+		[ -n "$masq_match" ] || masq_match="    ip saddr $LAN_CIDR accept"
 	fi
 	nft -f - <<EOF
 table inet nat {
@@ -180,18 +195,25 @@ EOF
 }
 
 apply_dns_hijack() {
-	# LAN clients may point DNS at 8.8.8.8 or other resolvers. Redirect them
-	# to local unbound:53 (dnsmasq is DHCP-only with port=0).
-	# Bypass: also hijack WAN DNS from @customer_hosts (not LAN-only).
-	# Already-local dest (WAN IP as DNS) must not redirect: inet
-	# `fib daddr type local` can miss IPv4 in prerouting → UDP sport 0 /
-	# ICMP port unreachable. Skip runtime WAN IPv4 first, then fib+iif.
-	local proxy_mode hosts wan_rules set_block wan_local wan_ips
+	local proxy_mode hosts wan_rules set_block wan_local wan_ips hijack lan_rules trans_rules vip exclude exclude_set
 	proxy_mode="$(load_proxy_mode)"
+	hijack="$(load_dns_hijack)"
 	hosts="$(load_customer_host_elements)"
 	wan_rules=""
 	set_block=""
-	if [ "$proxy_mode" = "bypass" ]; then
+	lan_rules=""
+	trans_rules=""
+	if [ "$hijack" = "on" ]; then
+		lan_rules="
+    iifname \"$LAN_IFACE\" udp dport 53 redirect to :$DNS_PORT
+    iifname \"$LAN_IFACE\" tcp dport 53 redirect to :$DNS_PORT"
+	elif [ "$proxy_mode" = "bypass" ]; then
+		# Bypass+off: keep LAN mini-gateway hijack; drop WAN customer steal.
+		lan_rules="
+    iifname \"$LAN_IFACE\" udp dport 53 redirect to :$DNS_PORT
+    iifname \"$LAN_IFACE\" tcp dport 53 redirect to :$DNS_PORT"
+	fi
+	if [ "$proxy_mode" = "bypass" ] && [ "$hijack" = "on" ]; then
 		if [ -n "$hosts" ]; then
 			set_block="
   set customer_hosts {
@@ -219,12 +241,40 @@ apply_dns_hijack() {
     iifname \"$WAN_IFACE\" ip saddr @customer_hosts udp dport 53 redirect to :$DNS_PORT
     iifname \"$WAN_IFACE\" ip saddr @customer_hosts tcp dport 53 redirect to :$DNS_PORT"
 	fi
+	if [ "$proxy_mode" = "transparent" ]; then
+		vip="$(load_dns_vip)"
+		exclude="$(load_dns_exclude_elements)"
+		exclude_set=""
+		if [ -n "$exclude" ]; then
+			exclude_set="
+  set dns_exclude {
+    type ipv4_addr
+    flags interval
+    elements = { $exclude }
+  }"
+		else
+			exclude_set="
+  set dns_exclude {
+    type ipv4_addr
+    flags interval
+  }"
+		fi
+		set_block="$exclude_set"
+		trans_rules="
+    iifname \"gfc-ce\" udp dport 53 ip daddr $vip return
+    iifname \"gfc-ce\" tcp dport 53 ip daddr $vip return
+    iifname \"gfc-ce\" udp dport 53 ip daddr @dns_exclude return
+    iifname \"gfc-ce\" tcp dport 53 ip daddr @dns_exclude return"
+		if [ "$hijack" = "on" ]; then
+			trans_rules="$trans_rules
+    iifname \"gfc-ce\" udp dport 53 dnat to $vip
+    iifname \"gfc-ce\" tcp dport 53 dnat to $vip"
+		fi
+	fi
 	nft -f - <<EOF
 table inet gfc_dns_hijack {$set_block
   chain prerouting {
-    type nat hook prerouting priority dstnat; policy accept;
-    iifname "$LAN_IFACE" udp dport 53 redirect to :$DNS_PORT
-    iifname "$LAN_IFACE" tcp dport 53 redirect to :$DNS_PORT$wan_rules
+    type nat hook prerouting priority dstnat; policy accept;$lan_rules$wan_rules$trans_rules
   }
 }
 EOF
@@ -301,6 +351,305 @@ load_customer_host_elements() {
 	echo "$out"
 }
 
+json_get() {
+	local f="$1" key="$2"
+	[ -f "$f" ] || return 0
+	if command -v jsonfilter >/dev/null 2>&1; then
+		jsonfilter -i "$f" -e "@.$key" 2>/dev/null || true
+	else
+		awk -F'"' -v k="$key" '
+			$0 ~ "\"" k "\"" {
+				for (i = 1; i <= NF; i++) if ($i == k && $(i+2) != "") { print $(i+2); exit }
+			}
+		' "$f" 2>/dev/null || true
+	fi
+}
+
+load_dns_hijack() {
+	local f="${GFC_ETC}/dns-hijack.json" v
+	v="$(json_get "$f" enabled | tr 'A-Z' 'a-z')"
+	case "$v" in
+		false|0|off|no) echo "off" ;;
+		*) echo "on" ;;
+	esac
+}
+
+load_dns_vip() {
+	local f="${GFC_ETC}/dns-hijack.json" v
+	v="$(json_get "$f" vip)"
+	is_ipv4 "$v" && echo "$v" || echo "172.31.253.53"
+}
+
+load_dns_exclude_elements() {
+	local f="${GFC_ETC}/dns-hijack.json"
+	local out="" token vip
+	vip="$(load_dns_vip)"
+	[ -f "$f" ] || { echo ""; return 0; }
+	for token in $(grep -Eo '([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]+)?' "$f" 2>/dev/null || true); do
+		[ -n "$token" ] || continue
+		is_ipv4 "${token%%/*}" || continue
+		[ "${token%%/*}" = "$vip" ] && continue
+		[ -n "$out" ] && out="$out, "
+		out="${out}${token}"
+	done
+	echo "$out"
+}
+
+load_trans_isp() { json_get "${GFC_ETC}/transparent-ports.json" isp_port; }
+load_trans_cpe() { json_get "${GFC_ETC}/transparent-ports.json" cpe_port; }
+load_trans_ce() { json_get "${GFC_ETC}/transparent-learned.json" ce_ip; }
+load_trans_gw() { json_get "${GFC_ETC}/transparent-learned.json" gw_ip; }
+load_trans_cpe_mac() { json_get "${GFC_ETC}/transparent-learned.json" cpe_mac; }
+load_trans_pe_mac() { json_get "${GFC_ETC}/transparent-learned.json" pe_mac; }
+
+hw_mac() {
+	local dev="$1"
+	[ -n "$dev" ] && [ -f "/sys/class/net/$dev/address" ] && cat "/sys/class/net/$dev/address" || true
+}
+
+teardown_trans_bridge() {
+	local isp cpe
+	isp="$(load_trans_isp)"
+	cpe="$(load_trans_cpe)"
+	nft delete table netdev gfc_trans 2>/dev/null || true
+	if [ -n "$isp" ]; then
+		ip link set "$isp" nomaster 2>/dev/null || true
+		ip link set "$isp" promisc off 2>/dev/null || true
+	fi
+	if [ -n "$cpe" ]; then
+		ip link set "$cpe" nomaster 2>/dev/null || true
+		ip link set "$cpe" promisc off 2>/dev/null || true
+	fi
+	ip link del br-trans 2>/dev/null || true
+	ip link del gfc-ce 2>/dev/null || true
+	ip link del gfc-dns 2>/dev/null || true
+}
+
+ensure_dummy() {
+	local name="$1"
+	ip link show "$name" >/dev/null 2>&1 || ip link add "$name" type dummy 2>/dev/null || true
+	ip link set "$name" up 2>/dev/null || true
+	ip link set "$name" arp off 2>/dev/null || true
+}
+
+apply_trans_sysctl() {
+	local isp cpe
+	isp="$(load_trans_isp)"
+	cpe="$(load_trans_cpe)"
+	sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true
+	sysctl -w net.ipv4.ip_nonlocal_bind=1 >/dev/null 2>&1 || true
+	sysctl -w net.ipv4.conf.all.rp_filter=2 >/dev/null 2>&1 || true
+	sysctl -w net.bridge.bridge-nf-call-iptables=0 >/dev/null 2>&1 || true
+	sysctl -w net.bridge.bridge-nf-call-ip6tables=0 >/dev/null 2>&1 || true
+	sysctl -w net.bridge.bridge-nf-call-arptables=0 >/dev/null 2>&1 || true
+	for dev in "$isp" "$cpe" br-trans gfc-ce gfc-dns; do
+		[ -n "$dev" ] || continue
+		sysctl -w "net.ipv4.conf.${dev}.rp_filter=2" >/dev/null 2>&1 || true
+		sysctl -w "net.ipv4.conf.${dev}.arp_ignore=2" >/dev/null 2>&1 || true
+		sysctl -w "net.ipv4.conf.${dev}.arp_announce=2" >/dev/null 2>&1 || true
+	done
+}
+
+apply_trans_bridge() {
+	local isp cpe
+	isp="$(load_trans_isp)"
+	cpe="$(load_trans_cpe)"
+	if [ -z "$isp" ] || [ -z "$cpe" ] || [ "$isp" = "$cpe" ]; then
+		echo "WARN: transparent ports missing; skip br-trans" >&2
+		return 1
+	fi
+	if [ "$isp" = "$LAN_IFACE" ] || [ "$cpe" = "$LAN_IFACE" ]; then
+		echo "WARN: isp/cpe must not be management LAN $LAN_IFACE" >&2
+		return 1
+	fi
+	ensure_dummy gfc-ce
+	ensure_dummy gfc-dns
+	ip link show br-trans >/dev/null 2>&1 || ip link add name br-trans type bridge 2>/dev/null || true
+	ip link set "$isp" nomaster 2>/dev/null || true
+	ip link set "$cpe" nomaster 2>/dev/null || true
+	ip addr flush dev "$isp" 2>/dev/null || true
+	ip addr flush dev "$cpe" 2>/dev/null || true
+	ip link set "$isp" master br-trans 2>/dev/null || true
+	ip link set "$cpe" master br-trans 2>/dev/null || true
+	ip link set "$isp" up 2>/dev/null || true
+	ip link set "$cpe" up 2>/dev/null || true
+	ip link set "$isp" promisc on 2>/dev/null || true
+	ip link set "$cpe" promisc on 2>/dev/null || true
+	ip link set br-trans up 2>/dev/null || true
+	ip addr flush dev br-trans 2>/dev/null || true
+	echo "transparent bridge: br-trans slaves $isp + $cpe (lan=$LAN_IFACE excluded)"
+}
+
+apply_trans_addrs() {
+	local vip ce gw isp cpe cpe_mac pe_mac cur
+	vip="$(load_dns_vip)"
+	ce="$(load_trans_ce)"
+	gw="$(load_trans_gw)"
+	isp="$(load_trans_isp)"
+	cpe="$(load_trans_cpe)"
+	cpe_mac="$(load_trans_cpe_mac)"
+	pe_mac="$(load_trans_pe_mac)"
+	ip addr replace 172.31.253.1/32 dev gfc-ce 2>/dev/null || true
+	ip addr replace "$vip/32" dev gfc-dns 2>/dev/null || true
+	if is_ipv4 "$ce"; then
+		ip addr replace "$ce/32" dev gfc-ce noprefixroute 2>/dev/null || true
+		ip route del table local "$ce/32" 2>/dev/null || true
+		if [ -n "$cpe" ]; then
+			ip route replace "$ce/32" dev "$cpe" 2>/dev/null || true
+			if [ -n "$cpe_mac" ]; then
+				ip neigh replace "$ce" lladdr "$cpe_mac" nud permanent dev "$cpe" 2>/dev/null || true
+			fi
+		fi
+	fi
+	if is_ipv4 "$gw" && [ -n "$isp" ]; then
+		if [ -n "$pe_mac" ]; then
+			ip neigh replace "$gw" lladdr "$pe_mac" nud permanent dev "$isp" 2>/dev/null || true
+		fi
+		cur="$(ip -4 route show default 2>/dev/null | awk '{print $5; exit}')"
+		if [ -z "$cur" ] || [ "$cur" = "$isp" ]; then
+			if is_ipv4 "$ce"; then
+				ip route replace default via "$gw" dev "$isp" src "$ce" 2>/dev/null || true
+			else
+				ip route replace default via "$gw" dev "$isp" 2>/dev/null || true
+			fi
+		fi
+	fi
+}
+
+apply_trans_netdev() {
+	local isp cpe vip hijack tun_up exclude no_steal ce gw
+	local isp_mac cpe_hw learned_cpe_mac pe_mac
+	local dns_vip_rules dns_steal tcp_steal mac_isp mac_cpe hitch_upd exclude_set
+	isp="$(load_trans_isp)"
+	cpe="$(load_trans_cpe)"
+	vip="$(load_dns_vip)"
+	hijack="$(load_dns_hijack)"
+	exclude="$(load_dns_exclude_elements)"
+	isp_mac="$(hw_mac "$isp")"
+	cpe_hw="$(hw_mac "$cpe")"
+	learned_cpe_mac="$(load_trans_cpe_mac)"
+	pe_mac="$(load_trans_pe_mac)"
+	[ -n "$isp" ] && [ -n "$cpe" ] || return 1
+	nft delete table netdev gfc_trans 2>/dev/null || true
+	tun_up=0
+	ip link show "$TUN_IFACE" >/dev/null 2>&1 && tun_up=1
+	no_steal="10.0.0.0/8, 127.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16"
+	ce="$(load_trans_ce)"
+	gw="$(load_trans_gw)"
+	is_ipv4 "$ce" && no_steal="$no_steal, $ce"
+	is_ipv4 "$gw" && no_steal="$no_steal, $gw"
+	dns_vip_rules="
+    udp dport 53 ip daddr $vip fwd to \"gfc-ce\"
+    tcp dport 53 ip daddr $vip fwd to \"gfc-ce\""
+	dns_steal=""
+	if [ "$hijack" = "on" ] && [ "$tun_up" -eq 1 ]; then
+		if [ -n "$exclude" ]; then
+			dns_steal="
+    udp dport 53 ip daddr @dns_exclude accept
+    tcp dport 53 ip daddr @dns_exclude accept"
+		fi
+		dns_steal="$dns_steal
+    udp dport 53 fwd to \"gfc-ce\"
+    tcp dport 53 fwd to \"gfc-ce\""
+	fi
+	tcp_steal=""
+	if [ "$tun_up" -eq 1 ]; then
+		tcp_steal="
+    ip daddr @no_steal_dst accept
+    meta l4proto tcp fwd to \"gfc-ce\""
+	fi
+	mac_isp=""
+	hitch_upd=""
+	if [ -n "$isp_mac" ] && [ -n "$learned_cpe_mac" ] && [ -n "$pe_mac" ]; then
+		hitch_upd="
+    ether saddr $isp_mac meta l4proto { tcp, udp } update @hitch_reply { meta l4proto . ip daddr . th dport . ip saddr . th sport timeout 2m }"
+		mac_isp="
+    ether saddr $isp_mac ether saddr set $learned_cpe_mac ether daddr set $pe_mac"
+	fi
+	mac_cpe=""
+	if [ -n "$cpe_hw" ] && [ -n "$pe_mac" ]; then
+		mac_cpe="
+    ether saddr $cpe_hw ether saddr set $pe_mac"
+	fi
+	exclude_set=""
+	if [ -n "$exclude" ]; then
+		exclude_set="
+    elements = { $exclude }"
+	fi
+	nft -f - <<EOF
+table netdev gfc_trans {
+  set hitch_reply {
+    type inet_proto . ipv4_addr . inet_service . ipv4_addr . inet_service
+    timeout 2m
+    size 65536
+    flags dynamic,timeout
+  }
+  set no_steal_dst {
+    type ipv4_addr
+    flags interval
+    elements = { $no_steal }
+  }
+  set dns_exclude {
+    type ipv4_addr
+    flags interval$exclude_set
+  }
+  chain in_isp {
+    type filter hook ingress device "$isp" priority -500; policy accept;
+    meta l4proto { tcp, udp } meta l4proto . ip saddr . th sport . ip daddr . th dport @hitch_reply fwd to "gfc-ce"
+  }
+  chain in_cpe {
+    type filter hook ingress device "$cpe" priority -500; policy accept;
+    ether type 8021q accept
+    ether type ip6 accept
+    ether type 0x8863 accept
+    ether type 0x8864 accept
+    ether type != ip accept
+    ip protocol { 4, 47, 50, 51, 115 } accept
+    udp dport { 500, 4500, 1701 } accept
+$dns_vip_rules
+$dns_steal
+$tcp_steal
+  }
+  chain eg_isp {
+    type filter hook egress device "$isp" priority 0; policy accept;
+$hitch_upd
+$mac_isp
+  }
+  chain eg_cpe {
+    type filter hook egress device "$cpe" priority 0; policy accept;
+$mac_cpe
+  }
+}
+EOF
+	nft list set inet gfc bypass_ip 2>/dev/null | awk '
+		BEGIN{ins=0}
+		/elements/ {ins=1}
+		ins {
+			while (match($0, /([0-9]+\.){3}[0-9]+(\/[0-9]+)?/)) {
+				print substr($0, RSTART, RLENGTH)
+				$0 = substr($0, RSTART+RLENGTH)
+			}
+		}
+	' | while read -r cidr; do
+		[ -n "$cidr" ] || continue
+		nft add element netdev gfc_trans no_steal_dst { "$cidr" } 2>/dev/null || true
+	done
+	if [ "$(load_routing_mode)" != "global" ] && [ -f "$CN_LIST" ]; then
+		awk '/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\/[0-9]+/ { print $1 }' "$CN_LIST" | while read -r cidr; do
+			nft add element netdev gfc_trans no_steal_dst { "$cidr" } 2>/dev/null || true
+		done
+	fi
+	echo "transparent netdev gfc_trans: isp=$isp cpe=$cpe hijack=$hijack tun=$tun_up vip=$vip"
+}
+
+refresh_trans() {
+	[ "$(load_proxy_mode)" = "transparent" ] || return 0
+	apply_trans_sysctl
+	apply_trans_addrs
+	apply_trans_netdev || echo "WARN: netdev gfc_trans refresh failed (L2 fail-open)" >&2
+	write_bypass_unbound_acl
+}
+
 apply_bypass_sysctl() {
 	sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true
 	sysctl -w net.ipv4.conf.all.rp_filter=2 >/dev/null 2>&1 || true
@@ -317,17 +666,24 @@ write_bypass_unbound_acl() {
 	tmp="${dest}.tmp.$$"
 	{
 		echo "# Generated by gfc-routing.sh — do not edit"
-		echo "# Bypass customer_hosts ACL. Empty (comments only) when not bypass."
+		echo "# Extra ACL: bypass customer_hosts or transparent learned CE. Never 0.0.0.0/0."
 		if [ "$(load_proxy_mode)" = "bypass" ]; then
 			for token in $(load_customer_host_elements | tr ',' ' '); do
 				token="$(echo "$token" | tr -d '[:space:]')"
 				[ -n "$token" ] || continue
+				[ "$token" = "0.0.0.0/0" ] && continue
 				case "$token" in
 					*/*) net="$token" ;;
 					*) net="$token/32" ;;
 				esac
 				echo "    access-control: $net allow"
 			done
+		fi
+		if [ "$(load_proxy_mode)" = "transparent" ]; then
+			ce="$(load_trans_ce)"
+			if is_ipv4 "$ce"; then
+				echo "    access-control: $ce/32 allow"
+			fi
 		fi
 	} > "$tmp"
 	need_restart=0
@@ -373,7 +729,7 @@ ensure_unbound_bypass_include() {
 }
 
 apply_policy_table_architecture() {
-	local ext_const routing_mode proxy_mode hosts
+	local ext_const routing_mode proxy_mode hosts ce
 	local cn_preroute_rule cn_output_rule cn_wan_rule output_customer_rule
 	local ct_head ct_wan route_head route_wan forward_customer customer_set
 	ext_const="$(fmt_ext_const_elements)"
@@ -428,6 +784,28 @@ ${cn_wan_rule}
     iifname \"$WAN_IFACE\" ip saddr @customer_hosts ct mark $MARK meta mark set ct mark"
 		forward_customer="    ct state new ip saddr @customer_hosts ct mark set meta mark"
 		output_customer_rule="    ip daddr @customer_hosts return"
+	fi
+	if [ "$proxy_mode" = "transparent" ]; then
+		ct_head="    iifname \"$TUN_IFACE\" return
+    fib daddr type { local, broadcast, multicast } return"
+		route_head="    iifname \"$TUN_IFACE\" return
+    fib daddr type { local, broadcast, multicast } return"
+		ct_wan="    iifname \"gfc-ce\" ct mark set $MARK accept"
+		if [ "$routing_mode" != "global" ]; then
+			cn_wan_rule="    iifname \"gfc-ce\" ip daddr @TO_CN return"
+		fi
+		route_wan="    iifname \"gfc-ce\" ip daddr { 10.0.0.0/8, 127.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 } return
+    iifname \"gfc-ce\" ip daddr $LAN_CIDR return
+    iifname \"gfc-ce\" udp dport { 53, 67, 68, 123 } return
+    iifname \"gfc-ce\" ip daddr @bypass_ip return
+    iifname \"gfc-ce\" ip daddr @ext_const ct mark $MARK meta mark set ct mark return
+${cn_wan_rule}
+    iifname \"gfc-ce\" ct mark $MARK meta mark set ct mark"
+		ce="$(load_trans_ce)"
+		if is_ipv4 "$ce"; then
+			forward_customer="    ct state new ip saddr $ce ct mark set meta mark"
+			output_customer_rule="    ip daddr $ce return"
+		fi
 	fi
 	nft -f - <<EOF
 table inet gfc {
@@ -757,6 +1135,13 @@ start_rules() {
 		/etc/init.d/firewall disable 2>/dev/null || true
 	}
 	purge_dnsmasq_dns_hijack
+	if [ "$(load_proxy_mode)" = "transparent" ]; then
+		apply_trans_sysctl
+		apply_trans_bridge || echo "WARN: br-trans setup failed" >&2
+		apply_trans_addrs
+	else
+		teardown_trans_bridge
+	fi
 	apply_wan_nat
 	apply_dns_hijack
 	apply_policy_table
@@ -768,10 +1153,16 @@ start_rules() {
 	if [ "$(load_proxy_mode)" = "bypass" ]; then
 		apply_bypass_sysctl
 	fi
+	if [ "$(load_proxy_mode)" = "transparent" ]; then
+		apply_trans_netdev || echo "WARN: netdev gfc_trans apply failed; L2 fail-open" >&2
+	fi
 	wait_tun || {
 		echo "WARN: $TUN_IFACE not up; DNS hijack and CN policy set applied, policy route deferred (hotplug 99-gfc-tun will apply when TUN appears)" >&2
 		exit 0
 	}
+	if [ "$(load_proxy_mode)" = "transparent" ]; then
+		apply_trans_netdev || echo "WARN: netdev gfc_trans apply failed; L2 fail-open" >&2
+	fi
 	_clear_fwmark_rules
 	ip -4 rule add pref 100 fwmark "$MARK" lookup "$TABLE"
 	ip -4 route replace default dev "$TUN_IFACE" table "$TABLE"
@@ -786,6 +1177,7 @@ case "$ACTION" in
 	direct) start_direct ;;
 	stop) stop_rules ;;
 	restart) stop_rules; start_rules ;;
+	refresh-trans) refresh_trans ;;
 	status)
 		echo "scheme=$ROUTING_SCHEME proxy=$(load_proxy_mode) lan=$LAN_IFACE wan=$WAN_IFACE cidr=$LAN_CIDR tun=$TUN_IFACE mark=$MARK table=$TABLE redirect=$REDIRECT_PORT ssh=$SSH_PORT"
 		echo "dns_hijack=$(nft list table inet gfc_dns_hijack >/dev/null 2>&1 && echo yes || echo no)"

@@ -6,7 +6,7 @@
 
 If generated runtime config differs from this document, **the generator is wrong** — not this document.
 
-**Companion:** [`docs/NFT_ARCHITECTURE.md`](NFT_ARCHITECTURE.md) (DNS hijack, `ext_const`), [`docs/SINGBOX_ARCHITECTURE.md`](SINGBOX_ARCHITECTURE.md) (TUN 内国际 DNS IP 出站), [`docs/BYPASS_MODE.md`](BYPASS_MODE.md) (旁路 ACL / 设备 Web), [`docs/CLIENT_STATE.md`](CLIENT_STATE.md) (OpenWrt 状态落盘；与 DNS 生成器无关).
+**Companion:** [`docs/NFT_ARCHITECTURE.md`](NFT_ARCHITECTURE.md) (DNS hijack, `ext_const`), [`docs/SINGBOX_ARCHITECTURE.md`](SINGBOX_ARCHITECTURE.md) (TUN 内国际 DNS IP 出站), [`docs/BYPASS_MODE.md`](BYPASS_MODE.md) (旁路 ACL / 设备 Web), [`docs/TRANSPARENT_MODE.md`](TRANSPARENT_MODE.md) (透明 DNS VIP / 跨模式劫持开关), [`docs/CLIENT_STATE.md`](CLIENT_STATE.md) (OpenWrt 状态落盘；与 DNS 生成器无关).
 
 ---
 
@@ -49,6 +49,24 @@ International DNS upstream IP (1.1.1.1, 8.8.8.8, …)
 | **nft** | Hijack LAN :53 to local resolver; mark intl DNS IPs | Replace unbound split logic |
 | **unbound** | Domain split; forward to upstream; cache | Policy routing; proxy; TUN |
 | **sing-box** | Egress for TUN traffic (incl. intl DNS IP if marked) | LAN :53; DHCP |
+
+Hijack (`gfc_dns_hijack`) is the **enforcement** path so recursive queries reach unbound. Device-wide `dns_hijack` on/off and transparent DNS VIP are specified in [`TRANSPARENT_MODE.md`](TRANSPARENT_MODE.md) §6. Turning hijack off must **not** stop unbound. Gateway clients may still query the LAN IP; bypass customers the WAN IP; transparent customers the DNS VIP (`gfc-dns`, default `172.31.253.53/32`).
+
+### 2.1 DNS hijack switch (all `proxy_mode`)
+
+| Item | Rule |
+|------|------|
+| Default | on |
+| Write path | Device Web only; control plane read-only |
+| File | `/etc/gfc-client/dns-hijack.json` (`enabled`, `exclude`, `vip`) |
+| Off | Stop stealing port 53 destined to **non-GFC DNS listeners**; unbound stays on `:53` |
+| Gateway off | Omit LAN `redirect` in `inet gfc_dns_hijack` |
+| Bypass off | Omit WAN `@customer_hosts` `redirect` (LAN mini-gateway hijack kept) |
+| Transparent off | Omit cable `:53` steal in `netdev gfc_trans in_cpe` except `daddr=DNS VIP` |
+| Transparent on | Cable steal + inet trampoline `dnat to VIP` on `iif gfc-ce` (no naked `redirect`) |
+| Exclude list | Optional dest IPs whose :53 is never stolen (internal authoritative DNS) |
+| Transparent ACL | Learned CE `/32` in `gfc-bypass-acl.conf` include (same file as bypass hosts) |
+| Forbidden | `access-control: 0.0.0.0/0 allow`; treating RFC1918 dest :53 as auto-bypass of hijack |
 
 ---
 
@@ -105,7 +123,8 @@ RFC1918 ACLs cover the management LAN mini-gateway only. Bypass customer sources
 | Path | `/etc/unbound/conf.d/gfc-bypass-acl.conf` |
 | Include | Inside `server:` (ACL clauses only — never `forward-zone`) |
 | Bypass | One `access-control: <host-or-cidr> allow` per `customer-hosts.json` entry (`a.b.c.d` → `/32`) |
-| Gateway / not bypass | File exists but contains **no** `allow` lines (comments only) |
+| Transparent | One `access-control: <learned-CE>/32 allow` after CE is learned (same file; never `0.0.0.0/0`) |
+| Gateway / no extra sources | File exists but contains **no** `allow` lines (comments only) |
 | Forbidden | Auto-inserting the entire bypass WAN prefix; `0.0.0.0/0 allow` |
 
 Generators: `internal/render/unbound` on Render/ReloadDNS; `gfc-routing.sh` on routing apply (same file). Reload `gfc-unbound` when the file content changes.

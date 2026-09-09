@@ -35,6 +35,7 @@ import (
 	"github.com/278946647/sip-proxy/gfc-client/internal/traffic"
 	"github.com/278946647/sip-proxy/gfc-client/internal/unboundmgr"
 	"github.com/278946647/sip-proxy/gfc-client/internal/upgrade"
+	"github.com/278946647/sip-proxy/gfc-client/internal/transparent"
 )
 
 type Server struct {
@@ -46,6 +47,7 @@ type Server struct {
 	rules      *rules.Manager
 	network    *network.Manager
 	proxyMode  *proxymode.Controller
+	trans      *transparent.Supervisor
 	revSSH     *reversessh.Manager
 	unboundMgr *unboundmgr.Manager
 	mode       string // admin | flash | api
@@ -70,6 +72,8 @@ func NewServer(cfg *config.Config, st *store.Store, mode string) *Server {
 	s.proxyMode = proxymode.NewController(cfg, netMgr.ApplyWAN, s.lanCIDR)
 	s.proxyMode.SetDataplaneApply(s.applyProxyModeDataplane)
 	s.proxyMode.Resume()
+	s.trans = transparent.NewSupervisor(cfg)
+	s.trans.Notify(proxymode.NormalizeMode(cfg.ProxyMode))
 	policyrouting.StartDNSSnoop(cfg, s.policyRoutingEnv)
 	return s
 }
@@ -87,6 +91,9 @@ func (s *Server) applyProxyModeDataplane(mode string) error {
 	}
 	if ok, msg := s.engine.ReloadDNS(); !ok {
 		return fmt.Errorf("unbound reload: %s", msg)
+	}
+	if s.trans != nil {
+		s.trans.Notify(mode)
 	}
 	return nil
 }
@@ -781,6 +788,15 @@ func (s *Server) getSettings(c *gin.Context) {
 	settings["proxy_mode_note"] = pm.DataplaneNote
 	settings["operate_from_lan"] = pm.OperateFromLAN
 	settings["lan_cidr"] = pm.LANCIDR
+	settings["isp_port"] = pm.IspPort
+	settings["cpe_port"] = pm.CpePort
+	settings["dns_hijack"] = pm.DNSHijack
+	settings["dns_hijack_exclude"] = pm.DNSHijackExclude
+	settings["dns_vip"] = pm.DNSVIP
+	settings["transparent_state"] = pm.TransparentState
+	settings["learned_ce"] = pm.LearnedCE
+	settings["ingress_eligible_hint"] = pm.IngressEligibleHint
+	settings["interfaces"] = network.ListInterfaces()
 	settings["routing_mode"] = singbox.NewRenderer(s.cfg).RoutingMode()
 	liveMode := "standard"
 	if bundle := s.engine.LoadBundle(); bundle != nil {

@@ -202,7 +202,27 @@ func ingressEligible(src string, env Env) (bool, string) {
 		}
 		return false, "旁路模式：源不在 @customer_hosts（也非管理 LAN），不可入向分类"
 	case "transparent":
-		return false, "transparent 模式尚未开放"
+		if !env.TransparentDual {
+			return false, "透明模式尚未 dual，入向不可分类（电缆 L2 直通）"
+		}
+		if src == "" {
+			return true, "透明 dual：未指定源时按已学 CE 入向假设"
+		}
+		ip := parseIPv4(src)
+		if ip == nil {
+			return false, "源地址无效"
+		}
+		ce := parseIPv4(env.LearnedCE)
+		if ce != nil && ip.Equal(ce) {
+			return true, "源为已学 CE，透明 dual 可入向分类"
+		}
+		if env.LANCIDR != "" {
+			n, err := hostToNet(env.LANCIDR)
+			if err == nil && n.Contains(ip) {
+				return true, "源在管理 LAN（透明下 LAN 仍保留 mini-gateway 入向）"
+			}
+		}
+		return false, "透明模式：源不是已学 CE 也非管理 LAN，未 punt 的帧看不到用户策略"
 	default:
 		return false, "未知 proxy_mode: " + mode
 	}

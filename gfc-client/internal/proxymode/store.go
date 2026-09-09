@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/278946647/sip-proxy/gfc-client/internal/config"
+	"github.com/278946647/sip-proxy/gfc-client/internal/transparent"
 )
 
 const (
@@ -28,15 +29,19 @@ type HostsFile struct {
 }
 
 type PendingSwitch struct {
-	Token      string         `json:"token"`
-	FromMode   string         `json:"from_mode"`
-	ToMode     string         `json:"to_mode"`
-	ExpiresAt  string         `json:"expires_at"`
-	WANBefore  map[string]any `json:"wan_before,omitempty"`
-	WANAfter   map[string]any `json:"wan_after,omitempty"`
-	HostsBefore []string      `json:"hosts_before,omitempty"`
-	HostsAfter  []string      `json:"hosts_after,omitempty"`
-	DataplaneNote string      `json:"dataplane_note,omitempty"`
+	Token         string                  `json:"token"`
+	FromMode      string                  `json:"from_mode"`
+	ToMode        string                  `json:"to_mode"`
+	ExpiresAt     string                  `json:"expires_at"`
+	WANBefore     map[string]any          `json:"wan_before,omitempty"`
+	WANAfter      map[string]any          `json:"wan_after,omitempty"`
+	HostsBefore   []string                `json:"hosts_before,omitempty"`
+	HostsAfter    []string                `json:"hosts_after,omitempty"`
+	PortsBefore   transparent.Ports       `json:"ports_before,omitempty"`
+	PortsAfter    transparent.Ports       `json:"ports_after,omitempty"`
+	DNSBefore     transparent.DNSConfig   `json:"dns_before,omitempty"`
+	DNSAfter      transparent.DNSConfig   `json:"dns_after,omitempty"`
+	DataplaneNote string                  `json:"dataplane_note,omitempty"`
 }
 
 func proxyModePath(cfg *config.Config) string {

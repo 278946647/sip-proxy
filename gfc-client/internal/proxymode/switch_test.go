@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/278946647/sip-proxy/gfc-client/internal/config"
+	"github.com/278946647/sip-proxy/gfc-client/internal/transparent"
 )
 
 func testCfg(t *testing.T) *config.Config {
@@ -89,6 +90,36 @@ func TestSwitchApplyCallsDataplane(t *testing.T) {
 	}
 	if cfg.ProxyMode != ModeBypass {
 		t.Fatalf("proxy mode=%s", cfg.ProxyMode)
+	}
+}
+
+func TestSwitchTransparentApply(t *testing.T) {
+	cfg := testCfg(t)
+	var modes []string
+	c := NewController(cfg, nil, func() string { return cfg.LanCIDR })
+	c.SetDataplaneApply(func(mode string) error {
+		modes = append(modes, mode)
+		cfg.ProxyMode = mode
+		return nil
+	})
+	st, err := c.Apply(SwitchRequest{
+		Mode:     ModeTransparent,
+		IspPort:  "eth1",
+		CpePort:  "eth2",
+		LANIface: "br-lan",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Pending == nil || st.Pending.ToMode != ModeTransparent {
+		t.Fatalf("pending=%+v", st.Pending)
+	}
+	if len(modes) != 1 || modes[0] != ModeTransparent {
+		t.Fatalf("modes=%v", modes)
+	}
+	ports := transparent.LoadPorts(cfg)
+	if ports.ISP != "eth1" || ports.CPE != "eth2" {
+		t.Fatalf("ports=%+v", ports)
 	}
 }
 

@@ -63,13 +63,15 @@ type policiesFile struct {
 }
 
 type Env struct {
-	ProxyMode      string
-	RoutingMode    string
-	LANCIDR        string
-	CustomerHosts  []string
-	Mark           string
-	Table          string
-	Tun            string
+	ProxyMode         string
+	RoutingMode       string
+	LANCIDR           string
+	CustomerHosts     []string
+	TransparentDual   bool
+	LearnedCE         string
+	Mark              string
+	Table             string
+	Tun               string
 }
 
 func DefaultEnv() Env {

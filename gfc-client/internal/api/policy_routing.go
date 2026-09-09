@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -23,6 +24,8 @@ func (s *Server) policyRoutingEnv() policyrouting.Env {
 		env.LANCIDR = s.lanCIDR()
 	}
 	env.RoutingMode = singbox.NewRenderer(s.cfg).RoutingMode()
+	env.TransparentDual = strings.EqualFold(pm.TransparentState, "dual") && strings.TrimSpace(pm.LearnedCE) != ""
+	env.LearnedCE = pm.LearnedCE
 	return env
 }
 

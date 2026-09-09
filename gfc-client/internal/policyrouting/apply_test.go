@@ -52,6 +52,21 @@ func TestBuildOverlayChainNFTBypassWAN(t *testing.T) {
 	}
 }
 
+func TestBuildOverlayChainNFTTransparent(t *testing.T) {
+	groups := []Group{{ID: "g1", Name: "src", Kind: KindSrcCIDR, Members: []string{"10.50.0.2"}}}
+	policies := []Policy{{
+		ID: "ovr_1", Name: "src-only", Enabled: true, Rank: 0, Action: ActionProxy,
+		MatchSrcGroupID: "g1",
+	}}
+	text, err := buildOverlayChainNFT(groups, policies, Env{ProxyMode: "transparent"}, "br-lan", "eth0", "0x00002023")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text, `iifname "gfc-ce"`) {
+		t.Fatalf("missing gfc-ce overlay:\n%s", text)
+	}
+}
+
 func TestSanitizeSetID(t *testing.T) {
 	if sanitizeSetID("g-ab/c") != "g_ab_c" {
 		t.Fatalf("got %s", sanitizeSetID("g-ab/c"))

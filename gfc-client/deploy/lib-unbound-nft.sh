@@ -54,18 +54,19 @@ write_gfc_nft_dns_conf() {
   local mode="${GFC_PROXY_MODE:-gateway}"
   local hosts_file="${GFC_ETC:-/etc/gfc-client}/customer-hosts.json"
   local mode_file="${GFC_ETC:-/etc/gfc-client}/proxy-mode.json"
-  python3 - "$outfile" "$lan" "$port" "$wan" "$mode" "$hosts_file" "$mode_file" <<'PY'
+  local dns_file="${GFC_ETC:-/etc/gfc-client}/dns-hijack.json"
+  python3 - "$outfile" "$lan" "$port" "$wan" "$mode" "$hosts_file" "$mode_file" "$dns_file" <<'PY'
 import json, re, subprocess, sys
 from pathlib import Path
-outfile, lan, port, wan, mode, hosts_file, mode_file = sys.argv[1:8]
+outfile, lan, port, wan, mode, hosts_file, mode_file, dns_file = sys.argv[1:9]
 file_mode = ""
 if Path(mode_file).is_file():
     try:
         file_mode = str(json.loads(Path(mode_file).read_text()).get("mode") or "").lower()
     except (OSError, json.JSONDecodeError, TypeError):
         file_mode = ""
-if mode != "bypass" and file_mode == "bypass":
-    mode = "bypass"
+if mode not in ("bypass", "transparent") and file_mode in ("bypass", "transparent"):
+    mode = file_mode
 hosts = []
 if Path(hosts_file).is_file():
     try:
@@ -75,6 +76,23 @@ if Path(hosts_file).is_file():
         hosts = [str(x).strip() for x in raw if str(x).strip()]
     except (OSError, json.JSONDecodeError, TypeError):
         hosts = []
+
+hijack_on = True
+vip = "172.31.253.53"
+exclude = []
+if Path(dns_file).is_file():
+    try:
+        dj = json.loads(dns_file and Path(dns_file).read_text() or "{}")
+        if str(dj.get("enabled")).lower() in ("false", "0", "off", "no"):
+            hijack_on = False
+        if dj.get("vip"):
+            vip = str(dj.get("vip")).strip()
+        raw_ex = dj.get("exclude") or []
+        if isinstance(raw_ex, str):
+            raw_ex = raw_ex.replace(",", " ").split()
+        exclude = [str(x).strip() for x in raw_ex if str(x).strip()]
+    except (OSError, json.JSONDecodeError, TypeError):
+        pass
 
 def wan_ipv4s(iface):
     if not iface:
@@ -103,8 +121,14 @@ def wan_ipv4s(iface):
     return ips
 
 set_block = ""
+lan_rules = ""
 wan_rules = ""
-if mode == "bypass":
+trans_rules = ""
+if hijack_on or mode == "bypass":
+    lan_rules = f"""
+    iifname "{lan}" udp dport 53 redirect to :{port}
+    iifname "{lan}" tcp dport 53 redirect to :{port}"""
+if mode == "bypass" and hijack_on:
     elems = ", ".join(hosts)
     body = f"\n    elements = {{ {elems} }}" if elems else ""
     set_block = f"""
@@ -135,13 +159,29 @@ if mode == "bypass":
             f'    iifname "{wan}" ip saddr @customer_hosts tcp dport 53 redirect to :{port}'
         )
         wan_rules = "\n" + "\n".join(skip_lines)
+if mode == "transparent":
+    ex_elems = ", ".join(exclude)
+    ex_body = f"\n    elements = {{ {ex_elems} }}" if ex_elems else ""
+    set_block = f"""
+  set dns_exclude {{
+    type ipv4_addr
+    flags interval{ex_body}
+  }}"""
+    trans_lines = [
+        f'    iifname "gfc-ce" udp dport 53 ip daddr {vip} return',
+        f'    iifname "gfc-ce" tcp dport 53 ip daddr {vip} return',
+        '    iifname "gfc-ce" udp dport 53 ip daddr @dns_exclude return',
+        '    iifname "gfc-ce" tcp dport 53 ip daddr @dns_exclude return',
+    ]
+    if hijack_on:
+        trans_lines.append(f'    iifname "gfc-ce" udp dport 53 dnat to {vip}')
+        trans_lines.append(f'    iifname "gfc-ce" tcp dport 53 dnat to {vip}')
+    trans_rules = "\n" + "\n".join(trans_lines)
 text = f"""#!/usr/sbin/nft -f
 # DNS hijack — docs/NFT_ARCHITECTURE.md (no skuid OUTPUT bypass)
 table inet gfc_dns_hijack {{{set_block}
   chain prerouting {{
-    type nat hook prerouting priority dstnat; policy accept;
-    iifname "{lan}" udp dport 53 redirect to :{port}
-    iifname "{lan}" tcp dport 53 redirect to :{port}{wan_rules}
+    type nat hook prerouting priority dstnat; policy accept;{lan_rules}{wan_rules}{trans_rules}
   }}
 }}
 """

@@ -62,3 +62,13 @@ func TestRenderBypassACLPublicHost(t *testing.T) {
 		t.Fatalf("gateway ACL must not allow hosts:\n%s", inactive)
 	}
 }
+
+func TestRenderExtraACLLearnedCE(t *testing.T) {
+	got := RenderExtraACL([]string{"203.0.113.10"})
+	if !strings.Contains(got, "access-control: 203.0.113.10/32 allow") {
+		t.Fatalf("missing CE ACL:\n%s", got)
+	}
+	if strings.Contains(got, "0.0.0.0/0") {
+		t.Fatal("must not allow all")
+	}
+}

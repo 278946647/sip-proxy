@@ -315,6 +315,39 @@ def render_architecture(cfg: dict) -> str:
         customer_output = """
     ip daddr @customer_hosts return"""
 
+    if proxy_mode == "transparent":
+        ce = ""
+        learned = etc_dir() / "transparent-learned.json"
+        if learned.is_file():
+            try:
+                ce = str(json.loads(learned.read_text()).get("ce_ip") or "").strip()
+            except (OSError, json.JSONDecodeError, TypeError):
+                ce = ""
+        ct_head = f"""
+    iifname "{tun}" return
+    fib daddr type {{ local, broadcast, multicast }} return"""
+        route_head = f"""
+    iifname "{tun}" return
+    fib daddr type {{ local, broadcast, multicast }} return"""
+        ct_wan = """
+    iifname "gfc-ce" ct mark set {mark} accept""".format(mark=mark)
+        cn_ce = ""
+        if routing_mode != "global":
+            cn_ce = """
+    iifname "gfc-ce" ip daddr @TO_CN return"""
+        route_wan = f"""
+    iifname "gfc-ce" ip daddr {{ 10.0.0.0/8, 127.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 }} return
+    iifname "gfc-ce" ip daddr {lan_cidr} return
+    iifname "gfc-ce" udp dport {{ 53, 67, 68, 123 }} return
+    iifname "gfc-ce" ip daddr @bypass_ip return
+    iifname "gfc-ce" ip daddr @ext_const ct mark {mark} meta mark set ct mark return{cn_ce}
+    iifname "gfc-ce" ct mark {mark} meta mark set ct mark"""
+        if ce:
+            forward_customer = f"""
+    ct state new ip saddr {ce} ct mark set meta mark"""
+            customer_output = f"""
+    ip daddr {ce} return"""
+
     cn_load = cfg["cn_load_path"]
     cn_count = cfg["cn_count"]
 

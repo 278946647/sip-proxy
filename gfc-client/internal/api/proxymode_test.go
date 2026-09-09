@@ -44,3 +44,28 @@ func TestSwitchRequestFromBodyBypass(t *testing.T) {
 		t.Fatalf("timeout=%d", req.ConfirmTimeoutSec)
 	}
 }
+
+func TestSwitchRequestFromBodyTransparent(t *testing.T) {
+	on := true
+	_ = on
+	req, err := switchRequestFromBody(map[string]any{
+		"proxy_mode":              "transparent",
+		"isp_port":                "eth1",
+		"cpe_port":                "eth2",
+		"dns_hijack":              true,
+		"dns_hijack_exclude_text": "10.0.0.53",
+		"dns_vip":                 "172.31.253.53",
+	}, "192.168.1.0/24")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.Mode != "transparent" || req.IspPort != "eth1" || req.CpePort != "eth2" {
+		t.Fatalf("req=%+v", req)
+	}
+	if req.DNSHijack == nil || !*req.DNSHijack {
+		t.Fatal("dns_hijack")
+	}
+	if len(req.DNSHijackExclude) != 1 {
+		t.Fatalf("exclude=%v", req.DNSHijackExclude)
+	}
+}

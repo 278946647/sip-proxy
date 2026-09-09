@@ -11,9 +11,14 @@ import (
 	"time"
 
 	"github.com/278946647/sip-proxy/gfc-client/internal/config"
+	"github.com/278946647/sip-proxy/gfc-client/internal/transparent"
 )
 
-const DataplaneNoteP2 = "旁路数据面按 NFT §9.3 Option B 应用。请从管理 LAN 确认；超时将回滚 WAN、GFC_PROXY_MODE 与 nft。"
+const (
+	DataplaneNoteP2     = "旁路数据面按 NFT §9.3 Option B 应用。请从管理 LAN 确认；超时将回滚 WAN、GFC_PROXY_MODE 与 nft。"
+	DataplaneNoteTrans  = "透明数据面按 NFT §9.4（netdev gfc_trans）。请从管理 LAN 确认；超时将回滚口角色、GFC_PROXY_MODE 与 nft。已学到客户后盒子不答 CE ARP。"
+	DataplaneNoteGW     = "网关模式：客户从管理/业务 LAN 入向。DNS 劫持开关与旁路/透明共用。"
+)
 
 type WANApplyFunc func(body map[string]any) (map[string]any, error)
 
@@ -51,13 +56,24 @@ func (c *Controller) SetDataplaneApply(fn ModeApplyFunc) {
 }
 
 type Status struct {
-	Mode            string         `json:"proxy_mode"`
-	DataplaneMode   string         `json:"dataplane_proxy_mode"`
-	CustomerHosts   []string       `json:"customer_hosts"`
-	LANCIDR         string         `json:"lan_cidr"`
-	Pending         *PendingView   `json:"pending,omitempty"`
-	DataplaneNote   string         `json:"dataplane_note,omitempty"`
-	OperateFromLAN  string         `json:"operate_from_lan"`
+	Mode            string                 `json:"proxy_mode"`
+	DataplaneMode   string                 `json:"dataplane_proxy_mode"`
+	CustomerHosts   []string               `json:"customer_hosts"`
+	LANCIDR         string                 `json:"lan_cidr"`
+	Pending         *PendingView           `json:"pending,omitempty"`
+	DataplaneNote   string                 `json:"dataplane_note,omitempty"`
+	OperateFromLAN  string                 `json:"operate_from_lan"`
+	IspPort         string                 `json:"isp_port,omitempty"`
+	CpePort         string                 `json:"cpe_port,omitempty"`
+	DNSHijack       bool                   `json:"dns_hijack"`
+	DNSHijackExclude []string              `json:"dns_hijack_exclude,omitempty"`
+	DNSVIP          string                 `json:"dns_vip,omitempty"`
+	TransparentState string                `json:"transparent_state,omitempty"`
+	LearnedCE       string                 `json:"learned_ce,omitempty"`
+	LearnedGW       string                 `json:"learned_gw,omitempty"`
+	LearnedCPEMAC   string                 `json:"learned_cpe_mac,omitempty"`
+	LearnedPEMAC    string                 `json:"learned_pe_mac,omitempty"`
+	IngressEligibleHint string             `json:"ingress_eligible_hint,omitempty"`
 }
 
 type PendingView struct {
@@ -77,25 +93,7 @@ func (c *Controller) Status() Status {
 		_ = c.rollbackLocked("timeout")
 		pending = nil
 	}
-	st := Status{
-		Mode:           CommittedMode(c.cfg),
-		DataplaneMode:  NormalizeMode(c.cfg.ProxyMode),
-		CustomerHosts:  LoadHosts(c.cfg),
-		LANCIDR:        firstNonEmpty(c.lanCIDR(), c.cfg.LanCIDR),
-		DataplaneNote:  DataplaneNoteP2,
-		OperateFromLAN: "请从管理 LAN 口操作本页。旁路切换会改 WAN 静态地址；超时未确认将自动回滚 WAN 与模式。",
-	}
-	if pending != nil {
-		st.Pending = &PendingView{
-			Token:       pending.Token,
-			FromMode:    pending.FromMode,
-			ToMode:      pending.ToMode,
-			ExpiresAt:   pending.ExpiresAt,
-			SecondsLeft: SecondsLeft(pending, now),
-		}
-		st.Mode = NormalizeMode(pending.ToMode)
-	}
-	return st
+	return c.statusLocked()
 }
 
 func (c *Controller) Apply(req SwitchRequest) (Status, error) {
@@ -104,6 +102,12 @@ func (c *Controller) Apply(req SwitchRequest) (Status, error) {
 
 	if req.LANCIDR == "" {
 		req.LANCIDR = firstNonEmpty(c.lanCIDR(), c.cfg.LanCIDR)
+	}
+	if req.LANIface == "" {
+		req.LANIface = strings.TrimSpace(c.cfg.LanIface)
+		if req.LANIface == "" {
+			req.LANIface = "br-lan"
+		}
 	}
 	req.Mode = NormalizeMode(req.Mode)
 	req.ConfirmTimeoutSec = ClampConfirmTimeout(req.ConfirmTimeoutSec)
@@ -116,7 +120,7 @@ func (c *Controller) Apply(req SwitchRequest) (Status, error) {
 			return Status{}, err
 		}
 	}
-	if req.Mode == ModeGateway && CommittedMode(c.cfg) == ModeGateway {
+	if req.Mode == ModeGateway && CommittedMode(c.cfg) == ModeGateway && req.DNSHijack == nil {
 		pending, _ := LoadPending(c.cfg)
 		if pending == nil {
 			return c.statusLocked(), nil
@@ -137,6 +141,32 @@ func (c *Controller) Apply(req SwitchRequest) (Status, error) {
 		}
 	} else {
 		hosts = LoadHosts(c.cfg)
+	}
+
+	dnsBefore := transparent.LoadDNS(c.cfg)
+	dnsAfter := dnsBefore
+	if req.DNSHijack != nil {
+		dnsAfter.Enabled = *req.DNSHijack
+	}
+	if req.DNSHijackExclude != nil {
+		dnsAfter.Exclude = req.DNSHijackExclude
+	}
+	if strings.TrimSpace(req.DNSVIP) != "" {
+		dnsAfter.VIP = strings.TrimSpace(req.DNSVIP)
+	}
+	if req.Mode == ModeTransparent {
+		learned := transparent.LoadLearned(c.cfg)
+		vip, err := transparent.ResolveVIP(dnsAfter.VIP, req.LANCIDR, learned, nil, LoadHosts(c.cfg))
+		if err != nil {
+			return Status{}, err
+		}
+		dnsAfter.VIP = vip
+	}
+
+	portsBefore := transparent.LoadPorts(c.cfg)
+	portsAfter := portsBefore
+	if req.Mode == ModeTransparent {
+		portsAfter = transparent.Ports{ISP: req.IspPort, CPE: req.CpePort}.Normalized()
 	}
 
 	wanAfter := cloneMap(c.loadWANFile())
@@ -160,7 +190,11 @@ func (c *Controller) Apply(req SwitchRequest) (Status, error) {
 		WANAfter:      wanAfter,
 		HostsBefore:   LoadHosts(c.cfg),
 		HostsAfter:    hosts,
-		DataplaneNote: DataplaneNoteP2,
+		PortsBefore:   portsBefore,
+		PortsAfter:    portsAfter,
+		DNSBefore:     dnsBefore,
+		DNSAfter:      dnsAfter,
+		DataplaneNote: noteForMode(req.Mode),
 	}
 	if err := SavePending(c.cfg, pending); err != nil {
 		return Status{}, err
@@ -169,6 +203,18 @@ func (c *Controller) Apply(req SwitchRequest) (Status, error) {
 		_ = c.restoreFiles(pending)
 		_ = ClearPending(c.cfg)
 		return Status{}, err
+	}
+	if err := transparent.SaveDNS(c.cfg, dnsAfter); err != nil {
+		_ = c.restoreFiles(pending)
+		_ = ClearPending(c.cfg)
+		return Status{}, err
+	}
+	if req.Mode == ModeTransparent {
+		if err := transparent.SavePorts(c.cfg, portsAfter); err != nil {
+			_ = c.restoreFiles(pending)
+			_ = ClearPending(c.cfg)
+			return Status{}, err
+		}
 	}
 	if req.Mode == ModeBypass {
 		if err := writeJSON(wanPath(c.cfg), wanAfter); err != nil {
@@ -282,6 +328,8 @@ func (c *Controller) restoreFiles(pending *PendingSwitch) error {
 			return err
 		}
 	}
+	_ = transparent.SavePorts(c.cfg, pending.PortsBefore)
+	_ = transparent.SaveDNS(c.cfg, pending.DNSBefore)
 	return nil
 }
 
@@ -314,13 +362,37 @@ func (c *Controller) stopTimerLocked() {
 
 func (c *Controller) statusLocked() Status {
 	pending, _ := LoadPending(c.cfg)
+	mode := CommittedMode(c.cfg)
+	if pending != nil {
+		mode = NormalizeMode(pending.ToMode)
+	}
+	dns := transparent.LoadDNS(c.cfg)
+	ports := transparent.LoadPorts(c.cfg)
+	learned := transparent.LoadLearned(c.cfg)
 	st := Status{
-		Mode:           CommittedMode(c.cfg),
-		DataplaneMode:  NormalizeMode(c.cfg.ProxyMode),
-		CustomerHosts:  LoadHosts(c.cfg),
-		LANCIDR:        firstNonEmpty(c.lanCIDR(), c.cfg.LanCIDR),
-		DataplaneNote:  DataplaneNoteP2,
-		OperateFromLAN: "请从管理 LAN 口操作本页。旁路切换会改 WAN 静态地址；超时未确认将自动回滚 WAN 与模式。",
+		Mode:              mode,
+		DataplaneMode:     NormalizeMode(c.cfg.ProxyMode),
+		CustomerHosts:     LoadHosts(c.cfg),
+		LANCIDR:           firstNonEmpty(c.lanCIDR(), c.cfg.LanCIDR),
+		DataplaneNote:     noteForMode(mode),
+		OperateFromLAN:    operateHint(mode),
+		IspPort:           ports.ISP,
+		CpePort:           ports.CPE,
+		DNSHijack:         dns.Enabled,
+		DNSHijackExclude:  dns.Exclude,
+		DNSVIP:            dns.Normalized().VIP,
+		TransparentState:  learned.State,
+		LearnedCE:         learned.CEIP,
+		LearnedGW:         learned.GWIP,
+		LearnedCPEMAC:     learned.CPEMAC,
+		LearnedPEMAC:      learned.PEMAC,
+	}
+	if mode == ModeTransparent {
+		if learned.Dual() {
+			st.IngressEligibleHint = "dual：已 punt 的国际 TCP 可入向分类"
+		} else {
+			st.IngressEligibleHint = "尚未 dual，电缆 L2 直通，策略入向不可用"
+		}
 	}
 	if pending != nil {
 		st.Pending = &PendingView{
@@ -330,9 +402,30 @@ func (c *Controller) statusLocked() Status {
 			ExpiresAt:   pending.ExpiresAt,
 			SecondsLeft: SecondsLeft(pending, c.now()),
 		}
-		st.Mode = NormalizeMode(pending.ToMode)
 	}
 	return st
+}
+
+func noteForMode(mode string) string {
+	switch NormalizeMode(mode) {
+	case ModeBypass:
+		return DataplaneNoteP2
+	case ModeTransparent:
+		return DataplaneNoteTrans
+	default:
+		return DataplaneNoteGW
+	}
+}
+
+func operateHint(mode string) string {
+	switch NormalizeMode(mode) {
+	case ModeBypass:
+		return "请从管理 LAN 口操作本页。旁路切换会改 WAN 静态地址；超时未确认将自动回滚 WAN 与模式。"
+	case ModeTransparent:
+		return "请从管理 LAN 口操作本页。透明切换会把 isp/cpe 编入 br-trans（无互联 IP）；超时未确认将自动回滚口角色与模式。管理 LAN 永不进透明桥。"
+	default:
+		return "请从管理 LAN 口操作本页。模式切换须确认；超时未确认将自动回滚。"
+	}
 }
 
 func (c *Controller) loadWANFile() map[string]any {

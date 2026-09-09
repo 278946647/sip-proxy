@@ -33,7 +33,67 @@ func switchRequestFromBody(body map[string]any, lanCIDR string) (proxymode.Switc
 	}
 	req.CustomerHosts = hosts
 	req.WAN = wanFromBody(body)
+	req.IspPort = firstText(body["isp_port"], body["ispPort"])
+	req.CpePort = firstText(body["cpe_port"], body["cpePort"])
+	if nested, ok := body["ports"].(map[string]any); ok {
+		if req.IspPort == "" {
+			req.IspPort = firstText(nested["isp_port"], nested["isp"])
+		}
+		if req.CpePort == "" {
+			req.CpePort = firstText(nested["cpe_port"], nested["cpe"])
+		}
+	}
+	if v, ok := body["dns_hijack"]; ok {
+		b := boolValue(v)
+		req.DNSHijack = &b
+	}
+	if raw, ok := body["dns_hijack_exclude"]; ok && raw != nil {
+		ex, err := hostsFromRaw(raw)
+		if err != nil {
+			return req, err
+		}
+		req.DNSHijackExclude = ex
+	}
+	if text := textValue(body["dns_hijack_exclude_text"]); text != "" {
+		ex, err := proxymode.ParseHostsText(text)
+		if err != nil {
+			return req, err
+		}
+		req.DNSHijackExclude = ex
+	}
+	req.DNSVIP = firstText(body["dns_vip"], body["dnsVip"])
 	return req, nil
+}
+
+func hostsFromRaw(raw any) ([]string, error) {
+	switch v := raw.(type) {
+	case string:
+		return proxymode.ParseHostsText(v)
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			out = append(out, fmt.Sprint(item))
+		}
+		return proxymode.NormalizeHosts(out)
+	case []string:
+		return proxymode.NormalizeHosts(v)
+	default:
+		return nil, nil
+	}
+}
+
+func boolValue(v any) bool {
+	switch b := v.(type) {
+	case bool:
+		return b
+	case string:
+		s := strings.ToLower(strings.TrimSpace(b))
+		return s == "1" || s == "true" || s == "on" || s == "yes"
+	case float64:
+		return b != 0
+	default:
+		return false
+	}
 }
 
 func hostsFromBody(body map[string]any) ([]string, error) {

@@ -94,7 +94,7 @@ return view.extend({
 		var proxyModeSelect = E('select', { 'class': 'cbi-input-select' }, [
 			option('gateway', '网关模式', proxyMode),
 			option('bypass', '旁路模式', proxyMode),
-			option('transparent', '透明模式（待开发）', proxyMode, true)
+			option('transparent', '透明模式', proxyMode)
 		]);
 		var routeSelect = E('select', { 'class': 'cbi-input-select' }, [
 			option('split', '分流模式', routeMode),
@@ -145,8 +145,81 @@ return view.extend({
 			])
 		]);
 
+		var ifaces = settings.interfaces || [];
+		if (!Array.isArray(ifaces))
+			ifaces = [];
+		function ifaceSelect(selected) {
+			var sel = E('select', { 'class': 'cbi-input-select' });
+			sel.appendChild(option('', '（选择网卡）', selected || ''));
+			ifaces.forEach(function(name) {
+				if (name === 'br-lan' || name === 'gfctun' || name === 'gfc-ce' || name === 'gfc-dns' || name === 'br-trans')
+					return;
+				sel.appendChild(option(name, name, selected || ''));
+			});
+			return sel;
+		}
+		var ispSelect = ifaceSelect(settings.isp_port);
+		var cpeSelect = ifaceSelect(settings.cpe_port);
+		var dnsHijackBox = E('input', { 'type': 'checkbox', 'checked': settings.dns_hijack === false ? null : 'checked' });
+		var excludeBox = E('textarea', {
+			'class': 'cbi-input-textarea',
+			'style': 'width: 28em; min-height: 4em',
+			'placeholder': '不劫持的目的 IPv4，每行一个（内网权威 DNS）'
+		}, [ hostsText(settings.dns_hijack_exclude) ]);
+		var transFields = E('div', { 'class': 'cbi-section-node' }, [
+			E('p', { 'class': 'alert-message warning' }, [
+				'透明：isp 接上游、cpe 接客户设备，编入 br-trans（无互联 IP）。管理 LAN 永不进该桥。切换须确认，超时回滚。已学到客户后盒子不答 CE ARP。'
+			]),
+			E('div', { 'class': 'cbi-value' }, [
+				E('label', { 'class': 'cbi-value-title' }, [ '上游口 isp_port' ]),
+				E('div', { 'class': 'cbi-value-field' }, [ ispSelect ])
+			]),
+			E('div', { 'class': 'cbi-value' }, [
+				E('label', { 'class': 'cbi-value-title' }, [ '客户口 cpe_port' ]),
+				E('div', { 'class': 'cbi-value-field' }, [ cpeSelect, E('button', {
+					'class': 'btn',
+					'style': 'margin-left:8px',
+					'click': function(ev) {
+						ev.preventDefault();
+						var a = ispSelect.value;
+						ispSelect.value = cpeSelect.value;
+						cpeSelect.value = a;
+					}
+				}, [ '对调' ]) ])
+			]),
+			E('div', { 'class': 'cbi-value' }, [
+				E('label', { 'class': 'cbi-value-title' }, [ '学习状态' ]),
+				E('div', { 'class': 'cbi-value-field' }, [
+					(settings.transparent_state || 'idle') +
+					(settings.learned_ce ? ('　CE ' + settings.learned_ce) : '') +
+					(settings.ingress_eligible_hint ? ('　' + settings.ingress_eligible_hint) : '')
+				])
+			])
+		]);
+		var dnsFields = E('div', { 'class': 'cbi-section-node' }, [
+			E('div', { 'class': 'cbi-value' }, [
+				E('label', { 'class': 'cbi-value-title' }, [ 'DNS 劫持' ]),
+				E('div', { 'class': 'cbi-value-field' }, [
+					dnsHijackBox,
+					E('span', {}, [ ' 抢非本机 :53（三种模式共用）。关后 unbound 不停；透明仍 punt DNS VIP。' ])
+				])
+			]),
+			E('div', { 'class': 'cbi-value' }, [
+				E('label', { 'class': 'cbi-value-title' }, [ '不劫持目的' ]),
+				E('div', { 'class': 'cbi-value-field' }, [ excludeBox ])
+			]),
+			E('div', { 'class': 'cbi-value' }, [
+				E('label', { 'class': 'cbi-value-title' }, [ 'GFC DNS 地址' ]),
+				E('div', { 'class': 'cbi-value-field' }, [
+					settings.dns_vip || '172.31.253.53',
+					E('div', { 'class': 'hint' }, [ '透明关劫持后请把客户 Option 6 / WAN DNS 指到此 VIP。网关=LAN IP，旁路=WAN IP。' ])
+				])
+			])
+		]);
+
 		function toggleBypass() {
 			bypassFields.style.display = proxyModeSelect.value === 'bypass' ? '' : 'none';
+			transFields.style.display = proxyModeSelect.value === 'transparent' ? '' : 'none';
 		}
 		proxyModeSelect.addEventListener('change', toggleBypass);
 		toggleBypass();
@@ -187,7 +260,7 @@ return view.extend({
 		confirmBtn.addEventListener('click', function() {
 			confirmBtn.disabled = true;
 			request('/settings/proxy-mode/confirm', { token: pending && pending.token }).then(function(res) {
-				showResult(result, res, '确认旁路切换');
+				showResult(result, res, '确认模式切换');
 				renderPending((((res || {}).data || {}).status || {}).pending || null);
 			}).catch(function(err) {
 				result.textContent = err.message || String(err);
@@ -213,7 +286,7 @@ return view.extend({
 		proxyModeBtn.addEventListener('click', function() {
 			proxyModeBtn.disabled = true;
 			result.textContent = 'applying proxy mode...';
-			var body = { proxy_mode: proxyModeSelect.value, confirm_timeout_sec: 120 };
+			var body = { proxy_mode: proxyModeSelect.value, confirm_timeout_sec: 120, dns_hijack: !!dnsHijackBox.checked, dns_hijack_exclude_text: excludeBox.value };
 			if (proxyModeSelect.value === 'bypass') {
 				body.wan = {
 					mode: 'static',
@@ -222,6 +295,10 @@ return view.extend({
 					gateway: wanGw.value
 				};
 				body.customer_hosts_text = hostsBox.value;
+			}
+			if (proxyModeSelect.value === 'transparent') {
+				body.isp_port = ispSelect.value;
+				body.cpe_port = cpeSelect.value;
 			}
 			request('/settings/proxy-mode', body).then(function(res) {
 				showResult(result, res, '路由模式');
@@ -290,11 +367,13 @@ return view.extend({
 						proxyModeSelect,
 						' ',
 						proxyModeBtn,
-						E('div', { 'class': 'hint' }, [ '仅本机 Web 可写。旁路必须填 WAN 静态地址和 customer_hosts；控制面只读上报。' ])
+						E('div', { 'class': 'hint' }, [ '仅本机 Web 可写。旁路填 WAN 静态与 customer_hosts；透明填 isp/cpe 口角色。控制面只读上报。' ])
 					])
 				]),
 				pendingBox,
 				bypassFields,
+				transFields,
+				dnsFields,
 				E('div', { 'class': 'cbi-value' }, [
 					E('label', { 'class': 'cbi-value-title' }, [ '代理模式' ]),
 					E('div', { 'class': 'cbi-value-field' }, [

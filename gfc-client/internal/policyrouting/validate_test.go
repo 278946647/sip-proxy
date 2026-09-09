@@ -204,7 +204,26 @@ func TestProbeBypassIngress(t *testing.T) {
 	}
 }
 
-func TestStoreRoundTrip(t *testing.T) {
+func TestProbeTransparentIngress(t *testing.T) {
+	res, err := Probe(ProbeRequest{ProbeDst: "1.1.1.1", ProbeSrc: "10.50.0.2"}, nil, nil, Env{
+		ProxyMode: "transparent", LearnedCE: "10.50.0.2", TransparentDual: false,
+	}, Snapshot{ExtConst: []string{"1.1.1.1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IngressEligible {
+		t.Fatalf("expected ineligible before dual: %+v", res)
+	}
+	res, err = Probe(ProbeRequest{ProbeDst: "1.1.1.1", ProbeSrc: "10.50.0.2"}, nil, nil, Env{
+		ProxyMode: "transparent", LearnedCE: "10.50.0.2", TransparentDual: true,
+	}, Snapshot{ExtConst: []string{"1.1.1.1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IngressEligible {
+		t.Fatalf("expected eligible dual: %+v", res)
+	}
+}
 	dir := t.TempDir()
 	cfg := &config.Config{Paths: config.Paths{Etc: dir}}
 	svc := NewService(cfg, func() Env {

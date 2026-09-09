@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net"
 	"strings"
+
+	"github.com/278946647/sip-proxy/gfc-client/internal/transparent"
 )
 
 const (
@@ -23,6 +25,12 @@ type SwitchRequest struct {
 	CustomerHosts     []string
 	ConfirmTimeoutSec int
 	LANCIDR           string
+	LANIface          string
+	IspPort           string
+	CpePort           string
+	DNSHijack         *bool
+	DNSHijackExclude  []string
+	DNSVIP            string
 }
 
 type WANConfig struct {
@@ -62,7 +70,7 @@ func ValidateSwitch(req SwitchRequest) error {
 	mode := NormalizeMode(req.Mode)
 	switch mode {
 	case ModeTransparent:
-		return fmt.Errorf("transparent 模式尚未开放")
+		return validateTransparent(req)
 	case ModeGateway:
 		return nil
 	case ModeBypass:
@@ -70,6 +78,10 @@ func ValidateSwitch(req SwitchRequest) error {
 	default:
 		return fmt.Errorf("unsupported proxy_mode %q", req.Mode)
 	}
+}
+
+func validateTransparent(req SwitchRequest) error {
+	return transparent.ValidatePorts(transparent.Ports{ISP: req.IspPort, CPE: req.CpePort}, req.LANIface)
 }
 
 func validateBypass(req SwitchRequest) error {

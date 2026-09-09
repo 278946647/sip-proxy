@@ -1,0 +1,69 @@
+---
+description: GFC 透明模式契约 — L2+punt、禁 proxy-ARP、DNS VIP、跨模式劫持开关
+globs:
+  - "**/proxymode/**"
+  - "**/transparent/**"
+  - "**/gfc-routing.sh"
+  - "**/gen-nft-policy.py"
+  - "**/lib-unbound-nft.sh"
+  - "**/lib-policy-routing.sh"
+  - "**/settings.js"
+  - "**/TRANSPARENT_MODE.md"
+  - "**/SESSION_HANDOFF*TRANSPARENT*"
+  - "**/UNBOUND_ARCHITECTURE.md"
+  - "**/NFT_ARCHITECTURE.md"
+  - "**/BYPASS_MODE.md"
+alwaysApply: true
+---
+
+# 透明模式（proxy_mode=transparent）协议（强制）
+
+## 权威来源
+
+1. `docs/TRANSPARENT_MODE.md`（仓库内透明唯一真相）
+2. `docs/SESSION_HANDOFF_2026-09-09_TRANSPARENT_MODE.md`（开发入口 / 已授权实现）
+3. `docs/SESSION_HANDOFF_2026-08-31_TRANSPARENT_MODE.md`（规格讨论冻结；勿当开工清单）
+4. `docs/NFT_ARCHITECTURE.md` / `docs/UNBOUND_ARCHITECTURE.md` / `docs/SINGBOX_ARCHITECTURE.md`
+5. 用户在对话中明确批准的片段
+
+冲突以 `TRANSPARENT_MODE.md` 为准。`GATEWAY_CORE.md` / `ARCHITECTURE.md` **不得覆盖**。旁路契约不得把透明解释成 `bypass` + 公网 `customer_hosts`。
+
+## 已拍板（禁止当未决重开）
+
+- L2 电缆 + 选择性 punt；**禁止** proxy-ARP 档；**禁止** 管理 LAN 桥 isp/cpe
+- 已学到客户后 **禁止** 再当 CE 的 ARP 主人；`dual` 前可以没有隧道
+- 默认劫持全部递归 DNS（含私网网关:53）；三种模式共用 `dns_hijack` 开关；透明自愿入口 = DNS VIP
+- 一期只偷国际 TCP；ESP/IKE/GRE 永不偷；其它 UDP 直通
+- 未按 09-09 交接交付前，未合入树须继续拒绝 `transparent`；交付批须开放并带确认/回滚
+
+## 修改前
+
+1. 读 `TRANSPARENT_MODE.md`
+2. 输出规范 vs 实现差异表
+3. 偷流层只许 `netdev gfc_trans`（链/set 见 09-09 交接）；须先写入 `NFT_ARCHITECTURE.md` 再写生成器。其它新表/改 inet 链名 hook mark：仍须额外「确认修改」
+4. 只改点名文件
+
+未获批准时：**只读分析，不写代码**。`SESSION_HANDOFF_2026-09-09_TRANSPARENT_MODE.md` **即本批实现批准**；超出该文点名文件仍须另批。
+
+## 绝对禁止
+
+- 整机桥接管理 LAN 与 WAN/isp/cpe
+- proxy-ARP / 三层 TTL-- 当透明产品模式
+- `bridge-nf-call-iptables=1` 当偷流捷径
+- 扫描猜 CE；`dual` 后抢 CE ARP
+- 关劫持时停 unbound；透明关劫持后不 punt DNS VIP:53
+- 目的 RFC1918 自动放行 53（会放掉「网关当 DNS」的污染入口）
+- MosDNS / sing-box DNS inbound 替代 unbound
+- 因透明改 `auto_route` / `route.final`
+- 学习 IP 写入 `TO_CN` / `bypass_ip` / `ext` / `ext_const`
+- 无确认超时回滚就切换 `transparent`；或未实现却对用户开放该选项
+- 试编本功能 bump 产品版本 / `PKG_RELEASE`
+
+## 允许的无须批准操作
+
+- 只读：对照契约做 gap；现网 `nft list` / 学习日志
+- 用户要求时更新 `TRANSPARENT_MODE.md` / 本交接 / 本规则
+
+## 口令
+
+> 严格按 `docs/TRANSPARENT_MODE.md` 与 `docs/SESSION_HANDOFF_2026-09-09_TRANSPARENT_MODE.md`，只改点名文件。`netdev gfc_trans` 先写入 `NFT_ARCHITECTURE.md` 再写生成器。试编不升号。

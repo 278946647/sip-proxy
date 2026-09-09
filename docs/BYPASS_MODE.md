@@ -23,7 +23,7 @@
 | 客户 NAT | `oif WAN masquerade` | **禁止**客户 WAN SNAT；仅 `oif WAN ip saddr <lan_subnet> masquerade` |
 | 国际出口 | 打标进 TUN | 同样打标进 TUN（不得关策略路由） |
 
-`transparent`：**未开放**，设备 Web 必须拒绝。
+`transparent`：契约见 [`TRANSPARENT_MODE.md`](TRANSPARENT_MODE.md)。不得把旁路填公网 `customer_hosts` 当成透明。
 
 ---
 
