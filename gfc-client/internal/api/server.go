@@ -89,7 +89,18 @@ func (s *Server) applyProxyModeDataplane(mode string) error {
 	}
 	_ = os.Setenv("GFC_PROXY_MODE", mode)
 	s.cfg.ProxyMode = mode
-	// Stop AF_PACKET before nft/unbound work or LuCI's ~15s XHR dies on the way back to gateway.
+	// Return immediately: LuCI XHR is ~15s. Capture stop / leave-trans / nft reload
+	// must not sit on the request (Notify used to deadlock holding the supervisor lock).
+	go s.finishProxyModeDataplane(mode)
+	return nil
+}
+
+func (s *Server) finishProxyModeDataplane(mode string) {
+	s.dpMu.Lock()
+	defer s.dpMu.Unlock()
+	if proxymode.NormalizeMode(s.cfg.ProxyMode) != mode {
+		return
+	}
 	if s.trans != nil {
 		s.trans.Notify(mode)
 	}
@@ -98,13 +109,16 @@ func (s *Server) applyProxyModeDataplane(mode string) error {
 			log.Printf("proxy-mode leave-trans: %v", err)
 		}
 	}
-	go s.reloadProxyModeDataplane(mode)
-	return nil
+	s.reloadProxyModeDataplaneLocked(mode)
 }
 
 func (s *Server) reloadProxyModeDataplane(mode string) {
 	s.dpMu.Lock()
 	defer s.dpMu.Unlock()
+	s.reloadProxyModeDataplaneLocked(mode)
+}
+
+func (s *Server) reloadProxyModeDataplaneLocked(mode string) {
 	if proxymode.NormalizeMode(s.cfg.ProxyMode) != mode {
 		return
 	}

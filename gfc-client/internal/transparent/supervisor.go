@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,13 +19,14 @@ const refreshDebounce = 2 * time.Second
 type Supervisor struct {
 	cfg *config.Config
 
-	mu       sync.Mutex
-	stop     func()
-	last     string
-	learned  Learned
-	timer    *time.Timer
-	refresh  bool
-	now      func() time.Time
+	mu         sync.Mutex
+	stop       func()
+	last       string
+	learned    Learned
+	timer      *time.Timer
+	refresh    bool
+	refreshCmd *exec.Cmd
+	now        func() time.Time
 }
 
 func NewSupervisor(cfg *config.Config) *Supervisor {
@@ -32,18 +34,42 @@ func NewSupervisor(cfg *config.Config) *Supervisor {
 }
 
 func (s *Supervisor) Notify(mode string) {
+	var cancel func()
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if mode != "transparent" {
-		s.stopLocked()
+	if s.timer != nil {
+		s.timer.Stop()
+		s.timer = nil
+	}
+	s.killRefreshLocked()
+	if mode == "transparent" {
+		ports := LoadPorts(s.cfg)
+		key := ports.ISP + "|" + ports.CPE
+		if s.stop != nil && s.last == key {
+			s.mu.Unlock()
+			return
+		}
+		cancel = s.stop
+		s.stop = nil
+		s.last = ""
+		s.refresh = false
+		s.mu.Unlock()
+		if cancel != nil {
+			cancel()
+		}
+		s.beginCapture(ports, key)
 		return
 	}
-	ports := LoadPorts(s.cfg)
-	key := ports.ISP + "|" + ports.CPE
-	if s.stop != nil && s.last == key {
-		return
+	cancel = s.stop
+	s.stop = nil
+	s.last = ""
+	s.refresh = false
+	s.mu.Unlock()
+	if cancel != nil {
+		cancel()
 	}
-	s.stopLocked()
+}
+
+func (s *Supervisor) beginCapture(ports Ports, key string) {
 	if ports.ISP == "" || ports.CPE == "" {
 		return
 	}
@@ -51,25 +77,26 @@ func (s *Supervisor) Notify(mode string) {
 	if st.CECandidates == nil {
 		st.CECandidates = map[string]int{}
 	}
-	s.learned = st
 	cancel := startCapture(ports, func(role Role, frame []byte) {
 		s.onFrame(role, frame)
 	})
+	s.mu.Lock()
+	if s.stop != nil {
+		s.mu.Unlock()
+		cancel()
+		return
+	}
+	s.learned = st
 	s.stop = cancel
 	s.last = key
+	s.mu.Unlock()
 }
 
-func (s *Supervisor) stopLocked() {
-	if s.timer != nil {
-		s.timer.Stop()
-		s.timer = nil
+func (s *Supervisor) killRefreshLocked() {
+	if s.refreshCmd != nil && s.refreshCmd.Process != nil {
+		_ = s.refreshCmd.Process.Kill()
 	}
-	if s.stop != nil {
-		s.stop()
-		s.stop = nil
-	}
-	s.last = ""
-	s.refresh = false
+	s.refreshCmd = nil
 }
 
 func (s *Supervisor) onFrame(role Role, frame []byte) {
@@ -119,14 +146,18 @@ func (s *Supervisor) flush() {
 	if err := SaveLearned(cfg, snap); err != nil {
 		log.Printf("transparent: save learned: %v", err)
 	}
-	refreshDataplane(cfg)
+	s.runRefresh(cfg)
 
 	s.mu.Lock()
 	s.refresh = false
+	s.refreshCmd = nil
 	s.mu.Unlock()
 }
 
-func refreshDataplane(cfg *config.Config) {
+func (s *Supervisor) runRefresh(cfg *config.Config) {
+	if !proxyModeTransparent() {
+		return
+	}
 	script := filepath.Join(cfg.Paths.Root, "deploy", "gfc-routing.sh")
 	if platform.IsOpenWrt() {
 		ow := filepath.Join(cfg.Paths.Root, "deploy", "immortalwrt", "gfc-routing.sh")
@@ -139,5 +170,16 @@ func refreshDataplane(cfg *config.Config) {
 	}
 	cmd := exec.Command("sh", script, "refresh-trans")
 	cmd.Env = os.Environ()
+	s.mu.Lock()
+	if s.stop == nil || !proxyModeTransparent() {
+		s.mu.Unlock()
+		return
+	}
+	s.refreshCmd = cmd
+	s.mu.Unlock()
 	_ = cmd.Run()
+}
+
+func proxyModeTransparent() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("GFC_PROXY_MODE")), "transparent")
 }
