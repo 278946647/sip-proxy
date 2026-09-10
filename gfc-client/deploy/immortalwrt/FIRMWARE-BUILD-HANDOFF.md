@@ -92,6 +92,7 @@
 | OEM root 密码 `Wgh@125434` | r10+（passwd） | |
 | tc/HTB/ifb 进镜像 | r10 选包；**r12 强制验收** | HTB ∈ `kmod-sched-core`；二进制 `/usr/libexec/tc-tiny` |
 | WAN=首块 / LAN=末块 | r11+ | `configure-network-ports.sh` |
+| OEM 管理 LAN `192.168.68.1/24` | 源码已改；进镜像需 rebuild | 避开上游常见 `192.168.1.0/24` |
 | 首启自动扩 root | **r14** | `95` 扩分区重启 → `96` resize2fs；日志 `/etc/gfc-client/expand-rootfs.log` |
 | LAN 首次 DHCP | **r14** | `gfc-lan-dhcp` + 强化 hotplug/firstboot |
 

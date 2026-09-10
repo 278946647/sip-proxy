@@ -50,8 +50,8 @@ LuCI GFC「回滚配置」仅回滚 **数据面**（`/dataplane/rollback`），*
 
 ### 3.2 LAN 默认不触碰
 
-- 除非 `GFC_MANAGE_LAN=1`，不得修改 `network.lan`、`dhcp.lan`。
-- 避免 apply-network 意外改 LAN 网段或 DHCP。
+- OEM 首启（`configure-network-ports.sh`）把管理 LAN 写成 **`192.168.68.1/24`**，避免与上游常见 `192.168.1.0/24` 冲突。
+- 之后除非 `GFC_MANAGE_LAN=1`，`apply-network` 不得再修改 `network.lan`、`dhcp.lan`。
 
 ---
 

@@ -41,7 +41,7 @@
 | 8 | 表/链/hook/默认 mark 与网关相同。匹配条件按入口变化。旁路 `output_mangle_route` **额外** `ip daddr @customer_hosts return`（本机 DNS/ICMP 回给公网客户不得进 `gfctun`）。 |
 | 9 | unbound 旁路 ACL 仅来自 `customer-hosts.json`（`/etc/unbound/conf.d/gfc-bypass-acl.conf`）。禁止 `0.0.0.0/0 allow`。 |
 | 10 | 切换：校验 → 单一 apply → **超时未确认则回滚** WAN + 模式 + nft。须从 **管理 LAN** 操作。 |
-| 11 | ImmortalWrt **OEM 默认 LAN 维持 UCI/出厂段**（常见 `192.168.1.0/24`）。Go/Ubuntu 回退 `192.168.68.0/24` 不是盒子上的生效值。旁路冲突校验以 **设备当前 LAN CIDR** 为准。 |
+| 11 | ImmortalWrt **OEM 出厂管理 LAN = `192.168.68.0/24`（网关 `192.168.68.1`）**，避免与上游 CPE 常见 `192.168.1.0/24` DHCP 冲突。Go/Ubuntu 回退同段。旁路冲突校验仍以 **设备当前 LAN CIDR** 为准（管理员改段后跟运行时）。 |
 
 ---
 

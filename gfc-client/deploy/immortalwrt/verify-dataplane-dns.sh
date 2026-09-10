@@ -12,7 +12,7 @@ ENV_FILE="${GFC_ENV_FILE:-/etc/gfc-client/gfc.env}"
 
 LAN_ADDR="${GFC_LAN_ADDRESS:-$(uci -q get network.lan.ipaddr 2>/dev/null || true)}"
 LAN_ADDR="$(echo "$LAN_ADDR" | tr ' \t' '\n' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -n1)"
-[ -n "$LAN_ADDR" ] || LAN_ADDR="192.168.1.1"
+[ -n "$LAN_ADDR" ] || LAN_ADDR="192.168.68.1"
 LAN_IFACE="${GFC_LAN_IFACE:-$(uci -q get network.lan.device 2>/dev/null || true)}"
 [ -n "$LAN_IFACE" ] || LAN_IFACE="br-lan"
 

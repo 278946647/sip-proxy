@@ -15,7 +15,7 @@
 数据面改前先差异表，等「确认修改」后再改点名文件；
 proxy_mode 仅设备 Web 写；控制面只读（API 拒绝写入为后续任务）；
 @customer_hosts 可为公网；禁止自动灌整个 WAN 前缀；
-OEM 默认 LAN 暂不改；试编不升号（§1.5）。
+OEM 出厂 LAN 为 `192.168.68.0/24`；试编不升号（§1.5）。
 ```
 
 | 文档 | 用途 |
@@ -41,7 +41,7 @@ OEM 默认 LAN 暂不改；试编不升号（§1.5）。
 
 - `transparent` 未开放
 - 平台 REST 仍可能写 DB `proxy_mode`（文档：只读；API 拒绝为后续）
-- ImmortalWrt OEM 默认 LAN **不改**（常见 `192.168.1.0/24`）
+- ImmortalWrt OEM 出厂管理 LAN 为 **`192.168.68.0/24`**（避免与上游 `192.168.1.0/24` 冲突）
 - 进 OEM 镜像的正式数据面发版（Dataplane-Arch / Major）
 
 回滚实现前 1.x 快照：`git checkout v1.1.9`。当前产品 **v2.0.0**（`gfc-client 2.0.0-r1`）；试编仍不额外升号（§1.5）。

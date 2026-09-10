@@ -36,7 +36,7 @@ fi
 BUNDLE="${GFC_LIB:-/etc/gfc-client/lib}/state/config_bundle.json"
 
 [ -n "$LAN_IFACE" ] || LAN_IFACE="br-lan"
-[ -n "$LAN_ADDR" ] || LAN_ADDR="192.168.1.1"
+[ -n "$LAN_ADDR" ] || LAN_ADDR="192.168.68.1"
 
 if id -u "$MOSDNS_USER" >/dev/null 2>&1; then
 	MOSDNS_UID="$(id -u "$MOSDNS_USER" 2>/dev/null || echo "$MOSDNS_UID")"

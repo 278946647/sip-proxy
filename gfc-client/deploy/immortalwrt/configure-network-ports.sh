@@ -100,19 +100,21 @@ if ! uci -q get network.lan >/dev/null 2>&1; then
 fi
 uci set network.lan.device='br-lan'
 uci set network.lan.proto='static'
-# Keep existing IP if already set; otherwise default gateway for OEM.
-if [ -z "$(uci -q get network.lan.ipaddr 2>/dev/null || true)" ]; then
-	uci set network.lan.ipaddr='192.168.1.1'
-	uci set network.lan.netmask='255.255.255.0'
-fi
+# OEM management LAN is 192.168.68.0/24 so it does not collide with
+# upstream CPE DHCP (very often 192.168.1.0/24). Overwrite stock
+# ImmortalWrt 192.168.1.1 — firstboot always starts from that address.
+uci set network.lan.ipaddr='192.168.68.1'
+uci set network.lan.netmask='255.255.255.0'
 
 uci commit network
 
 env_set GFC_WAN_IFACE "$wan_if"
 # Bridge name for nft iifname (not the port).
 env_set GFC_LAN_IFACE "br-lan"
+env_set GFC_LAN_ADDRESS "192.168.68.1"
+env_set GFC_LAN_CIDR "192.168.68.0/24"
 
-echo "configure-network-ports: UCI wan=$wan_if br-lan ports=$lan_if; gfc.env updated"
+echo "configure-network-ports: UCI wan=$wan_if br-lan ports=$lan_if lan=192.168.68.1/24; gfc.env updated"
 
 # Apply if network service exists (firstboot may restart later).
 if [ -x /etc/init.d/network ]; then

@@ -66,12 +66,12 @@ GFC_PLATFORM=immortalwrt gfc-bootstrap --apply-network
 Network changes should be tested with a rollback plan on the target hardware,
 especially when changing LAN bridge members or VLANs.
 
-By default, GFC preserves the current ImmortalWrt LAN/DHCP configuration from
-UCI, for example the stock `192.168.1.1/24` LAN and `192.168.1.0/24` DHCP pool.
-It does not switch LAN to `192.168.68.1/24` unless a GFC network config is
-explicitly saved and applied. Even when `gfc-bootstrap --apply-network` runs,
-GFC will not write `network.lan` or `dhcp.lan` unless `GFC_MANAGE_LAN=1` is set
-or the saved network config contains `manageLan: true`.
+OEM firstboot (`configure-network-ports.sh`) sets management LAN to
+`192.168.68.1/24` so it does not collide with upstream CPE DHCP on
+`192.168.1.0/24`. DHCP offsets stay stock (`start=100` → `.100–.249`).
+After firstboot, `gfc-bootstrap --apply-network` still will not rewrite
+`network.lan` / `dhcp.lan` unless `GFC_MANAGE_LAN=1` is set or the saved
+network config contains `manageLan: true`.
 
 WAN is handled the same way:
 
@@ -105,8 +105,8 @@ For early device testing, compile on Ubuntu/VM and upload binaries plus `deploy`
 and `share` directories:
 
 ```sh
-scp bin/gfc-api bin/gfc-agent bin/gfc-bootstrap root@192.168.1.1:/usr/bin/
-scp -r deploy share root@192.168.1.1:/usr/lib/gfc-client/
+scp bin/gfc-api bin/gfc-agent bin/gfc-bootstrap root@192.168.68.1:/usr/bin/
+scp -r deploy share root@192.168.68.1:/usr/lib/gfc-client/
 ```
 
 Then run on ImmortalWrt:
@@ -134,8 +134,8 @@ GOARCH=arm64 bash deploy/immortalwrt/pack-runtime.sh
 Upload and install on the device:
 
 ```sh
-scp dist/gfc-immortalwrt-runtime-*.tar.gz root@192.168.1.1:/tmp/
-ssh root@192.168.1.1
+scp dist/gfc-immortalwrt-runtime-*.tar.gz root@192.168.68.1:/tmp/
+ssh root@192.168.68.1
 cd /tmp
 tar xzf gfc-immortalwrt-runtime-*.tar.gz
 cd gfc-immortalwrt-runtime-*

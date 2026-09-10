@@ -46,7 +46,7 @@ GFC Client 是企业级 Linux 网关分流盒子，运行于 Ubuntu Server，面
 | dnsmasq | `port=0`，option 6 = LAN 网关 | 曾含 DNS 缓存 |
 | 中外分流 | nft `TO_CN` + mark；sing-box kernel-split `final=direct` | 部分稿写 MosDNS/Geo |
 | 旁路 | `docs/BYPASS_MODE.md`；策略路由必须开 | 勿用旧「bypass 关 mangle」 |
-| OEM 管理 LAN | ImmortalWrt **当前 UCI**（常见 `192.168.1.0/24`）；暂不改出厂默认 | 下文 `192.168.68.0/24` 为 Ubuntu/Go 回退示例 |
+| OEM 管理 LAN | ImmortalWrt 出厂 **`192.168.68.0/24`**（`configure-network-ports.sh`） | 与 Go/Ubuntu 回退同段；运行时仍读 UCI |
 
 ---
 

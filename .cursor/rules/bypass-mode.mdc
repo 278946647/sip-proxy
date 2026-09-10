@@ -56,7 +56,7 @@ alwaysApply: true
 | 客户匹配 | `@customer_hosts`（可为公网） |
 | NAT | 仅管理 LAN SNAT |
 | DNS | LAN hijack + WAN+customer 四条；ACL=hosts |
-| OEM LAN | 暂不改默认段；冲突校验用运行时 LAN CIDR |
+| OEM LAN | 出厂 `192.168.68.0/24`；冲突校验用运行时 LAN CIDR |
 
 ## 用户口令
 

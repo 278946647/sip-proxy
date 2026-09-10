@@ -15,7 +15,7 @@ fi
 # UCI may return multiple addresses; use the first IPv4-looking token.
 LAN_ADDR="$(echo "$LAN_ADDR" | tr ' \t' '\n' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -n1)"
 if [ -z "$LAN_ADDR" ]; then
-	LAN_ADDR="192.168.1.1"
+	LAN_ADDR="192.168.68.1"
 fi
 
 uci set dhcp.@dnsmasq[0].port='0'
