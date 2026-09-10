@@ -102,7 +102,6 @@ func applyIPv4(role Role, srcMAC string, payload []byte, st *Learned) {
 		return
 	}
 	src := net.IP(payload[12:16]).To4()
-	dst := net.IP(payload[16:20]).To4()
 	if src == nil {
 		return
 	}
