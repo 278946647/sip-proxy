@@ -208,9 +208,8 @@ _clear_fwmark_rules() {
 }
 
 apply_wan_nat() {
-	local proxy_mode masq_match isp ce
+	local proxy_mode masq_match isp ce err
 	proxy_mode="$(load_proxy_mode)"
-	nft delete table inet nat 2>/dev/null || true
 	masq_match="    oifname \"$WAN_IFACE\" masquerade"
 	if [ "$proxy_mode" = "bypass" ]; then
 		masq_match="    oifname \"$WAN_IFACE\" ip saddr $LAN_CIDR masquerade"
@@ -231,7 +230,9 @@ apply_wan_nat() {
 		fi
 		[ -n "$masq_match" ] || masq_match="    ip saddr $LAN_CIDR accept"
 	fi
-	nft -f - <<EOF
+	err="$(mktemp)"
+	nft delete table inet nat 2>/dev/null || true
+	if ! nft -f - <<EOF 2>"$err"
 table inet nat {
   chain postrouting {
     type nat hook postrouting priority srcnat; policy accept;
@@ -239,6 +240,20 @@ $masq_match
   }
 }
 EOF
+	then
+		echo "WARN: apply_wan_nat: $(tr '\n' ' ' <"$err")" >&2
+		nft -f - <<EOF 2>/dev/null || true
+table inet nat {
+  chain postrouting {
+    type nat hook postrouting priority srcnat; policy accept;
+    ip saddr $LAN_CIDR accept
+  }
+}
+EOF
+		rm -f "$err"
+		return 1
+	fi
+	rm -f "$err"
 	if [ "$proxy_mode" = "transparent" ]; then
 		apply_trans_dns_snat || true
 	fi
@@ -736,7 +751,8 @@ apply_trans_addrs() {
 			if echo "$def" | grep -q '169\.254\.'; then
 				ip route del default 2>/dev/null || true
 			fi
-			ip route replace default via "$gw" dev "$l3" onlink 2>/dev/null || \
+			ip route replace default via "$gw" dev "$l3" onlink src 172.31.253.1 2>/dev/null || \
+				ip route replace default via "$gw" dev "$l3" onlink 2>/dev/null || \
 				ip route replace default via "$gw" dev "$l3" 2>/dev/null || true
 		fi
 	fi
