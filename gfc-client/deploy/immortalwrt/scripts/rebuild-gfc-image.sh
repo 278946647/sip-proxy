@@ -171,7 +171,8 @@ merge_gfc_config() {
   # Required bandwidth + expand + r16 baseline services must never be silently skipped.
   for pkg in tc-tiny kmod-sched-core kmod-ifb resize2fs parted partx-utils losetup \
     kmod-tcp-bbr kmod-sched luci-theme-bootstrap luci-mod-admin-full \
-    dropbear openssh-client openssh-keygen uhttpd rpcd odhcpd-ipv6only; do
+    dropbear openssh-client openssh-keygen uhttpd rpcd odhcpd-ipv6only \
+    kmod-tun kmod-nft-core kmod-nft-netdev kmod-dummy nftables-json; do
     grep -q "^CONFIG_PACKAGE_${pkg}=y$" "$merged" \
       || die "merge skipped required CONFIG_PACKAGE_${pkg}=y (Kconfig missing? feeds install parted/luci/openssh?)"
   done
@@ -248,7 +249,8 @@ verify_dotconfig() {
   grep -q '^CONFIG_PACKAGE_gfc-client=y$' .config || die ".config missing CONFIG_PACKAGE_gfc-client=y"
   grep -q '^CONFIG_PACKAGE_luci-app-gfc=y$' .config || die ".config missing CONFIG_PACKAGE_luci-app-gfc=y"
   for pkg in tc-tiny kmod-sched-core kmod-ifb kmod-tcp-bbr kmod-sched resize2fs parted partx-utils losetup \
-    luci-theme-bootstrap luci-mod-admin-full dropbear openssh-client openssh-keygen uhttpd rpcd odhcpd-ipv6only; do
+    luci-theme-bootstrap luci-mod-admin-full dropbear openssh-client openssh-keygen uhttpd rpcd odhcpd-ipv6only \
+    kmod-tun kmod-nft-core kmod-nft-netdev kmod-dummy nftables-json; do
     grep -q "^CONFIG_PACKAGE_${pkg}=y$" .config || die ".config missing CONFIG_PACKAGE_${pkg}=y"
     # Must use if/then: under set -e, "grep -q && die" returns 1 when absent and aborts the script.
     if grep -qE "^# CONFIG_PACKAGE_${pkg} is not set$" .config; then
@@ -667,6 +669,7 @@ prepare_package_install_abi() {
   if [[ "${GFC_SKIP_KERNEL_REFRESH:-0}" == "1" ]]; then
     log "GFC_SKIP_KERNEL_REFRESH=1 — only verify existing kernel ipk"
     verify_kernel_ipk_for_install "$hash" "$kernel_ver"
+    verify_trans_kmod_ipks "$hash" "$kernel_ver"
     return 0
   fi
 
@@ -705,6 +708,7 @@ prepare_package_install_abi() {
   make package/kernel/linux/compile -j"$JOBS" V=s \
     || die "package/kernel/linux/compile failed"
   verify_kernel_ipk_for_install "$hash" "$kernel_ver"
+  verify_trans_kmod_ipks "$hash" "$kernel_ver"
 
   # Always ensure base-files ipk exists and contains /etc/rc.common.
   ensure_base_files_ipk
@@ -786,6 +790,32 @@ verify_required_gfc_ipks() {
   done
   [[ "$missing" -eq 0 ]] || die "required GFC packages missing after package/compile — check .config / feeds"
   log "required GFC ipks present"
+}
+
+# Transparent steal: dummy + nft_fwd_netdev must be *this* kernel's ipks, not leftovers.
+verify_trans_kmod_ipks() {
+  local hash="${1:-}" kernel_ver="${2:-}" name ipk dep
+  cd "$IMT_SRC"
+  if [[ -z "$hash" ]]; then
+    hash="$(read_build_vermagic)" || die "no .vermagic under build_dir"
+  fi
+  if [[ -z "$kernel_ver" ]]; then
+    kernel_ver="$(read_build_kernel_ver)" || die "cannot parse kernel version from build_dir"
+  fi
+  for name in kmod-dummy kmod-nft-netdev; do
+    grep -q "^CONFIG_PACKAGE_${name}=y$" .config \
+      || die ".config missing CONFIG_PACKAGE_${name}=y (transparent dataplane)"
+    ipk="$(find bin/targets/x86/64/packages -maxdepth 1 -type f -name "${name}_*.ipk" 2>/dev/null | head -1)"
+    [[ -n "$ipk" ]] || die "missing ${name}_*.ipk in targets/x86/64/packages — CONFIG_DUMMY / NFT_FWD_NETDEV not built"
+    dep="$(
+      tar -xOf "$ipk" ./control.tar.gz 2>/dev/null | tar -xzO ./control 2>/dev/null \
+        || tar -xOf "$ipk" control.tar.gz 2>/dev/null | tar -xzO control 2>/dev/null \
+        || true
+    )"
+    printf '%s\n' "$dep" | grep -E "kernel \(= ${kernel_ver}~${hash}" >/dev/null \
+      || die "${name} ipk is stale (need kernel ${kernel_ver}~${hash}): $(basename "$ipk")"
+  done
+  log "transparent kmod ipks match kernel ${kernel_ver}~${hash}"
 }
 
 # r16 必要 init.d must exist in ORIG (see config/gfc-initd-baseline.txt).
@@ -1290,7 +1320,7 @@ build_image() {
 verify_manifest() {
   cd "$IMT_SRC"
   local manifest="bin/targets/x86/64/immortalwrt-x86-64-generic.manifest"
-  local root orig pkg
+  local root orig pkg dummy_ko fwd_ko
   root="$(find_rootfs_dir)"
   orig="$ROOTFS_ORIG_DIR"
   [[ -f "$manifest" ]] || die "missing $manifest"
@@ -1335,6 +1365,15 @@ verify_manifest() {
     grep -qE "^${pkg}( |$)" "$manifest" \
       || die "manifest missing ${pkg} (r16 baseline — check CONFIG_PACKAGE_${pkg}=y)"
   done
+  for pkg in kmod-dummy kmod-nft-netdev kmod-nft-core kmod-tun nftables-json; do
+    grep -qE "^${pkg}( |$)" "$manifest" \
+      || die "manifest missing ${pkg} (transparent steal — check CONFIG_PACKAGE_${pkg}=y)"
+  done
+  dummy_ko="$(find "$orig/lib/modules" \( -name 'dummy.ko' -o -name 'dummy.ko.gz' -o -name 'dummy.ko.xz' \) 2>/dev/null | head -1)"
+  fwd_ko="$(find "$orig/lib/modules" \( -name 'nft_fwd_netdev.ko' -o -name 'nft_fwd_netdev.ko.gz' -o -name 'nft_fwd_netdev.ko.xz' \) 2>/dev/null | head -1)"
+  [[ -n "$dummy_ko" ]] || die "ORIG missing dummy.ko — ip link add type dummy will fail"
+  [[ -n "$fwd_ko" ]] || die "ORIG missing nft_fwd_netdev.ko — netdev gfc_trans cannot load"
+  log "ORIG trans kmods: $dummy_ko $fwd_ko"
   if ! grep -qE '^odhcpd(-ipv6only)?( |$)' "$manifest"; then
     die "manifest missing odhcpd / odhcpd-ipv6only"
   fi

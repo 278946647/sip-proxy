@@ -49,6 +49,9 @@ func ApplyFrame(role Role, frame []byte, st *Learned) {
 	if st.CEIP == "" && len(st.CECandidates) > 0 {
 		st.CEIP = topCandidate(st.CECandidates, st.GWIP)
 	}
+	if !usableHitchIP(st.CEIP) {
+		st.CEIP = topCandidate(st.CECandidates, st.GWIP)
+	}
 	recomputeState(st)
 }
 
@@ -72,9 +75,9 @@ func applyARP(role Role, srcMAC string, payload []byte, st *Learned) {
 	case RoleCPE:
 		st.CPEMAC = srcMAC
 		st.LearnedCustomer = true
-		if !spa.IsUnspecified() && spaStr != st.GWIP {
+		if usableHitchIP(spaStr) && spaStr != st.GWIP {
 			st.CECandidates[spaStr]++
-			if op == arpOpRequest && tpa != nil && !tpa.IsUnspecified() {
+			if op == arpOpRequest && tpa != nil && !tpa.IsUnspecified() && usableHitchIP(tpa.String()) {
 				// Host ARPing the gateway — strongest CE signal.
 				st.CECandidates[spaStr] += 5
 				if st.GWIP == "" {
@@ -84,9 +87,7 @@ func applyARP(role Role, srcMAC string, payload []byte, st *Learned) {
 		}
 	case RoleISP:
 		st.PEMAC = srcMAC
-		if !spa.IsUnspecified() && !st.LearnedCustomer {
-			st.GWIP = spaStr
-		} else if !spa.IsUnspecified() && spaStr != st.CEIP {
+		if usableHitchIP(spaStr) && spaStr != st.CEIP {
 			st.GWIP = spaStr
 		}
 	}
@@ -111,7 +112,7 @@ func applyIPv4(role Role, srcMAC string, payload []byte, st *Learned) {
 	case RoleCPE:
 		st.CPEMAC = srcMAC
 		st.LearnedCustomer = true
-		if !src.IsUnspecified() && srcStr != st.GWIP && !src.IsMulticast() && !src.IsLoopback() {
+		if usableHitchIP(srcStr) && srcStr != st.GWIP {
 			st.CECandidates[srcStr]++
 		}
 		if proto == 17 {
@@ -119,12 +120,8 @@ func applyIPv4(role Role, srcMAC string, payload []byte, st *Learned) {
 		}
 	case RoleISP:
 		st.PEMAC = srcMAC
-		if !src.IsUnspecified() && srcStr != st.CEIP {
+		if usableHitchIP(srcStr) && srcStr != st.CEIP {
 			st.GWIP = srcStr
-		}
-		if dst != nil && st.CEIP == "" && st.LearnedCustomer {
-			// ISP talking to CE.
-			_ = dst
 		}
 	}
 }
@@ -144,13 +141,13 @@ func applyDHCP(udp []byte, st *Learned) {
 		return
 	}
 	yiaddr := net.IP(bootp[16:20]).To4()
-	if yiaddr != nil && !yiaddr.IsUnspecified() {
+	if yiaddr != nil && usableHitchIP(yiaddr.String()) {
 		st.CECandidates[yiaddr.String()] += 8
 	}
 	// options after magic cookie 236+4
 	opts := bootp[240:]
 	gw := dhcpOptionIP(opts, 3)
-	if gw != "" && st.GWIP == "" {
+	if gw != "" && usableHitchIP(gw) && (st.GWIP == "" || !usableHitchIP(st.GWIP)) {
 		st.GWIP = gw
 	}
 }
@@ -207,7 +204,7 @@ func topCandidate(counts map[string]int, gw string) string {
 	best := ""
 	bestN := 0
 	for ip, n := range counts {
-		if ip == gw {
+		if ip == gw || !usableHitchIP(ip) {
 			continue
 		}
 		if n > bestN {
@@ -215,6 +212,25 @@ func topCandidate(counts map[string]int, gw string) string {
 		}
 	}
 	return best
+}
+
+// usableHitchIP is a unicast address we may hitchhike. Spec: learn hosts only;
+// never 169.254 (APIPA / leftover iface), GFC reserved VIP/hitch, or TUN.
+func usableHitchIP(s string) bool {
+	ip := net.ParseIP(strings.TrimSpace(s)).To4()
+	if ip == nil || ip.IsUnspecified() || ip.IsLoopback() || ip.IsMulticast() || ip.IsLinkLocalUnicast() {
+		return false
+	}
+	if ip[0] >= 224 {
+		return false
+	}
+	if ip[0] == 172 && ip[1] == 31 && (ip[2] == 252 || ip[2] == 253) {
+		return false
+	}
+	if ip[0] == 172 && ip[1] == 19 && ip[2] == 0 && ip[3] <= 3 {
+		return false
+	}
+	return true
 }
 
 func formatMAC(b []byte) string {

@@ -45,6 +45,22 @@ func TestShouldAnswerCEARPOnlyISPOnlyNeverLearned(t *testing.T) {
 	}
 }
 
+func TestSkipLinkLocalCE(t *testing.T) {
+	st := &Learned{}
+	cpeMAC := []byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x01}
+	ll := net.IPv4(169, 254, 57, 225).To4()
+	gw := net.IPv4(192, 168, 88, 1).To4()
+	ApplyFrame(RoleCPE, arpFrame(cpeMAC, ll, gw, arpOpRequest), st)
+	if st.CEIP == "169.254.57.225" {
+		t.Fatal("must not hitch APIPA CE")
+	}
+	ce := net.IPv4(192, 168, 88, 20).To4()
+	ApplyFrame(RoleCPE, arpFrame(cpeMAC, ce, gw, arpOpRequest), st)
+	if st.CEIP != "192.168.88.20" {
+		t.Fatalf("want real CE, got %+v", st)
+	}
+}
+
 func TestApplyFrameIPv4LearnsCE(t *testing.T) {
 	st := &Learned{}
 	cpeMAC := []byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x01}

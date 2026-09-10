@@ -48,6 +48,12 @@ func LoadLearned(cfg *config.Config) Learned {
 		return l
 	}
 	l.State = NormalizeState(l.State)
+	if !usableHitchIP(l.CEIP) {
+		l.CEIP = ""
+	}
+	if !usableHitchIP(l.GWIP) {
+		l.GWIP = ""
+	}
 	return l
 }
 

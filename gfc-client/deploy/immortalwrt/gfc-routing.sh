@@ -83,6 +83,20 @@ is_ipv4() {
 	} { exit 1 }'
 }
 
+# Hitch CE must be a real unicast host (TRANSPARENT_MODE.md: learn hosts, not APIPA).
+is_hitch_ce() {
+	is_ipv4 "$1" || return 1
+	case "$1" in
+		127.*|169.254.*|224.*|225.*|226.*|227.*|228.*|229.*|230.*|231.*|232.*|233.*|234.*|235.*|236.*|237.*|238.*|239.*|255.*)
+			return 1 ;;
+		172.31.252.*|172.31.253.*)
+			return 1 ;;
+		172.19.0.0|172.19.0.1|172.19.0.2|172.19.0.3)
+			return 1 ;;
+	esac
+	return 0
+}
+
 # Comma-separated IPv4 addresses on an iface (no prefix). Bypass DNS pointed
 # at the WAN IP must skip redirect; inet `fib daddr type local` may not match.
 list_iface_ipv4_csv() {
@@ -166,6 +180,7 @@ _clear_fwmark_rules() {
 apply_wan_nat() {
 	local proxy_mode masq_match isp ce
 	proxy_mode="$(load_proxy_mode)"
+	nft delete table inet nat 2>/dev/null || true
 	masq_match="    oifname \"$WAN_IFACE\" masquerade"
 	if [ "$proxy_mode" = "bypass" ]; then
 		masq_match="    oifname \"$WAN_IFACE\" ip saddr $LAN_CIDR masquerade"
@@ -175,7 +190,7 @@ apply_wan_nat() {
 		masq_match=""
 		# Hitch SNAT only. DNS trampoline SNAT is inserted afterwards so a
 		# `ct original ip daddr` syntax miss cannot wipe inet nat (set -e).
-		if is_ipv4 "$ce"; then
+		if is_hitch_ce "$ce"; then
 			if [ -n "$isp" ]; then
 				masq_match="    oifname \"$isp\" snat to $ce"
 			fi
@@ -614,7 +629,7 @@ apply_trans_bridge() {
 }
 
 apply_trans_addrs() {
-	local vip ce gw isp cpe cpe_mac pe_mac cur l3
+	local vip ce gw isp cpe cpe_mac pe_mac l3 def need_hitch
 	vip="$(load_dns_vip)"
 	ce="$(load_trans_ce)"
 	gw="$(load_trans_gw)"
@@ -625,7 +640,7 @@ apply_trans_addrs() {
 	l3="$(trans_l3_dev)"
 	ip addr replace 172.31.253.1/32 dev gfc-ce 2>/dev/null || true
 	ip addr replace "$vip/32" dev gfc-dns 2>/dev/null || true
-	if is_ipv4 "$ce"; then
+	if is_hitch_ce "$ce"; then
 		ip addr replace "$ce/32" dev gfc-ce noprefixroute 2>/dev/null || true
 		ip route del table local "$ce/32" 2>/dev/null || true
 		# Do not route via the enslaved cpe port — L3 must use br-trans.
@@ -638,22 +653,53 @@ apply_trans_addrs() {
 		if [ -n "$cpe" ] && [ -n "$cpe_mac" ]; then
 			bridge fdb replace "$cpe_mac" dev "$cpe" master static 2>/dev/null || true
 		fi
+	else
+		# Drop stale APIPA/leftover CE so we do not hitch 169.254.
+		ce=""
+		ip -4 addr show dev gfc-ce 2>/dev/null | awk '/inet 169.254\./ { print $2 }' | while read -r a; do
+			ip addr del "$a" dev gfc-ce 2>/dev/null || true
+		done
 	fi
-	if is_ipv4 "$gw" && [ -n "$l3" ]; then
+	# Leftover APIPA host routes (previous hitch) must not occupy br-trans.
+	if [ -n "$l3" ]; then
+		ip -4 route show dev "$l3" 2>/dev/null | awk '/169\.254\./ { print $1 }' | while read -r r; do
+			[ -n "$r" ] || continue
+			ip route del "$r" dev "$l3" 2>/dev/null || true
+		done
+	fi
+	if is_hitch_ce "$gw" && [ -n "$l3" ]; then
 		if [ -n "$pe_mac" ]; then
 			ip neigh replace "$gw" lladdr "$pe_mac" nud permanent dev "$l3" 2>/dev/null || true
 			if [ -n "$isp" ]; then
 				bridge fdb replace "$pe_mac" dev "$isp" master static 2>/dev/null || true
 			fi
 		fi
-		# Only install a hitch default when the box has none left (WAN was reused as isp).
-		# Never replace an existing management/WAN default — that blackholes LuCI/SSH/VLESS.
-		cur="$(ip -4 route show default 2>/dev/null | awk '{print $5; exit}')"
-		if [ -z "$cur" ]; then
-			if is_ipv4 "$ce"; then
-				ip route replace default via "$gw" dev "$l3" src "$ce" 2>/dev/null || true
+		# Learned hosts only — GW is not on a connected prefix. `onlink` is mandatory.
+		ip route replace "$gw/32" dev "$l3" 2>/dev/null || true
+		# Hitch default when main has none, leftover APIPA, or an existing br-trans
+		# default that still lacks onlink/src. Never replace another iface's default
+		# (management WAN) — that blackholes LuCI/SSH/VLESS.
+		def="$(ip -4 route show default 2>/dev/null | head -1 || true)"
+		need_hitch=0
+		if [ -z "$def" ]; then
+			need_hitch=1
+		fi
+		if echo "$def" | grep -q '169\.254\.'; then
+			need_hitch=1
+		fi
+		if echo "$def" | grep -q " dev $l3"; then
+			need_hitch=1
+		fi
+		if [ "$need_hitch" -eq 1 ]; then
+			if echo "$def" | grep -q '169\.254\.'; then
+				ip route del default 2>/dev/null || true
+			fi
+			if is_hitch_ce "$ce"; then
+				ip route replace default via "$gw" dev "$l3" onlink src "$ce" 2>/dev/null || \
+					ip route replace default via "$gw" dev "$l3" src "$ce" 2>/dev/null || true
 			else
-				ip route replace default via "$gw" dev "$l3" 2>/dev/null || true
+				ip route replace default via "$gw" dev "$l3" onlink 2>/dev/null || \
+					ip route replace default via "$gw" dev "$l3" 2>/dev/null || true
 			fi
 		fi
 	fi
@@ -685,8 +731,12 @@ apply_trans_netdev() {
 	no_steal="10.0.0.0/8, 127.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16"
 	ce="$(load_trans_ce)"
 	gw="$(load_trans_gw)"
-	is_ipv4 "$ce" && no_steal="$no_steal, $ce"
-	is_ipv4 "$gw" && no_steal="$no_steal, $gw"
+	if is_hitch_ce "$ce"; then
+		no_steal="$no_steal, $ce"
+	fi
+	if is_hitch_ce "$gw"; then
+		no_steal="$no_steal, $gw"
+	fi
 	dns_vip_rules="
     udp dport 53 ip daddr $vip fwd to \"gfc-ce\"
     tcp dport 53 ip daddr $vip fwd to \"gfc-ce\""
@@ -812,6 +862,8 @@ refresh_trans() {
 	ensure_dummy gfc-dns || echo "WARN: gfc-dns missing" >&2
 	apply_trans_sysctl
 	apply_trans_addrs
+	# Learning often completes after start_rules; hitch SNAT must follow CE.
+	apply_wan_nat || echo "WARN: hitch NAT refresh failed" >&2
 	apply_trans_netdev || echo "WARN: netdev gfc_trans refresh failed (L2 fail-open)" >&2
 	write_bypass_unbound_acl
 }
@@ -847,7 +899,7 @@ write_bypass_unbound_acl() {
 		fi
 		if [ "$(load_proxy_mode)" = "transparent" ]; then
 			ce="$(load_trans_ce)"
-			if is_ipv4 "$ce"; then
+			if is_hitch_ce "$ce"; then
 				echo "    access-control: $ce/32 allow"
 			fi
 		fi
@@ -972,7 +1024,7 @@ ${cn_wan_rule}
 ${cn_wan_rule}
     iifname \"gfc-ce\" ct mark $MARK meta mark set ct mark"
 		ce="$(load_trans_ce)"
-		if is_ipv4 "$ce"; then
+		if is_hitch_ce "$ce"; then
 			forward_customer="    ct state new ip saddr $ce ct mark set meta mark"
 			output_customer_rule="    ip daddr $ce return"
 		fi
@@ -1373,6 +1425,14 @@ case "$ACTION" in
 		[ -f "$BYPASS_AUDIT" ] && cat "$BYPASS_AUDIT" || true
 		ip -4 rule list | grep "$TABLE" || true
 		ip -4 route show table "$TABLE" 2>/dev/null || true
+		if [ "$(load_proxy_mode)" = "transparent" ]; then
+			echo "trans_ports isp=$(load_trans_isp) cpe=$(load_trans_cpe)"
+			echo "trans_learned ce=$(load_trans_ce) gw=$(load_trans_gw) cpe_mac=$(load_trans_cpe_mac) pe_mac=$(load_trans_pe_mac)"
+			echo "gfc-ce=$(ip link show gfc-ce >/dev/null 2>&1 && echo yes || echo no) gfc-dns=$(ip link show gfc-dns >/dev/null 2>&1 && echo yes || echo no)"
+			echo "gfc_trans=$(nft list table netdev gfc_trans >/dev/null 2>&1 && echo yes || echo no)"
+			echo "default=$(ip -4 route show default 2>/dev/null | head -1)"
+			echo "modules=$(lsmod 2>/dev/null | awk '/dummy|nft_fwd|nft_netdev/ { printf \"%s \", $1 }')"
+		fi
 		;;
 	*) echo "usage: $0 {start|direct|stop|restart|status|refresh-trans|leave-trans}" >&2; exit 2 ;;
 esac

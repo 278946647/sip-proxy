@@ -102,10 +102,10 @@ func (s *Server) finishProxyModeDataplane(mode string) {
 	if proxymode.NormalizeMode(s.cfg.ProxyMode) != mode {
 		return
 	}
-	if s.trans != nil {
-		s.trans.Notify(mode)
-	}
 	if mode != proxymode.ModeTransparent {
+		if s.trans != nil {
+			s.trans.Notify(mode)
+		}
 		if err := s.runRoutingAction("leave-trans"); err != nil {
 			log.Printf("proxy-mode leave-trans: %v", err)
 		}
@@ -114,6 +114,10 @@ func (s *Server) finishProxyModeDataplane(mode string) {
 		}
 	}
 	s.reloadProxyModeDataplaneLocked(mode)
+	// Capture must bind after isp/cpe are enslaved; AF_PACKET opened first dies on nomaster.
+	if mode == proxymode.ModeTransparent && s.trans != nil {
+		s.trans.Notify(mode)
+	}
 }
 
 func (s *Server) reloadProxyModeDataplane(mode string) {

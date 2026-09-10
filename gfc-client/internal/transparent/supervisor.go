@@ -71,11 +71,16 @@ func (s *Supervisor) Notify(mode string) {
 
 func (s *Supervisor) beginCapture(ports Ports, key string) {
 	if ports.ISP == "" || ports.CPE == "" {
+		log.Printf("transparent: capture skipped; isp/cpe not set")
 		return
 	}
+	log.Printf("transparent: capture start isp=%s cpe=%s", ports.ISP, ports.CPE)
 	st := LoadLearned(s.cfg)
 	if st.CECandidates == nil {
 		st.CECandidates = map[string]int{}
+	}
+	if err := SaveLearned(s.cfg, st); err != nil {
+		log.Printf("transparent: sanitize learned: %v", err)
 	}
 	cancel := startCapture(ports, func(role Role, frame []byte) {
 		s.onFrame(role, frame)
@@ -143,6 +148,8 @@ func (s *Supervisor) flush() {
 	cfg := s.cfg
 	s.mu.Unlock()
 
+	log.Printf("transparent: learned state=%s ce=%s gw=%s cpe_mac=%s pe_mac=%s",
+		snap.State, snap.CEIP, snap.GWIP, snap.CPEMAC, snap.PEMAC)
 	if err := SaveLearned(cfg, snap); err != nil {
 		log.Printf("transparent: save learned: %v", err)
 	}
@@ -177,7 +184,15 @@ func (s *Supervisor) runRefresh(cfg *config.Config) {
 	}
 	s.refreshCmd = cmd
 	s.mu.Unlock()
-	_ = cmd.Run()
+	out, err := cmd.CombinedOutput()
+	msg := strings.TrimSpace(string(out))
+	if err != nil {
+		log.Printf("transparent: refresh-trans: %v (%s)", err, msg)
+		return
+	}
+	if msg != "" {
+		log.Printf("transparent: refresh-trans: %s", msg)
+	}
 }
 
 func proxyModeTransparent() bool {
