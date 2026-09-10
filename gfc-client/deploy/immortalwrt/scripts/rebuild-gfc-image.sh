@@ -792,9 +792,13 @@ verify_required_gfc_ipks() {
   log "required GFC ipks present"
 }
 
-# Transparent steal: dummy + nft_fwd_netdev must be *this* kernel's ipks, not leftovers.
+# Transparent steal: dummy + nft_fwd_netdev must be in this kernel's ipks.
+# OpenWrt kmod filenames omit vermagic (kmod-dummy_6.6.143-r1_*.ipk). ABI is
+# Depends: kernel (=6.6.143~<vermagic>-1) — no space after '=' (kernel ipk uses
+# 6.6.143~<vermagic>-r1). Matching "kernel (= VER~HASH" falsely rejected a
+# just-built ipk and is not a dataplane/contract change.
 verify_trans_kmod_ipks() {
-  local hash="${1:-}" kernel_ver="${2:-}" name ipk dep
+  local hash="${1:-}" kernel_ver="${2:-}" name ipk dep ko
   cd "$IMT_SRC"
   if [[ -z "$hash" ]]; then
     hash="$(read_build_vermagic)" || die "no .vermagic under build_dir"
@@ -812,10 +816,19 @@ verify_trans_kmod_ipks() {
         || tar -xOf "$ipk" control.tar.gz 2>/dev/null | tar -xzO control 2>/dev/null \
         || true
     )"
-    printf '%s\n' "$dep" | grep -E "kernel \(= ${kernel_ver}~${hash}" >/dev/null \
-      || die "${name} ipk is stale (need kernel ${kernel_ver}~${hash}): $(basename "$ipk")"
+    printf '%s\n' "$dep" | grep -F "$hash" >/dev/null \
+      || die "${name} ipk control missing vermagic ${hash}: $(basename "$ipk")"
+    case "$name" in
+      kmod-dummy) ko='dummy.ko' ;;
+      kmod-nft-netdev) ko='nft_fwd_netdev.ko' ;;
+    esac
+    if ! tar -xOf "$ipk" ./data.tar.gz 2>/dev/null | tar -tz 2>/dev/null | grep -E "/${ko}(\.gz|\.xz)?$" >/dev/null; then
+      if ! tar -xOf "$ipk" data.tar.gz 2>/dev/null | tar -tz 2>/dev/null | grep -E "/${ko}(\.gz|\.xz)?$" >/dev/null; then
+        die "${name} ipk has no ${ko} — not an empty leftover"
+      fi
+    fi
   done
-  log "transparent kmod ipks match kernel ${kernel_ver}~${hash}"
+  log "transparent kmod ipks match kernel ${kernel_ver} vermagic ${hash}"
 }
 
 # r16 必要 init.d must exist in ORIG (see config/gfc-initd-baseline.txt).
