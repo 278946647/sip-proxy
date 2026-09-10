@@ -45,6 +45,26 @@ func TestShouldAnswerCEARPOnlyISPOnlyNeverLearned(t *testing.T) {
 	}
 }
 
+func TestApplyFrameIPv4LearnsCE(t *testing.T) {
+	st := &Learned{}
+	cpeMAC := []byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x01}
+	ce := net.IPv4(10, 50, 0, 2).To4()
+	dst := net.IPv4(8, 8, 8, 8).To4()
+	frame := make([]byte, 14+20)
+	copy(frame[6:12], cpeMAC)
+	binary.BigEndian.PutUint16(frame[12:14], etherIPv4)
+	frame[14] = 0x45
+	copy(frame[26:30], ce)
+	copy(frame[30:34], dst)
+	ApplyFrame(RoleCPE, frame, st)
+	if !st.LearnedCustomer || st.CEIP != "10.50.0.2" {
+		t.Fatalf("ipv4 learn: %+v", st)
+	}
+	if st.CPEMAC != "02:00:00:00:00:01" {
+		t.Fatalf("cpe mac %+v", st)
+	}
+}
+
 func TestTaggedAndIPv6Ignored(t *testing.T) {
 	st := &Learned{}
 	frame := make([]byte, 18)

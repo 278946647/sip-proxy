@@ -497,10 +497,17 @@ def run(cmd):
 
 if wan and wan in (isp, cpe):
     run(["ip", "addr", "flush", "dev", wan])
-for name in ("gfc-ce", "gfc-dns"):
-    run(["ip", "link", "add", name, "type", "dummy"])
+def ensure_punt_dev(name):
+    shown = subprocess.run(["ip", "link", "show", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if shown.returncode != 0:
+        add = subprocess.run(["ip", "link", "add", name, "type", "dummy"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if add.returncode != 0:
+            subprocess.run(["ip", "link", "add", name, "type", "bridge"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     run(["ip", "link", "set", name, "up"])
     run(["ip", "link", "set", name, "arp", "off"])
+
+for name in ("gfc-ce", "gfc-dns"):
+    ensure_punt_dev(name)
 run(["ip", "link", "add", "name", "br-trans", "type", "bridge"])
 for dev in (isp, cpe):
     run(["ip", "link", "set", dev, "nomaster"])

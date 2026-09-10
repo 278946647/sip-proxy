@@ -189,6 +189,16 @@ if [ "$PROXY_MODE" = "transparent" ]; then
 	else
 		fail "transparent missing gfc-dns VIP"
 	fi
+	if ip link show gfc-ce >/dev/null 2>&1; then
+		ok "gfc-ce punt device exists"
+	else
+		fail "transparent missing gfc-ce (need kmod-dummy or empty-bridge fallback)"
+	fi
+	if nft list table inet gfc >/dev/null 2>&1; then
+		ok "inet gfc present"
+	else
+		fail "transparent missing inet gfc (steal classification)"
+	fi
 	if ip -4 rule list 2>/dev/null | grep -q '0x2023'; then
 		ok "policy rule fwmark 0x2023"
 	else

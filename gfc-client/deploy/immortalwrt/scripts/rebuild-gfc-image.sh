@@ -770,6 +770,7 @@ verify_required_gfc_ipks() {
     gfc-client luci-app-gfc luci-base luci-theme-bootstrap luci-mod-admin-full
     sing-box unbound-daemon unbound-checkconf dnsmasq-full
     tc-tiny kmod-sched-core kmod-sched kmod-ifb kmod-tcp-bbr kmod-tun kmod-nft-core
+    kmod-nft-netdev kmod-dummy
     nftables-json curl wget-ssl tcpdump iftop bmon autossh dropbear
     openssh-client openssh-keygen uhttpd rpcd odhcpd-ipv6only
     libcap libcap-bin ca-bundle ip-full resize2fs parted partx-utils losetup

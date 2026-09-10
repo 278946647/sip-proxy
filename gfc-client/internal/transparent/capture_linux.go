@@ -10,26 +10,28 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// Learn from ARP and IPv4 (incl. DHCP). ETH_P_ALL copies every cable frame
+// into gfc-api and wedges LuCI/SSH on a live interconnect.
 func startCapture(ports Ports, handle func(Role, []byte)) func() {
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var fds []int
-	open := func(role Role, name string) {
+	open := func(role Role, name string, proto uint16) {
 		if name == "" {
 			return
 		}
-		fd, err := openPacketARP(name)
+		fd, err := openPacket(name, proto)
 		if err != nil {
-			log.Printf("transparent: capture %s: %v", name, err)
+			log.Printf("transparent: capture %s proto=%#x: %v", name, proto, err)
 			return
 		}
 		mu.Lock()
 		fds = append(fds, fd)
 		mu.Unlock()
 		wg.Add(1)
-		go func() {
+		go func(fd int) {
 			defer wg.Done()
-			buf := make([]byte, 128)
+			buf := make([]byte, 2048)
 			for {
 				n, err := unix.Read(fd, buf)
 				if err != nil {
@@ -42,10 +44,12 @@ func startCapture(ports Ports, handle func(Role, []byte)) func() {
 				copy(frame, buf[:n])
 				handle(role, frame)
 			}
-		}()
+		}(fd)
 	}
-	open(RoleISP, ports.ISP)
-	open(RoleCPE, ports.CPE)
+	for _, proto := range []uint16{unix.ETH_P_ARP, unix.ETH_P_IP} {
+		open(RoleISP, ports.ISP, proto)
+		open(RoleCPE, ports.CPE, proto)
+	}
 	return func() {
 		mu.Lock()
 		for _, fd := range fds {
@@ -57,14 +61,12 @@ func startCapture(ports Ports, handle func(Role, []byte)) func() {
 	}
 }
 
-func openPacketARP(name string) (int, error) {
+func openPacket(name string, etherType uint16) (int, error) {
 	iface, err := net.InterfaceByName(name)
 	if err != nil {
 		return -1, err
 	}
-	// ARP only. ETH_P_ALL copies every cable frame into gfc-api and wedges
-	// LuCI/SSH on a live interconnect.
-	proto := htons(unix.ETH_P_ARP)
+	proto := htons(etherType)
 	fd, err := unix.Socket(unix.AF_PACKET, unix.SOCK_RAW, int(proto))
 	if err != nil {
 		return -1, err
