@@ -97,6 +97,36 @@ is_hitch_ce() {
 	return 0
 }
 
+is_rfc1918() {
+	is_ipv4 "$1" || return 1
+	case "$1" in
+		10.*) return 0 ;;
+		192.168.*) return 0 ;;
+		172.1[6-9].*|172.2[0-9].*|172.3[0-1].*) return 0 ;;
+	esac
+	return 1
+}
+
+# Hitch GW must be the on-link ARP next hop, not a transit VPN/CDN address.
+is_onlink_gw() {
+	local ce="$1" gw="$2"
+	is_hitch_ce "$gw" || return 1
+	if [ -n "$ce" ] && [ "$gw" = "$ce" ]; then
+		return 1
+	fi
+	if ! is_hitch_ce "$ce"; then
+		return 0
+	fi
+	if is_rfc1918 "$ce"; then
+		is_rfc1918 "$gw"
+		return $?
+	fi
+	if is_rfc1918 "$gw"; then
+		return 1
+	fi
+	return 0
+}
+
 # Comma-separated IPv4 addresses on an iface (no prefix). Bypass DNS pointed
 # at the WAN IP must skip redirect; inet `fib daddr type local` may not match.
 list_iface_ipv4_csv() {
@@ -660,14 +690,25 @@ apply_trans_addrs() {
 			ip addr del "$a" dev gfc-ce 2>/dev/null || true
 		done
 	fi
-	# Leftover APIPA host routes (previous hitch) must not occupy br-trans.
+	# Drop leftover host routes on br-trans (APIPA, VPN server mistaken as GW).
 	if [ -n "$l3" ]; then
-		ip -4 route show dev "$l3" 2>/dev/null | awk '/169\.254\./ { print $1 }' | while read -r r; do
-			[ -n "$r" ] || continue
-			ip route del "$r" dev "$l3" 2>/dev/null || true
+		ip -4 route show dev "$l3" 2>/dev/null | awk '{print $1}' | while read -r dest; do
+			[ -n "$dest" ] || continue
+			if [ "$dest" = "default" ]; then
+				continue
+			fi
+			if [ "$dest" = "$ce" ] || [ "$dest" = "$ce/32" ]; then
+				continue
+			fi
+			if is_onlink_gw "$ce" "$gw"; then
+				if [ "$dest" = "$gw" ] || [ "$dest" = "$gw/32" ]; then
+					continue
+				fi
+			fi
+			ip route del "$dest" dev "$l3" 2>/dev/null || true
 		done
 	fi
-	if is_hitch_ce "$gw" && [ -n "$l3" ]; then
+	if is_onlink_gw "$ce" "$gw" && [ -n "$l3" ]; then
 		if [ -n "$pe_mac" ]; then
 			ip neigh replace "$gw" lladdr "$pe_mac" nud permanent dev "$l3" 2>/dev/null || true
 			if [ -n "$isp" ]; then
@@ -677,8 +718,9 @@ apply_trans_addrs() {
 		# Learned hosts only — GW is not on a connected prefix. `onlink` is mandatory.
 		ip route replace "$gw/32" dev "$l3" 2>/dev/null || true
 		# Hitch default when main has none, leftover APIPA, or an existing br-trans
-		# default that still lacks onlink/src. Never replace another iface's default
-		# (management WAN) — that blackholes LuCI/SSH/VLESS.
+		# default. Never replace another iface's default (management WAN).
+		# Do not use `src $ce`: CE /32 is removed from local table so the box
+		# does not ARP as CE; hitch SNAT supplies the CE source.
 		def="$(ip -4 route show default 2>/dev/null | head -1 || true)"
 		need_hitch=0
 		if [ -z "$def" ]; then
@@ -694,13 +736,8 @@ apply_trans_addrs() {
 			if echo "$def" | grep -q '169\.254\.'; then
 				ip route del default 2>/dev/null || true
 			fi
-			if is_hitch_ce "$ce"; then
-				ip route replace default via "$gw" dev "$l3" onlink src "$ce" 2>/dev/null || \
-					ip route replace default via "$gw" dev "$l3" src "$ce" 2>/dev/null || true
-			else
-				ip route replace default via "$gw" dev "$l3" onlink 2>/dev/null || \
-					ip route replace default via "$gw" dev "$l3" 2>/dev/null || true
-			fi
+			ip route replace default via "$gw" dev "$l3" onlink 2>/dev/null || \
+				ip route replace default via "$gw" dev "$l3" 2>/dev/null || true
 		fi
 	fi
 }
@@ -734,7 +771,7 @@ apply_trans_netdev() {
 	if is_hitch_ce "$ce"; then
 		no_steal="$no_steal, $ce"
 	fi
-	if is_hitch_ce "$gw"; then
+	if is_onlink_gw "$ce" "$gw"; then
 		no_steal="$no_steal, $gw"
 	fi
 	dns_vip_rules="
@@ -775,7 +812,7 @@ apply_trans_netdev() {
 		exclude_set="
     elements = { $exclude }"
 	fi
-	nft -f - <<EOF
+	if ! nft -f - <<EOF
 table netdev gfc_trans {
   set hitch_reply {
     type inet_proto . ipv4_addr . inet_service . ipv4_addr . inet_service
@@ -820,6 +857,14 @@ $mac_cpe
   }
 }
 EOF
+	then
+		echo "WARN: nft netdev gfc_trans failed (need kmod-nft-netdev / nft_fwd_netdev)" >&2
+		return 1
+	fi
+	if ! nft list table netdev gfc_trans >/dev/null 2>&1; then
+		echo "WARN: netdev gfc_trans missing after load (need kmod-nft-netdev)" >&2
+		return 1
+	fi
 	fill_netdev_no_steal
 	echo "transparent netdev gfc_trans: isp=$isp cpe=$cpe hijack=$hijack tun=$tun_up vip=$vip"
 }

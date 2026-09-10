@@ -59,6 +59,35 @@ func TestSkipLinkLocalCE(t *testing.T) {
 	if st.CEIP != "192.168.88.20" {
 		t.Fatalf("want real CE, got %+v", st)
 	}
+	if st.GWIP != "192.168.88.1" {
+		t.Fatalf("want ARP gateway, got %+v", st)
+	}
+}
+
+func TestISPTransitIPv4DoesNotBecomeGW(t *testing.T) {
+	st := &Learned{}
+	cpeMAC := []byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x01}
+	peMAC := []byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x02}
+	ce := net.IPv4(192, 168, 88, 193).To4()
+	gw := net.IPv4(192, 168, 88, 1).To4()
+	vpn := net.IPv4(116, 63, 224, 146).To4()
+	ApplyFrame(RoleCPE, arpFrame(cpeMAC, ce, gw, arpOpRequest), st)
+	if st.CEIP != "192.168.88.193" || st.GWIP != "192.168.88.1" {
+		t.Fatalf("after cpe arp: %+v", st)
+	}
+	frame := make([]byte, 14+20)
+	copy(frame[6:12], peMAC)
+	binary.BigEndian.PutUint16(frame[12:14], etherIPv4)
+	frame[14] = 0x45
+	copy(frame[26:30], vpn)
+	copy(frame[30:34], ce)
+	ApplyFrame(RoleISP, frame, st)
+	if st.GWIP != "192.168.88.1" {
+		t.Fatalf("transit IPv4 must not become GW, got %+v", st)
+	}
+	if st.PEMAC != "02:00:00:00:00:02" {
+		t.Fatalf("pe mac %+v", st)
+	}
 }
 
 func TestApplyFrameIPv4LearnsCE(t *testing.T) {

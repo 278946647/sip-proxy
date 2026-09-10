@@ -52,6 +52,9 @@ func ApplyFrame(role Role, frame []byte, st *Learned) {
 	if !usableHitchIP(st.CEIP) {
 		st.CEIP = topCandidate(st.CECandidates, st.GWIP)
 	}
+	if !onLinkGW(st.CEIP, st.GWIP) {
+		st.GWIP = ""
+	}
 	recomputeState(st)
 }
 
@@ -80,14 +83,15 @@ func applyARP(role Role, srcMAC string, payload []byte, st *Learned) {
 			if op == arpOpRequest && tpa != nil && !tpa.IsUnspecified() && usableHitchIP(tpa.String()) {
 				// Host ARPing the gateway — strongest CE signal.
 				st.CECandidates[spaStr] += 5
-				if st.GWIP == "" {
-					st.GWIP = tpa.String()
-				}
 			}
+		}
+		// GW is the on-link next hop the CE is ARPing, not transit IPv4.
+		if op == arpOpRequest && tpa != nil && onLinkGW(st.CEIP, tpa.String()) {
+			st.GWIP = tpa.String()
 		}
 	case RoleISP:
 		st.PEMAC = srcMAC
-		if usableHitchIP(spaStr) && spaStr != st.CEIP {
+		if onLinkGW(st.CEIP, spaStr) {
 			st.GWIP = spaStr
 		}
 	}
@@ -119,9 +123,7 @@ func applyIPv4(role Role, srcMAC string, payload []byte, st *Learned) {
 		}
 	case RoleISP:
 		st.PEMAC = srcMAC
-		if usableHitchIP(srcStr) && srcStr != st.CEIP {
-			st.GWIP = srcStr
-		}
+		// IPv4 src on isp is transit (VPN/CDN). GW comes from ARP/DHCP only.
 	}
 }
 
@@ -146,7 +148,7 @@ func applyDHCP(udp []byte, st *Learned) {
 	// options after magic cookie 236+4
 	opts := bootp[240:]
 	gw := dhcpOptionIP(opts, 3)
-	if gw != "" && usableHitchIP(gw) && (st.GWIP == "" || !usableHitchIP(st.GWIP)) {
+	if gw != "" && onLinkGW(st.CEIP, gw) && (st.GWIP == "" || !onLinkGW(st.CEIP, st.GWIP)) {
 		st.GWIP = gw
 	}
 }
@@ -230,6 +232,37 @@ func usableHitchIP(s string) bool {
 		return false
 	}
 	return true
+}
+
+func isRFC1918(ip net.IP) bool {
+	ip = ip.To4()
+	if ip == nil {
+		return false
+	}
+	if ip[0] == 10 {
+		return true
+	}
+	if ip[0] == 172 && ip[1] >= 16 && ip[1] <= 31 {
+		return true
+	}
+	return ip[0] == 192 && ip[1] == 168
+}
+
+// onLinkGW is an ARP/DHCP next hop we may hitch via. Spec: GW from isp ARP,
+// not from transit IPv4. Private CE cannot hitch a public VPN/CDN address.
+func onLinkGW(ce, gw string) bool {
+	if !usableHitchIP(gw) || gw == strings.TrimSpace(ce) {
+		return false
+	}
+	ceIP := net.ParseIP(strings.TrimSpace(ce)).To4()
+	gwIP := net.ParseIP(strings.TrimSpace(gw)).To4()
+	if gwIP == nil {
+		return false
+	}
+	if ceIP == nil {
+		return true
+	}
+	return isRFC1918(ceIP) == isRFC1918(gwIP)
 }
 
 func formatMAC(b []byte) string {

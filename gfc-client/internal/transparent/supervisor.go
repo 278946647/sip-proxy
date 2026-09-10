@@ -95,6 +95,7 @@ func (s *Supervisor) beginCapture(ports Ports, key string) {
 	s.stop = cancel
 	s.last = key
 	s.mu.Unlock()
+	s.runRefresh(s.cfg)
 }
 
 func (s *Supervisor) killRefreshLocked() {

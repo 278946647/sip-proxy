@@ -51,7 +51,7 @@ func LoadLearned(cfg *config.Config) Learned {
 	if !usableHitchIP(l.CEIP) {
 		l.CEIP = ""
 	}
-	if !usableHitchIP(l.GWIP) {
+	if !onLinkGW(l.CEIP, l.GWIP) {
 		l.GWIP = ""
 	}
 	return l
