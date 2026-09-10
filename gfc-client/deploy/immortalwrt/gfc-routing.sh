@@ -434,7 +434,12 @@ restore_wan_uci_auto() {
 		uci -q delete network.wan.disabled
 		changed=1
 	fi
-	[ "$changed" = "1" ] && uci -q commit network
+	# Must not be `[ x ] && commit` — under set -e that returns 1 when unchanged
+	# and aborts start_rules after stop_rules already deleted inet nat/gfc.
+	if [ "$changed" = "1" ]; then
+		uci -q commit network || true
+	fi
+	return 0
 }
 
 restore_gateway_sysctl() {
@@ -461,6 +466,13 @@ teardown_trans_bridge() {
 	isp="$(load_trans_isp)"
 	cpe="$(load_trans_cpe)"
 	nft delete table netdev gfc_trans 2>/dev/null || true
+	# Gateway/bypass start always calls this. Leftover transparent-ports.json
+	# (e.g. isp_port=eth0) must not nomaster the live WAN when br-trans is gone.
+	if ! ip link show br-trans >/dev/null 2>&1 && ! ip link show gfc-ce >/dev/null 2>&1; then
+		restore_gateway_sysctl
+		restore_wan_uci_auto
+		return 0
+	fi
 	if [ -n "$isp" ]; then
 		ip link set "$isp" nomaster 2>/dev/null || true
 		ip link set "$isp" promisc off 2>/dev/null || true
@@ -1233,7 +1245,8 @@ start_rules() {
 		if command -v uci >/dev/null 2>&1 && [ "$(uci -q get network.wan.auto 2>/dev/null || true)" = "0" ]; then
 			need_wan=1
 		fi
-		teardown_trans_bridge
+		# stop_rules already deleted inet nat/gfc. Teardown must not abort start.
+		teardown_trans_bridge || echo "WARN: teardown_trans_bridge failed; continuing NAT apply" >&2
 		if [ "$need_wan" = "1" ]; then
 			ifup wan 2>/dev/null || true
 		fi
