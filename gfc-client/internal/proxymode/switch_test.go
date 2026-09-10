@@ -43,8 +43,8 @@ func TestSwitchApplyConfirm(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(cfg.Paths.Etc, fileCustomerHosts)); err != nil {
 		t.Fatal(err)
 	}
-	if len(applied) != 1 {
-		t.Fatalf("applied=%d", len(applied))
+	if len(applied) != 0 {
+		t.Fatalf("WAN UCI apply is deferred off the HTTP path, applied=%d", len(applied))
 	}
 
 	st, err = c.Confirm(st.Pending.Token)
@@ -216,18 +216,15 @@ func TestSwitchGatewayRestoresDHCPFromBypass(t *testing.T) {
 	if st.Pending == nil || st.Pending.ToMode != ModeGateway {
 		t.Fatalf("pending=%+v", st.Pending)
 	}
-	if len(applied) != 1 {
-		t.Fatalf("applied=%d", len(applied))
-	}
-	if applied[0]["mode"] != "dhcp" {
-		t.Fatalf("wan mode=%v", applied[0]["mode"])
-	}
-	if addr, _ := applied[0]["address"].(string); addr != "" {
-		t.Fatalf("address leftover %q", addr)
+	if len(applied) != 0 {
+		t.Fatalf("WAN UCI apply is deferred off the HTTP path, applied=%d", len(applied))
 	}
 	wan := c.loadWANFile()
 	if wan["mode"] != "dhcp" {
 		t.Fatalf("json mode=%v", wan["mode"])
+	}
+	if addr, _ := wan["address"].(string); addr != "" {
+		t.Fatalf("address leftover %q", addr)
 	}
 	if wan["interface"] != "eth0" {
 		t.Fatalf("interface=%v", wan["interface"])
@@ -251,8 +248,12 @@ func TestSwitchGatewayCleansLeftoverStatic(t *testing.T) {
 	if _, err := c.Apply(SwitchRequest{Mode: ModeGateway}); err != nil {
 		t.Fatal(err)
 	}
-	if len(applied) != 1 || applied[0]["mode"] != "dhcp" {
-		t.Fatalf("applied=%v", applied)
+	if len(applied) != 0 {
+		t.Fatalf("WAN UCI apply is deferred, applied=%v", applied)
+	}
+	wan := c.loadWANFile()
+	if wan["mode"] != "dhcp" {
+		t.Fatalf("json mode=%v", wan["mode"])
 	}
 }
 
@@ -272,6 +273,26 @@ func TestSwitchGatewayKeepsDHCPWithoutReapply(t *testing.T) {
 	}
 	if applied != 0 {
 		t.Fatalf("WAN should not reapply when already gateway+dhcp, got %d", applied)
+	}
+}
+
+func TestSwitchGatewayRestoresWhenUCIStillStatic(t *testing.T) {
+	cfg := testCfg(t)
+	if err := writeJSON(wanPath(cfg), map[string]any{"mode": "dhcp", "interface": "eth0"}); err != nil {
+		t.Fatal(err)
+	}
+	c := NewController(cfg, nil, func() string { return cfg.LanCIDR })
+	c.SetUCIWANMode(func() string { return "static" })
+
+	if _, err := c.Apply(SwitchRequest{Mode: ModeGateway}); err != nil {
+		t.Fatal(err)
+	}
+	wan := c.loadWANFile()
+	if wan["mode"] != "dhcp" {
+		t.Fatalf("json mode=%v", wan["mode"])
+	}
+	if addr, _ := wan["address"].(string); addr != "" {
+		t.Fatalf("address leftover %q", addr)
 	}
 }
 

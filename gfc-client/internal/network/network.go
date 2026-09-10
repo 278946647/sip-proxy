@@ -254,6 +254,66 @@ func (m *Manager) ApplyWAN(body map[string]any) (map[string]any, error) {
 	return m.saveNetworkConfig("network-wan.json", cfg, true)
 }
 
+// ApplyWANInterface writes WAN JSON and reloads only the WAN interface.
+// It must not restart netifd/dnsmasq: that flaps LAN and aborts LuCI XHR (wget exit 8).
+func (m *Manager) ApplyWANInterface(body map[string]any) (map[string]any, error) {
+	cfg := m.LoadWAN()
+	for k, v := range body {
+		cfg[k] = v
+	}
+	if iface, ok := cfg["interface"].(string); ok && strings.TrimSpace(iface) != "" {
+		_ = m.saveRoles(map[string]any{"wan": strings.TrimSpace(iface)})
+	}
+	path := filepath.Join(m.cfg.Paths.Etc, "network-wan.json")
+	raw, _ := json.MarshalIndent(cfg, "", "  ")
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		return nil, err
+	}
+	if !platform.IsOpenWrt() {
+		return map[string]any{"ok": true, "config": cfg, "message": "saved"}, nil
+	}
+	if _, err := exec.LookPath("uci"); err != nil {
+		return nil, fmt.Errorf("uci not found; not an OpenWrt/ImmortalWrt runtime")
+	}
+	if err := m.applyOpenWrtWAN(cfg); err != nil {
+		return nil, err
+	}
+	if out, err := uci("commit", "network"); err != nil {
+		return nil, fmt.Errorf("uci commit network: %s: %w", out, err)
+	}
+	if err := reloadOpenWrtWAN(); err != nil {
+		return map[string]any{"ok": false, "config": cfg, "message": err.Error()}, err
+	}
+	return map[string]any{"ok": true, "config": cfg}, nil
+}
+
+func (m *Manager) UCIWANMode() string {
+	if !platform.IsOpenWrt() {
+		return ""
+	}
+	cfg, err := m.readWANFromUCI()
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(text(cfg["mode"])))
+}
+
+func reloadOpenWrtWAN() error {
+	if _, err := exec.LookPath("ubus"); err == nil {
+		out, err := exec.Command("ubus", "call", "network", "reload").CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("ubus network reload: %s: %w", strings.TrimSpace(string(out)), err)
+		}
+		_ = exec.Command("ifup", "wan").Run()
+		return nil
+	}
+	out, err := exec.Command("ifup", "wan").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("ifup wan: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+	return nil
+}
+
 func (m *Manager) ApplyDHCP(body map[string]any) (map[string]any, error) {
 	cfg := m.LoadDHCP()
 	for k, v := range body {

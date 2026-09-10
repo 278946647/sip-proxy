@@ -30,6 +30,7 @@ type Controller struct {
 	lanCIDR  func() string
 	applyWAN WANApplyFunc
 	applyMode ModeApplyFunc
+	uciWANMode func() string
 
 	mu    sync.Mutex
 	timer *time.Timer
@@ -53,6 +54,10 @@ func NewController(cfg *config.Config, applyWAN WANApplyFunc, lanCIDR func() str
 
 func (c *Controller) SetDataplaneApply(fn ModeApplyFunc) {
 	c.applyMode = fn
+}
+
+func (c *Controller) SetUCIWANMode(fn func() string) {
+	c.uciWANMode = fn
 }
 
 type Status struct {
@@ -124,7 +129,7 @@ func (c *Controller) Apply(req SwitchRequest) (Status, error) {
 	wanCurrent := c.loadWANFile()
 	if req.Mode == ModeGateway && fromMode == ModeGateway && req.DNSHijack == nil {
 		pending, _ := LoadPending(c.cfg)
-		if pending == nil && !shouldRestoreGatewayWAN(fromMode, wanCurrent) {
+		if pending == nil && !c.shouldRestoreGatewayWAN(fromMode, wanCurrent) {
 			return c.statusLocked(), nil
 		}
 	}
@@ -183,7 +188,7 @@ func (c *Controller) Apply(req SwitchRequest) (Status, error) {
 			wanAfter["interface"] = iface
 		}
 		applyWANNow = true
-	} else if req.Mode == ModeGateway && shouldRestoreGatewayWAN(fromMode, wanCurrent) {
+	} else if req.Mode == ModeGateway && c.shouldRestoreGatewayWAN(fromMode, wanCurrent) {
 		// Gateway default WAN is DHCP. Bypass writes static into network-wan.json + UCI;
 		// leaving that mode (or leftover static while already in gateway) must clear it.
 		wanAfter = gatewayWANConfig(wanAfter)
@@ -231,15 +236,9 @@ func (c *Controller) Apply(req SwitchRequest) (Status, error) {
 			_ = ClearPending(c.cfg)
 			return Status{}, err
 		}
-		// Leaving transparent: netifd must not program WAN until br-trans is torn down.
-		// finishProxyModeDataplane rebinds UCI after leave-trans.
-		if NormalizeMode(fromMode) != ModeTransparent && c.applyWAN != nil {
-			if _, err := c.applyWAN(wanAfter); err != nil {
-				_ = c.restoreFiles(pending)
-				_ = ClearPending(c.cfg)
-				return Status{}, fmt.Errorf("WAN 应用失败，已回滚文件: %w", err)
-			}
-		}
+		// Do not apply UCI in this request. ApplyWANInterface restarts nothing, but
+		// ifup/ubus still takes seconds; LuCI wget/XHR would abort (exit 8) and hide
+		// the error. finishProxyModeDataplane applies WAN after the HTTP response.
 	}
 
 	applyFn := c.applyMode
@@ -476,11 +475,17 @@ func gatewayWANConfig(existing map[string]any) map[string]any {
 	return out
 }
 
-func shouldRestoreGatewayWAN(fromMode string, current map[string]any) bool {
+func (c *Controller) shouldRestoreGatewayWAN(fromMode string, current map[string]any) bool {
 	if NormalizeMode(fromMode) != ModeGateway {
 		return true
 	}
-	return wanModeOf(current) == "static"
+	if wanModeOf(current) == "static" {
+		return true
+	}
+	if c.uciWANMode != nil && c.uciWANMode() == "static" {
+		return true
+	}
+	return false
 }
 
 func wanModeOf(cfg map[string]any) string {

@@ -73,8 +73,9 @@ func NewServer(cfg *config.Config, st *store.Store, mode string) *Server {
 		unboundMgr: unboundmgr.New(cfg),
 		mode:       mode,
 	}
-	s.proxyMode = proxymode.NewController(cfg, netMgr.ApplyWAN, s.lanCIDR)
+	s.proxyMode = proxymode.NewController(cfg, netMgr.ApplyWANInterface, s.lanCIDR)
 	s.proxyMode.SetDataplaneApply(s.applyProxyModeDataplane)
+	s.proxyMode.SetUCIWANMode(netMgr.UCIWANMode)
 	s.proxyMode.Resume()
 	s.trans = transparent.NewSupervisor(cfg)
 	s.trans.Notify(proxymode.NormalizeMode(cfg.ProxyMode))
@@ -101,7 +102,6 @@ func (s *Server) finishProxyModeDataplane(mode string) {
 	if proxymode.NormalizeMode(s.cfg.ProxyMode) != mode {
 		return
 	}
-	hadTrans := transBridgePresent()
 	if s.trans != nil {
 		s.trans.Notify(mode)
 	}
@@ -109,18 +109,11 @@ func (s *Server) finishProxyModeDataplane(mode string) {
 		if err := s.runRoutingAction("leave-trans"); err != nil {
 			log.Printf("proxy-mode leave-trans: %v", err)
 		}
-		if hadTrans {
-			if _, err := s.network.ApplyWAN(s.network.LoadWAN()); err != nil {
-				log.Printf("proxy-mode rebind WAN after leave-trans: %v", err)
-			}
+		if _, err := s.network.ApplyWANInterface(s.network.LoadWAN()); err != nil {
+			log.Printf("proxy-mode WAN reload: %v", err)
 		}
 	}
 	s.reloadProxyModeDataplaneLocked(mode)
-}
-
-func transBridgePresent() bool {
-	_, err := os.Stat("/sys/class/net/br-trans")
-	return err == nil
 }
 
 func (s *Server) reloadProxyModeDataplane(mode string) {
@@ -1076,6 +1069,7 @@ func (s *Server) putSettings(c *gin.Context) {
 
 	result := map[string]any{"saved": true}
 	routingChanged := false
+	_, hasProxyMode := body["proxy_mode"]
 
 	if mode, ok := body["routing_mode"].(string); ok && strings.TrimSpace(mode) != "" {
 		mode = payload.NormalizeRoutingMode(mode)
@@ -1090,20 +1084,27 @@ func (s *Server) putSettings(c *gin.Context) {
 		} else {
 			result["synced"] = true
 		}
-		ok, msg := s.engine.ReloadRoutingPolicy()
-		result["routing_apply"] = map[string]any{"ok": ok, "message": msg}
-		routingChanged = true
+		if hasProxyMode {
+			// Vue 保存设置 always sends routing_mode + proxy_mode. nft reload belongs
+			// in finishProxyModeDataplane; doing it here exceeds LuCI wget / axios.
+			result["routing_apply"] = map[string]any{"ok": true, "message": "deferred with proxy-mode"}
+			routingChanged = true
+		} else {
+			ok, msg := s.engine.ReloadRoutingPolicy()
+			result["routing_apply"] = map[string]any{"ok": ok, "message": msg}
+			routingChanged = true
+		}
 	}
 
 	if _, ok := body["proxy_mode"]; ok {
 		req, err := switchRequestFromBody(body, s.lanCIDR())
 		if err != nil {
-			s.fail(c, 400, err.Error())
+			s.failLuCI(c, err.Error())
 			return
 		}
 		st, err := s.proxyMode.Apply(req)
 		if err != nil {
-			s.fail(c, 400, err.Error())
+			s.failLuCI(c, err.Error())
 			return
 		}
 		result["proxy_mode"] = st
@@ -1154,17 +1155,17 @@ func (s *Server) getProxyMode(c *gin.Context) {
 func (s *Server) putProxyMode(c *gin.Context) {
 	var body map[string]any
 	if err := c.BindJSON(&body); err != nil {
-		s.fail(c, 400, err.Error())
+		s.failLuCI(c, err.Error())
 		return
 	}
 	req, err := switchRequestFromBody(body, s.lanCIDR())
 	if err != nil {
-		s.fail(c, 400, err.Error())
+		s.failLuCI(c, err.Error())
 		return
 	}
 	st, err := s.proxyMode.Apply(req)
 	if err != nil {
-		s.fail(c, 400, err.Error())
+		s.failLuCI(c, err.Error())
 		return
 	}
 	s.ok(c, st)
@@ -1177,7 +1178,7 @@ func (s *Server) confirmProxyMode(c *gin.Context) {
 	_ = c.BindJSON(&body)
 	st, err := s.proxyMode.Confirm(body.Token)
 	if err != nil {
-		s.fail(c, 400, err.Error())
+		s.failLuCI(c, err.Error())
 		return
 	}
 	if syncErr := cpsync.SyncRuntime(s.cfg, s.store, cpsync.Runtime{ProxyMode: st.Mode}); syncErr != nil {
@@ -1190,7 +1191,7 @@ func (s *Server) confirmProxyMode(c *gin.Context) {
 func (s *Server) rollbackProxyMode(c *gin.Context) {
 	st, err := s.proxyMode.Rollback()
 	if err != nil {
-		s.fail(c, 500, err.Error())
+		s.failLuCI(c, err.Error())
 		return
 	}
 	s.ok(c, st)
