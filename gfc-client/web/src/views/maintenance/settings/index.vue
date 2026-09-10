@@ -176,6 +176,7 @@ onUnmounted(() => {
           <option value="transparent">transparent 透明模式</option>
         </select>
       </label>
+      <p v-if="form.proxy_mode === 'gateway'" class="hint">网关 WAN 默认 DHCP。从旁路切回会清除手填的静态地址；透明切回会重新拉起 DHCP。PPPoE/静态仅在保持网关模式时通过「网络 → WAN」页设置。</p>
       <template v-if="form.proxy_mode === 'bypass'">
         <label>旁路 WAN IP<input v-model="form.wan_address" placeholder="例如 10.20.30.2" /></label>
         <label>旁路 WAN 掩码<input v-model="form.wan_netmask" placeholder="例如 255.255.255.0" /></label>

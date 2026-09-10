@@ -57,12 +57,10 @@ def load_proxy_mode() -> str:
             file_mode = str(data.get("mode", "")).lower()
         except (OSError, json.JSONDecodeError):
             file_mode = ""
-    if env_mode == "bypass":
-        return "bypass"
-    if file_mode in ("bypass", "transparent"):
-        return file_mode
-    if env_mode in ("gateway", "transparent"):
+    if env_mode in ("gateway", "bypass", "transparent"):
         return env_mode
+    if file_mode in ("gateway", "bypass", "transparent"):
+        return file_mode
     return "gateway"
 
 

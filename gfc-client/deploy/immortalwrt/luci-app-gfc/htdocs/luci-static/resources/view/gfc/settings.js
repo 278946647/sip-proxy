@@ -221,9 +221,13 @@ return view.extend({
 			])
 		]);
 
+		var gwHint = E('p', { 'class': 'hint' }, [
+			'网关 WAN 默认 DHCP。从旁路切回会清除手填的静态地址；透明切回会重新拉起 DHCP。'
+		]);
 		function toggleBypass() {
 			bypassFields.style.display = proxyModeSelect.value === 'bypass' ? '' : 'none';
 			transFields.style.display = proxyModeSelect.value === 'transparent' ? '' : 'none';
+			gwHint.style.display = proxyModeSelect.value === 'gateway' ? '' : 'none';
 		}
 		proxyModeSelect.addEventListener('change', toggleBypass);
 		toggleBypass();
@@ -371,9 +375,10 @@ return view.extend({
 						proxyModeSelect,
 						' ',
 						proxyModeBtn,
-						E('div', { 'class': 'hint' }, [ '仅本机 Web 可写。旁路填 WAN 静态与 customer_hosts；透明填 isp/cpe 口角色。控制面只读上报。' ])
+						E('div', { 'class': 'hint' }, [ '仅本机 Web 可写。网关 WAN=DHCP；旁路填 WAN 静态与 customer_hosts；透明填 isp/cpe 口角色。控制面只读上报。' ])
 					])
 				]),
+				gwHint,
 				pendingBox,
 				bypassFields,
 				transFields,

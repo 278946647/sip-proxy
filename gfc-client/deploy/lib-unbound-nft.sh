@@ -51,7 +51,7 @@ migrate_unbound_user() {
 write_gfc_nft_dns_conf() {
   local lan="$1" port="$2" outfile="$3"
   local wan="${WAN:-${GFC_WAN_IFACE:-}}"
-  local mode="${GFC_PROXY_MODE:-gateway}"
+  local mode="${GFC_PROXY_MODE:-}"
   local hosts_file="${GFC_ETC:-/etc/gfc-client}/customer-hosts.json"
   local mode_file="${GFC_ETC:-/etc/gfc-client}/proxy-mode.json"
   local dns_file="${GFC_ETC:-/etc/gfc-client}/dns-hijack.json"
@@ -65,8 +65,12 @@ if Path(mode_file).is_file():
         file_mode = str(json.loads(Path(mode_file).read_text()).get("mode") or "").lower()
     except (OSError, json.JSONDecodeError, TypeError):
         file_mode = ""
-if mode not in ("bypass", "transparent") and file_mode in ("bypass", "transparent"):
+if mode in ("gateway", "bypass", "transparent"):
+    pass
+elif file_mode in ("gateway", "bypass", "transparent"):
     mode = file_mode
+else:
+    mode = "gateway"
 hosts = []
 if Path(hosts_file).is_file():
     try:

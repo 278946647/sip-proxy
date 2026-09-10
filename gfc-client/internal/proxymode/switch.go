@@ -17,7 +17,7 @@ import (
 const (
 	DataplaneNoteP2     = "旁路数据面按 NFT §9.3 Option B 应用。请从管理 LAN 确认；超时将回滚 WAN、GFC_PROXY_MODE 与 nft。"
 	DataplaneNoteTrans  = "透明数据面按 NFT §9.4（netdev gfc_trans）。请从管理 LAN 确认；超时将回滚口角色、GFC_PROXY_MODE 与 nft。已学到客户后盒子不答 CE ARP。"
-	DataplaneNoteGW     = "网关模式：客户从管理/业务 LAN 入向。DNS 劫持开关与旁路/透明共用。"
+	DataplaneNoteGW     = "网关模式：客户从管理/业务 LAN 入向。WAN 默认 DHCP；从旁路/透明切回时会清掉旁路手填的静态地址。DNS 劫持开关与旁路/透明共用。"
 )
 
 type WANApplyFunc func(body map[string]any) (map[string]any, error)
@@ -120,9 +120,11 @@ func (c *Controller) Apply(req SwitchRequest) (Status, error) {
 			return Status{}, err
 		}
 	}
-	if req.Mode == ModeGateway && CommittedMode(c.cfg) == ModeGateway && req.DNSHijack == nil {
+	fromMode := CommittedMode(c.cfg)
+	wanCurrent := c.loadWANFile()
+	if req.Mode == ModeGateway && fromMode == ModeGateway && req.DNSHijack == nil {
 		pending, _ := LoadPending(c.cfg)
-		if pending == nil {
+		if pending == nil && !shouldRestoreGatewayWAN(fromMode, wanCurrent) {
 			return c.statusLocked(), nil
 		}
 	}
@@ -169,7 +171,8 @@ func (c *Controller) Apply(req SwitchRequest) (Status, error) {
 		portsAfter = transparent.Ports{ISP: req.IspPort, CPE: req.CpePort}.Normalized()
 	}
 
-	wanAfter := cloneMap(c.loadWANFile())
+	wanAfter := cloneMap(wanCurrent)
+	applyWANNow := false
 	if req.Mode == ModeBypass {
 		wanAfter["enabled"] = true
 		wanAfter["mode"] = "static"
@@ -179,6 +182,12 @@ func (c *Controller) Apply(req SwitchRequest) (Status, error) {
 		if iface := strings.TrimSpace(req.WAN.Interface); iface != "" {
 			wanAfter["interface"] = iface
 		}
+		applyWANNow = true
+	} else if req.Mode == ModeGateway && shouldRestoreGatewayWAN(fromMode, wanCurrent) {
+		// Gateway default WAN is DHCP. Bypass writes static into network-wan.json + UCI;
+		// leaving that mode (or leftover static while already in gateway) must clear it.
+		wanAfter = gatewayWANConfig(wanAfter)
+		applyWANNow = true
 	}
 
 	pending := &PendingSwitch{
@@ -216,13 +225,15 @@ func (c *Controller) Apply(req SwitchRequest) (Status, error) {
 			return Status{}, err
 		}
 	}
-	if req.Mode == ModeBypass {
+	if applyWANNow {
 		if err := writeJSON(wanPath(c.cfg), wanAfter); err != nil {
 			_ = c.restoreFiles(pending)
 			_ = ClearPending(c.cfg)
 			return Status{}, err
 		}
-		if c.applyWAN != nil {
+		// Leaving transparent: netifd must not program WAN until br-trans is torn down.
+		// finishProxyModeDataplane rebinds UCI after leave-trans.
+		if NormalizeMode(fromMode) != ModeTransparent && c.applyWAN != nil {
 			if _, err := c.applyWAN(wanAfter); err != nil {
 				_ = c.restoreFiles(pending)
 				_ = ClearPending(c.cfg)
@@ -233,7 +244,7 @@ func (c *Controller) Apply(req SwitchRequest) (Status, error) {
 
 	applyFn := c.applyMode
 	toMode := req.Mode
-	fromMode := pending.FromMode
+	fromMode = pending.FromMode
 	c.armTimerLocked(pending)
 	c.mu.Unlock()
 	var applyErr error
@@ -277,8 +288,19 @@ func (c *Controller) Confirm(token string) (Status, error) {
 	if err := SaveCommitted(c.cfg, pending.ToMode); err != nil {
 		return Status{}, err
 	}
+	toMode := NormalizeMode(pending.ToMode)
 	c.stopTimerLocked()
 	_ = ClearPending(c.cfg)
+	applyFn := c.applyMode
+	c.mu.Unlock()
+	var applyErr error
+	if applyFn != nil {
+		applyErr = applyFn(toMode)
+	}
+	c.mu.Lock()
+	if applyErr != nil {
+		return c.statusLocked(), fmt.Errorf("已确认模式，但数据面刷新失败: %w", applyErr)
+	}
 	return c.statusLocked(), nil
 }
 
@@ -437,8 +459,50 @@ func operateHint(mode string) string {
 	case ModeTransparent:
 		return "请从管理 LAN 口操作本页。透明切换会把 isp/cpe 编入 br-trans（无互联 IP）；超时未确认将自动回滚口角色与模式。管理 LAN 永不进透明桥。"
 	default:
-		return "请从管理 LAN 口操作本页。模式切换须确认；超时未确认将自动回滚。"
+		return "请从管理 LAN 口操作本页。切回网关会把 WAN 恢复为 DHCP（旁路手填的静态地址不会保留）；超时未确认将自动回滚。"
 	}
+}
+
+func gatewayWANConfig(existing map[string]any) map[string]any {
+	out := cloneMap(existing)
+	out["enabled"] = true
+	out["mode"] = "dhcp"
+	for _, k := range []string{
+		"address", "netmask", "gateway", "dns1", "dns2",
+		"username", "password", "pppoeUsername", "pppoe_username", "pppoePassword", "pppoe_password",
+	} {
+		out[k] = ""
+	}
+	return out
+}
+
+func shouldRestoreGatewayWAN(fromMode string, current map[string]any) bool {
+	if NormalizeMode(fromMode) != ModeGateway {
+		return true
+	}
+	return wanModeOf(current) == "static"
+}
+
+func wanModeOf(cfg map[string]any) string {
+	mode := strings.ToLower(strings.TrimSpace(mapText(cfg, "mode")))
+	if mode == "" {
+		return "dhcp"
+	}
+	return mode
+}
+
+func mapText(cfg map[string]any, key string) string {
+	if cfg == nil {
+		return ""
+	}
+	v, ok := cfg[key]
+	if !ok || v == nil {
+		return ""
+	}
+	if s, ok := v.(string); ok {
+		return strings.TrimSpace(s)
+	}
+	return strings.TrimSpace(fmt.Sprint(v))
 }
 
 func (c *Controller) loadWANFile() map[string]any {

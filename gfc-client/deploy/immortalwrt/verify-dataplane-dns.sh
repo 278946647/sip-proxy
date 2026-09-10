@@ -28,18 +28,13 @@ load_proxy_mode() {
 		fi
 		file_mode="$(echo "$file_mode" | tr 'A-Z' 'a-z')"
 	fi
-	if [ "$env_mode" = "bypass" ]; then
-		echo "bypass"
-		return 0
-	fi
-	case "$file_mode" in
-		bypass) echo "bypass"; return 0 ;;
-		transparent) echo "transparent"; return 0 ;;
-	esac
 	case "$env_mode" in
-		transparent) echo "transparent" ;;
-		*) echo "gateway" ;;
+		gateway|bypass|transparent) echo "$env_mode"; return 0 ;;
 	esac
+	case "$file_mode" in
+		gateway|bypass|transparent) echo "$file_mode"; return 0 ;;
+	esac
+	echo "gateway"
 }
 
 PROXY_MODE="$(load_proxy_mode)"

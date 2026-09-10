@@ -324,18 +324,15 @@ load_proxy_mode() {
 		fi
 		file_mode="$(echo "$file_mode" | tr 'A-Z' 'a-z')"
 	fi
-	if [ "$env_mode" = "bypass" ]; then
-		echo "bypass"
-		return 0
-	fi
-	case "$file_mode" in
-		bypass) echo "bypass"; return 0 ;;
-		transparent) echo "transparent"; return 0 ;;
-	esac
+	# Pending switch writes env first and only commits proxy-mode.json on confirm.
+	# Env must win so leaving bypass/transparent actually applies gateway nft.
 	case "$env_mode" in
-		transparent) echo "transparent" ;;
-		*) echo "gateway" ;;
+		gateway|bypass|transparent) echo "$env_mode"; return 0 ;;
 	esac
+	case "$file_mode" in
+		gateway|bypass|transparent) echo "$file_mode"; return 0 ;;
+	esac
+	echo "gateway"
 }
 
 load_customer_host_elements() {
@@ -407,6 +404,58 @@ hw_mac() {
 	[ -n "$dev" ] && [ -f "/sys/class/net/$dev/address" ] && cat "/sys/class/net/$dev/address" || true
 }
 
+wan_if_is_trans_port() {
+	local wan isp cpe
+	wan="$WAN_IFACE"
+	isp="$(load_trans_isp)"
+	cpe="$(load_trans_cpe)"
+	[ -n "$wan" ] || return 1
+	[ "$wan" = "$isp" ] || [ "$wan" = "$cpe" ]
+}
+
+# Stop netifd from putting an IP on isp/cpe while they are br-trans slaves.
+release_wan_from_netifd() {
+	wan_if_is_trans_port || return 0
+	ifdown wan 2>/dev/null || true
+	if command -v uci >/dev/null 2>&1; then
+		uci -q set network.wan.auto='0'
+		uci -q commit network
+	fi
+}
+
+restore_wan_uci_auto() {
+	command -v uci >/dev/null 2>&1 || return 0
+	local changed=0
+	if [ "$(uci -q get network.wan.auto 2>/dev/null || true)" = "0" ]; then
+		uci -q delete network.wan.auto
+		changed=1
+	fi
+	if [ "$(uci -q get network.wan.disabled 2>/dev/null || true)" = "1" ]; then
+		uci -q delete network.wan.disabled
+		changed=1
+	fi
+	[ "$changed" = "1" ] && uci -q commit network
+}
+
+restore_gateway_sysctl() {
+	# Stock forwarding default. Do not re-enable bridge-nf (transparent contract).
+	sysctl -w net.ipv4.ip_nonlocal_bind=0 >/dev/null 2>&1 || true
+	sysctl -w net.ipv4.conf.all.rp_filter=0 >/dev/null 2>&1 || true
+	sysctl -w net.bridge.bridge-nf-call-iptables=0 >/dev/null 2>&1 || true
+	sysctl -w net.bridge.bridge-nf-call-ip6tables=0 >/dev/null 2>&1 || true
+	sysctl -w net.bridge.bridge-nf-call-arptables=0 >/dev/null 2>&1 || true
+	local isp cpe dev
+	isp="$(load_trans_isp)"
+	cpe="$(load_trans_cpe)"
+	for dev in "$isp" "$cpe" "$WAN_IFACE"; do
+		[ -n "$dev" ] || continue
+		[ -d "/sys/class/net/$dev" ] || continue
+		sysctl -w "net.ipv4.conf.${dev}.rp_filter=0" >/dev/null 2>&1 || true
+		sysctl -w "net.ipv4.conf.${dev}.arp_ignore=0" >/dev/null 2>&1 || true
+		sysctl -w "net.ipv4.conf.${dev}.arp_announce=0" >/dev/null 2>&1 || true
+	done
+}
+
 teardown_trans_bridge() {
 	local isp cpe
 	isp="$(load_trans_isp)"
@@ -423,6 +472,8 @@ teardown_trans_bridge() {
 	del_trans_dev br-trans
 	del_trans_dev gfc-ce
 	del_trans_dev gfc-dns
+	restore_gateway_sysctl
+	restore_wan_uci_auto
 }
 
 del_trans_dev() {
@@ -478,6 +529,7 @@ apply_trans_bridge() {
 		echo "WARN: isp/cpe must not be a $LAN_IFACE bridge port" >&2
 		return 1
 	fi
+	release_wan_from_netifd
 	ensure_dummy gfc-ce
 	ensure_dummy gfc-dns
 	ip link show br-trans >/dev/null 2>&1 || ip link add name br-trans type bridge 2>/dev/null || true
@@ -1177,7 +1229,14 @@ start_rules() {
 		apply_trans_bridge || echo "WARN: br-trans setup failed" >&2
 		apply_trans_addrs
 	else
+		need_wan=0
+		if command -v uci >/dev/null 2>&1 && [ "$(uci -q get network.wan.auto 2>/dev/null || true)" = "0" ]; then
+			need_wan=1
+		fi
 		teardown_trans_bridge
+		if [ "$need_wan" = "1" ]; then
+			ifup wan 2>/dev/null || true
+		fi
 	fi
 	apply_wan_nat
 	apply_dns_hijack
@@ -1189,6 +1248,8 @@ start_rules() {
 	write_bypass_unbound_acl
 	if [ "$(load_proxy_mode)" = "bypass" ]; then
 		apply_bypass_sysctl
+	elif [ "$(load_proxy_mode)" != "transparent" ]; then
+		restore_gateway_sysctl
 	fi
 	if [ "$(load_proxy_mode)" = "transparent" ]; then
 		apply_trans_netdev || echo "WARN: netdev gfc_trans apply failed; L2 fail-open" >&2

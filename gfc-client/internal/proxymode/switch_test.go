@@ -91,6 +91,9 @@ func TestSwitchApplyCallsDataplane(t *testing.T) {
 	if cfg.ProxyMode != ModeBypass {
 		t.Fatalf("proxy mode=%s", cfg.ProxyMode)
 	}
+	if len(modes) != 2 || modes[0] != ModeBypass || modes[1] != ModeBypass {
+		t.Fatalf("confirm must reapply dataplane, modes=%v", modes)
+	}
 }
 
 func TestSwitchTransparentApply(t *testing.T) {
@@ -182,5 +185,118 @@ func TestSwitchTimeoutRollback(t *testing.T) {
 	wan := c.loadWANFile()
 	if wan["mode"] != "dhcp" {
 		t.Fatalf("wan rolled back, got %v", wan)
+	}
+}
+
+func TestSwitchGatewayRestoresDHCPFromBypass(t *testing.T) {
+	cfg := testCfg(t)
+	if err := SaveCommitted(cfg, ModeBypass); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSON(wanPath(cfg), map[string]any{
+		"enabled": true, "interface": "eth0", "mode": "static",
+		"address": "192.168.88.194", "netmask": "255.255.255.0", "gateway": "192.168.88.1", "mtu": 1500,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var applied []map[string]any
+	c := NewController(cfg, func(body map[string]any) (map[string]any, error) {
+		applied = append(applied, cloneMap(body))
+		return map[string]any{"ok": true}, nil
+	}, func() string { return cfg.LanCIDR })
+	c.SetDataplaneApply(func(mode string) error {
+		cfg.ProxyMode = mode
+		return nil
+	})
+
+	st, err := c.Apply(SwitchRequest{Mode: ModeGateway, ConfirmTimeoutSec: 120})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Pending == nil || st.Pending.ToMode != ModeGateway {
+		t.Fatalf("pending=%+v", st.Pending)
+	}
+	if len(applied) != 1 {
+		t.Fatalf("applied=%d", len(applied))
+	}
+	if applied[0]["mode"] != "dhcp" {
+		t.Fatalf("wan mode=%v", applied[0]["mode"])
+	}
+	if addr, _ := applied[0]["address"].(string); addr != "" {
+		t.Fatalf("address leftover %q", addr)
+	}
+	wan := c.loadWANFile()
+	if wan["mode"] != "dhcp" {
+		t.Fatalf("json mode=%v", wan["mode"])
+	}
+	if wan["interface"] != "eth0" {
+		t.Fatalf("interface=%v", wan["interface"])
+	}
+}
+
+func TestSwitchGatewayCleansLeftoverStatic(t *testing.T) {
+	cfg := testCfg(t)
+	if err := writeJSON(wanPath(cfg), map[string]any{
+		"mode": "static", "interface": "eth0",
+		"address": "192.168.88.194", "netmask": "255.255.255.0", "gateway": "192.168.88.1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var applied []map[string]any
+	c := NewController(cfg, func(body map[string]any) (map[string]any, error) {
+		applied = append(applied, cloneMap(body))
+		return map[string]any{"ok": true}, nil
+	}, func() string { return cfg.LanCIDR })
+
+	if _, err := c.Apply(SwitchRequest{Mode: ModeGateway}); err != nil {
+		t.Fatal(err)
+	}
+	if len(applied) != 1 || applied[0]["mode"] != "dhcp" {
+		t.Fatalf("applied=%v", applied)
+	}
+}
+
+func TestSwitchGatewayKeepsDHCPWithoutReapply(t *testing.T) {
+	cfg := testCfg(t)
+	if err := writeJSON(wanPath(cfg), map[string]any{"mode": "dhcp", "interface": "eth0"}); err != nil {
+		t.Fatal(err)
+	}
+	var applied int
+	c := NewController(cfg, func(body map[string]any) (map[string]any, error) {
+		applied++
+		return map[string]any{"ok": true}, nil
+	}, func() string { return cfg.LanCIDR })
+	on := true
+	if _, err := c.Apply(SwitchRequest{Mode: ModeGateway, DNSHijack: &on}); err != nil {
+		t.Fatal(err)
+	}
+	if applied != 0 {
+		t.Fatalf("WAN should not reapply when already gateway+dhcp, got %d", applied)
+	}
+}
+
+func TestSwitchTransparentToGatewayReappliesDHCP(t *testing.T) {
+	cfg := testCfg(t)
+	if err := SaveCommitted(cfg, ModeTransparent); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSON(wanPath(cfg), map[string]any{"mode": "dhcp", "interface": "eth0"}); err != nil {
+		t.Fatal(err)
+	}
+	var applied []map[string]any
+	c := NewController(cfg, func(body map[string]any) (map[string]any, error) {
+		applied = append(applied, cloneMap(body))
+		return map[string]any{"ok": true}, nil
+	}, func() string { return cfg.LanCIDR })
+
+	if _, err := c.Apply(SwitchRequest{Mode: ModeGateway}); err != nil {
+		t.Fatal(err)
+	}
+	if len(applied) != 0 {
+		t.Fatalf("leaving transparent defers live WAN apply until leave-trans, applied=%v", applied)
+	}
+	wan := c.loadWANFile()
+	if wan["mode"] != "dhcp" {
+		t.Fatalf("json mode=%v", wan["mode"])
 	}
 }

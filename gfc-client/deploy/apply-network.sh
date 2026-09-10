@@ -24,14 +24,23 @@ DHCP_END="${GFC_DHCP_END:-192.168.68.250}"
 BRIDGE_NAME="${GFC_BRIDGE_NAME:-bridge_lan}"
 
 [[ -f "$GFC_ENV" ]] && set -a && source "$GFC_ENV" && set +a
-PROXY_MODE="${GFC_PROXY_MODE:-$PROXY_MODE}"
-if [[ "$PROXY_MODE" != "bypass" && "$PROXY_MODE" != "transparent" && -f "${GFC_ETC}/proxy-mode.json" ]]; then
-  if grep -q '"mode"[[:space:]]*:[[:space:]]*"bypass"' "${GFC_ETC}/proxy-mode.json" 2>/dev/null; then
-    PROXY_MODE="bypass"
-  elif grep -q '"mode"[[:space:]]*:[[:space:]]*"transparent"' "${GFC_ETC}/proxy-mode.json" 2>/dev/null; then
-    PROXY_MODE="transparent"
-  fi
-fi
+PROXY_MODE="${GFC_PROXY_MODE:-}"
+case "$PROXY_MODE" in
+  gateway|bypass|transparent) ;;
+  *)
+    PROXY_MODE=""
+    if [[ -f "${GFC_ETC}/proxy-mode.json" ]]; then
+      if grep -q '"mode"[[:space:]]*:[[:space:]]*"bypass"' "${GFC_ETC}/proxy-mode.json" 2>/dev/null; then
+        PROXY_MODE="bypass"
+      elif grep -q '"mode"[[:space:]]*:[[:space:]]*"transparent"' "${GFC_ETC}/proxy-mode.json" 2>/dev/null; then
+        PROXY_MODE="transparent"
+      elif grep -q '"mode"[[:space:]]*:[[:space:]]*"gateway"' "${GFC_ETC}/proxy-mode.json" 2>/dev/null; then
+        PROXY_MODE="gateway"
+      fi
+    fi
+    PROXY_MODE="${PROXY_MODE:-gateway}"
+    ;;
+esac
 export GFC_PROXY_MODE="$PROXY_MODE"
 GFC_POLICY_MARK="${GFC_POLICY_MARK:-0x2023}"
 GFC_POLICY_TABLE="${GFC_POLICY_TABLE:-2022}"
@@ -467,10 +476,10 @@ if [[ "$PROXY_MODE" == "bypass" ]]; then
 fi
 
 if [[ "$PROXY_MODE" == "transparent" ]]; then
-  python3 - "${GFC_ETC}/transparent-ports.json" "${LAN:-}" <<'PY'
+  python3 - "${GFC_ETC}/transparent-ports.json" "${LAN:-}" "${WAN:-}" <<'PY'
 import json, os, subprocess, sys
 from pathlib import Path
-ports_file, lan = sys.argv[1:3]
+ports_file, lan, wan = sys.argv[1:4]
 isp = cpe = ""
 p = Path(ports_file)
 if p.is_file():
@@ -486,6 +495,8 @@ if not isp or not cpe or isp == cpe or isp == lan or cpe == lan:
 def run(cmd):
     subprocess.run(cmd, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
+if wan and wan in (isp, cpe):
+    run(["ip", "addr", "flush", "dev", wan])
 for name in ("gfc-ce", "gfc-dns"):
     run(["ip", "link", "add", name, "type", "dummy"])
     run(["ip", "link", "set", name, "up"])
@@ -506,6 +517,42 @@ PY
   sysctl -w net.ipv4.conf.all.rp_filter=2 >/dev/null 2>&1 || true
   sysctl -w net.bridge.bridge-nf-call-iptables=0 >/dev/null 2>&1 || true
   echo "    sysctl: bridge-nf-call-iptables=0 rp_filter=2 (transparent)"
+else
+  python3 - "${GFC_ETC}/transparent-ports.json" <<'PY'
+import json, subprocess, sys
+from pathlib import Path
+isp = cpe = ""
+p = Path(sys.argv[1])
+if p.is_file():
+    try:
+        data = json.loads(p.read_text())
+        isp = str(data.get("isp_port") or "").strip()
+        cpe = str(data.get("cpe_port") or "").strip()
+    except Exception:
+        pass
+
+def run(cmd):
+    subprocess.run(cmd, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+for dev in (isp, cpe):
+    if not dev:
+        continue
+    run(["ip", "link", "set", dev, "nomaster"])
+    run(["ip", "link", "set", dev, "promisc", "off"])
+for name in ("br-trans", "gfc-ce", "gfc-dns"):
+    run(["ip", "link", "set", name, "down"])
+    run(["ip", "link", "del", name])
+print("    br-trans: torn down")
+PY
+  sysctl -w net.ipv4.ip_nonlocal_bind=0 >/dev/null 2>&1 || true
+  if [[ "$PROXY_MODE" != "bypass" ]]; then
+    sysctl -w net.ipv4.conf.all.rp_filter=0 >/dev/null 2>&1 || true
+    if [[ -n "${WAN:-}" ]]; then
+      sysctl -w "net.ipv4.conf.${WAN}.rp_filter=0" >/dev/null 2>&1 || true
+    fi
+  fi
+  sysctl -w net.bridge.bridge-nf-call-iptables=0 >/dev/null 2>&1 || true
+  echo "    br-trans: not used (proxy_mode=$PROXY_MODE)"
 fi
 
 echo "==> network apply done"

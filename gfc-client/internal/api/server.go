@@ -101,6 +101,7 @@ func (s *Server) finishProxyModeDataplane(mode string) {
 	if proxymode.NormalizeMode(s.cfg.ProxyMode) != mode {
 		return
 	}
+	hadTrans := transBridgePresent()
 	if s.trans != nil {
 		s.trans.Notify(mode)
 	}
@@ -108,8 +109,18 @@ func (s *Server) finishProxyModeDataplane(mode string) {
 		if err := s.runRoutingAction("leave-trans"); err != nil {
 			log.Printf("proxy-mode leave-trans: %v", err)
 		}
+		if hadTrans {
+			if _, err := s.network.ApplyWAN(s.network.LoadWAN()); err != nil {
+				log.Printf("proxy-mode rebind WAN after leave-trans: %v", err)
+			}
+		}
 	}
 	s.reloadProxyModeDataplaneLocked(mode)
+}
+
+func transBridgePresent() bool {
+	_, err := os.Stat("/sys/class/net/br-trans")
+	return err == nil
 }
 
 func (s *Server) reloadProxyModeDataplane(mode string) {

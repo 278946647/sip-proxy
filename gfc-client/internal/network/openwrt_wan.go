@@ -89,6 +89,8 @@ func (m *Manager) applyOpenWrtWAN(cfg map[string]any) error {
 	_, _ = uci("set", "network.wan=interface")
 	_, _ = uci("set", "network.wan.device="+plan.device)
 	_, _ = uci("set", "network.wan.proto="+plan.proto)
+	_, _ = uci("delete", "network.wan.auto")
+	_, _ = uci("delete", "network.wan.disabled")
 	if plan.mtu > 0 {
 		_, _ = uci("set", "network.wan.mtu="+strconv.Itoa(plan.mtu))
 	} else {
