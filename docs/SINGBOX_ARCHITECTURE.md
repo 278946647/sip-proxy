@@ -126,7 +126,7 @@ WAN interface: **runtime discovery** — `GFC_WAN_IFACE` / netlink. Never hardco
 | Order | Tag | Type | Purpose |
 |-------|-----|------|---------|
 | 1 | `direct-local` | `direct` | Loopback / no bind |
-| 2 | `direct` | `direct` | `bind_interface: <wan>` (transparent: **omit**; never `gfctun` / isp slave / dummy) |
+| 2 | `direct` | `direct` | `bind_interface: <wan>` (transparent: **omit**; never `gfctun` / isp slave / gfc-ce) |
 | 3 | `proxy` | `vless` | Primary VLESS Reality |
 | 4 | `proxy-group` | `selector` | **Only if** multiple nodes in bundle |
 | 5 | `proxy-hy2` | `hysteria2` | Parallel Hysteria2 to same node IP (`:18443`) when bundle has credentials |

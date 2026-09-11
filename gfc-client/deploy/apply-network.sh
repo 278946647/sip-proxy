@@ -497,17 +497,40 @@ def run(cmd):
 
 if wan and wan in (isp, cpe):
     run(["ip", "addr", "flush", "dev", wan])
-def ensure_punt_dev(name):
-    shown = subprocess.run(["ip", "link", "show", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    if shown.returncode != 0:
+
+def link_exists(name):
+    return subprocess.run(["ip", "link", "show", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+
+def is_veth(name):
+    p = subprocess.run(["ip", "-d", "link", "show", name], capture_output=True, text=True)
+    return "veth" in (p.stdout or "")
+
+def ensure_dummy(name):
+    if not link_exists(name):
         add = subprocess.run(["ip", "link", "add", name, "type", "dummy"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if add.returncode != 0:
             subprocess.run(["ip", "link", "add", name, "type", "bridge"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     run(["ip", "link", "set", name, "up"])
     run(["ip", "link", "set", name, "arp", "off"])
 
-for name in ("gfc-ce", "gfc-dns"):
-    ensure_punt_dev(name)
+def ensure_ce_veth():
+    if link_exists("gfc-ce") and link_exists("gfc-ce-fwd") and is_veth("gfc-ce"):
+        run(["ip", "link", "set", "gfc-ce", "up"])
+        run(["ip", "link", "set", "gfc-ce-fwd", "up"])
+        run(["ip", "link", "set", "gfc-ce", "arp", "off"])
+        run(["ip", "link", "set", "gfc-ce-fwd", "arp", "off"])
+        return
+    for name in ("gfc-ce", "gfc-ce-fwd"):
+        run(["ip", "link", "set", name, "down"])
+        run(["ip", "link", "del", name])
+    subprocess.run(["ip", "link", "add", "gfc-ce", "type", "veth", "peer", "name", "gfc-ce-fwd"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    run(["ip", "link", "set", "gfc-ce", "up"])
+    run(["ip", "link", "set", "gfc-ce-fwd", "up"])
+    run(["ip", "link", "set", "gfc-ce", "arp", "off"])
+    run(["ip", "link", "set", "gfc-ce-fwd", "arp", "off"])
+
+ensure_ce_veth()
+ensure_dummy("gfc-dns")
 run(["ip", "link", "add", "name", "br-trans", "type", "bridge"])
 for dev in (isp, cpe):
     run(["ip", "link", "set", dev, "nomaster"])
@@ -546,7 +569,7 @@ for dev in (isp, cpe):
         continue
     run(["ip", "link", "set", dev, "nomaster"])
     run(["ip", "link", "set", dev, "promisc", "off"])
-for name in ("br-trans", "gfc-ce", "gfc-dns"):
+for name in ("br-trans", "gfc-ce", "gfc-ce-fwd", "gfc-dns"):
     run(["ip", "link", "set", name, "down"])
     run(["ip", "link", "del", name])
 print("    br-trans: torn down")

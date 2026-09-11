@@ -8,7 +8,7 @@ INDEX="${GFC_PACKAGE_INDEX:-$ROOT/config/gfc-package-index.txt}"
 
 # OpenWrt base tree (package/) — NOT installable via feeds; only verify after prepare.
 BASE_TREE_PACKAGES=(
-  ca-bundle ip-full dnsmasq-full kmod-tun kmod-nft-core kmod-nft-netdev kmod-dummy
+  ca-bundle ip-full dnsmasq-full kmod-tun kmod-nft-core kmod-nft-netdev kmod-dummy kmod-veth
   nftables-json nftables-nojson
   tc-tiny kmod-sched-core kmod-ifb
   kmod-tcp-bbr kmod-sched

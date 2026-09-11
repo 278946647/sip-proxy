@@ -13,6 +13,7 @@ const (
 
 	BridgeName    = "br-trans"
 	DummyCE       = "gfc-ce"
+	PuntFwdCE     = "gfc-ce-fwd"
 	DummyDNS      = "gfc-dns"
 	DefaultVIP    = "172.31.253.53"
 	HitchBindIP   = "172.31.253.1"

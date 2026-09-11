@@ -75,7 +75,7 @@
      \     /
     二层透明桥（无互联 IP、混杂、默认转发）
 
-本机 CE /32 与 DNS VIP：挂 dummy，禁止在 isp/cpe 口对外抢 CE 的 ARP
+本机 CE /32 与 DNS VIP：CE 挂 veth `gfc-ce`（对端 `gfc-ce-fwd` 承接 netdev `fwd`）；VIP 挂 dummy `gfc-dns`。禁止在 isp/cpe 口对外抢 CE 的 ARP
 ```
 
 - 两口盒子不做默认 SKU（管理面另走 VLAN/USB 为降级，另开需求）。  
@@ -314,5 +314,6 @@ nft list table inet gfc_dns_hijack   # 网关/旁路开关可见；透明另有 
 
 | 日期 | 说明 |
 |------|------|
+| 2026-09-11 | punt 口：`gfc-ce`/`gfc-ce-fwd` veth（`nft fwd` 必须进 RX）；`gfc-dns` 仍 dummy |
 | 2026-09-09 | 一期合入：`netdev gfc_trans`；设备 Web 开放 `transparent`；确认/回滚对齐旁路 |
 | 2026-08-31 | 讨论冻结：L2+punt、禁 proxy-ARP、状态机与 ARP 让权、默认全拦 53、跨模式劫持开关、DNS VIP、私网互联同机制 |

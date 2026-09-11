@@ -68,7 +68,7 @@ LAN remains an independent management network for the life of the device. In byp
 isp_port + cpe_port = br-trans (L2 cable; no interconnect IP; management LAN never enslaved)
 Default: L2 forward (no customer SNAT, no TTL decrement, no ARP ownership of CE once learned)
 netdev gfc_trans steal: recursive DNS :53 (if dns_hijack on, or dest=DNS VIP) and international TCP
-     → fwd to gfc-ce → existing inet gfc classification / mark 0x2023 → table 2022 → gfctun
+     → fwd to gfc-ce-fwd (veth RX on gfc-ce) → existing inet gfc classification / mark 0x2023 → table 2022 → gfctun
 GFC originated: hitchhike learned CE IP; return 5-tuple @hitch_reply punt to local
 ```
 
@@ -429,11 +429,11 @@ Same inet tables `nat` / `gfc_dns_hijack` / `gfc`, same chain names, same mark `
 Non-nft companions (mandatory with these rules):
 
 - `br-trans`: slaves `<isp_port>` + `<cpe_port>` only; **no** IP; **never** enslave `<lan_iface>` / `br-lan`
-- Dummy `gfc-ce`: learned CE `/32` for hitch source (`noprefixroute`; dest-CE on-link via cpe so tun replies are not swallowed by `local`)
+- Veth pair `gfc-ce` / `gfc-ce-fwd`: `nft fwd` is TX (`dev_queue_xmit`). Dummy would kfree the skb (no RX). `fwd to gfc-ce-fwd` appears as RX on `gfc-ce`. Learned CE `/32` on `gfc-ce` (`noprefixroute`; dest-CE on-link via br-trans so tun replies are not swallowed by `local`)
 - Dummy `gfc-dns`: DNS VIP `/32` (default `172.31.253.53`)
 - Hitch bind address on `gfc-ce`: `172.31.253.1/32` (reserved pool; not fake-ip `198.18.0.0/15`)
 - `net.bridge.bridge-nf-call-iptables=0` (and ip6/arp if the module is loaded)
-- `net.ipv4.conf.<isp|cpe|br-trans|gfc-ce|gfc-dns>.rp_filter=2`
+- `net.ipv4.conf.<isp|cpe|br-trans|gfc-ce|gfc-ce-fwd|gfc-dns>.rp_filter=2`
 - `arp_ignore=2` on isp/cpe/`br-trans` so the box never answers CE ARP once a real customer has been learned
 - Fail-open: if `netdev gfc_trans` apply fails, keep `br-trans` forwarding (pure L2)
 - DNS steal fail-open when `gfctun` is down (do not blackhole 53 during install)
@@ -449,12 +449,12 @@ add set netdev gfc_trans no_steal_dst { type ipv4_addr; flags interval; }
 # Do not set auto-merge: current ImmortalWrt nft rejects that flag.
 add set netdev gfc_trans dns_exclude { type ipv4_addr; flags interval; }
 
-# in_isp: hitch 5-tuple → rewrite dest to hitch-bind 172.31.253.1 → fwd gfc-ce.
-# CE /32 is not in table local (tun replies must reach the real CPE). A plain
-# fwd leaves dest=CE and the packet is forwarded off-box; inet DNAT on dummy
-# is not reliable after nft_fwd_netdev.
+# in_isp: hitch 5-tuple → ether daddr = gfc-ce MAC → fwd gfc-ce-fwd (veth RX).
+# nft fwd is TX; dummy would drop. Dest MAC must be gfc-ce or ip_rcv drops
+# PACKET_OTHERHOST. Dest IP stays CE; inet DNAT on iif gfc-ce updates L4 csum.
+# CE /32 is not in table local (tun replies must reach the real CPE).
 add chain netdev gfc_trans in_isp { type filter hook ingress device "<isp_port>" priority -500; policy accept; }
-add rule netdev gfc_trans in_isp meta l4proto { tcp, udp } meta l4proto . ip saddr . th sport . ip daddr . th dport @hitch_reply ip daddr set 172.31.253.1 fwd to "gfc-ce"
+add rule netdev gfc_trans in_isp meta l4proto { tcp, udp } meta l4proto . ip saddr . th sport . ip daddr . th dport @hitch_reply ether daddr set <gfc-ce_mac> fwd to "gfc-ce-fwd"
 
 # in_cpe: order is mandatory (first match wins). Default verdict accept = L2.
 add chain netdev gfc_trans in_cpe { type filter hook ingress device "<cpe_port>" priority -500; policy accept; }
@@ -466,17 +466,17 @@ add rule netdev gfc_trans in_cpe ether type != ip accept
 add rule netdev gfc_trans in_cpe ip protocol { 4, 47, 50, 51, 115 } accept
 add rule netdev gfc_trans in_cpe udp dport { 500, 4500, 1701 } accept
 # DNS VIP always punted (even when dns_hijack=off)
-add rule netdev gfc_trans in_cpe udp dport 53 ip daddr <dns_vip> fwd to "gfc-ce"
-add rule netdev gfc_trans in_cpe tcp dport 53 ip daddr <dns_vip> fwd to "gfc-ce"
+add rule netdev gfc_trans in_cpe udp dport 53 ip daddr <dns_vip> ether daddr set <gfc-ce_mac> fwd to "gfc-ce-fwd"
+add rule netdev gfc_trans in_cpe tcp dport 53 ip daddr <dns_vip> ether daddr set <gfc-ce_mac> fwd to "gfc-ce-fwd"
 # dns_hijack=on and tun up: steal remaining :53 except exclude (including dest=private GW)
 add rule netdev gfc_trans in_cpe udp dport 53 ip daddr @dns_exclude accept
 add rule netdev gfc_trans in_cpe tcp dport 53 ip daddr @dns_exclude accept
-add rule netdev gfc_trans in_cpe udp dport 53 fwd to "gfc-ce"
-add rule netdev gfc_trans in_cpe tcp dport 53 fwd to "gfc-ce"
+add rule netdev gfc_trans in_cpe udp dport 53 ether daddr set <gfc-ce_mac> fwd to "gfc-ce-fwd"
+add rule netdev gfc_trans in_cpe tcp dport 53 ether daddr set <gfc-ce_mac> fwd to "gfc-ce-fwd"
 # data: never steal dest RFC1918 / CE / GW / bypass / split TO_CN
 add rule netdev gfc_trans in_cpe ip daddr @no_steal_dst accept
 # international TCP only (phase 1); other UDP (QUIC) L2
-add rule netdev gfc_trans in_cpe meta l4proto tcp fwd to "gfc-ce"
+add rule netdev gfc_trans in_cpe meta l4proto tcp ether daddr set <gfc-ce_mac> fwd to "gfc-ce-fwd"
 
 # eg_isp: rewrite MAC only on locally originated frames (src MAC = NIC hardware MAC)
 add chain netdev gfc_trans eg_isp { type filter hook egress device "<isp_port>" priority 0; policy accept; }
@@ -496,8 +496,7 @@ inet delta (existing chains; extra **match** rows only):
 ```nft
 # nat — management mini-gateway + DNS trampoline SNAT (never bare oif isp masquerade)
 # Hitch returns: CE /32 is removed from table local so tun replies to the real CPE
-# are not swallowed. netdev fwd does not restore SNAT conntrack, so dest is still
-# CE and would be forwarded off-box. DNAT hitch-bind before routing.
+# are not swallowed. veth RX on gfc-ce hits this DNAT (checksum updated here).
 add chain inet nat prerouting { type nat hook prerouting priority dstnat; policy accept; }
 add rule inet nat prerouting iifname "gfc-ce" ip daddr <ce_ip> dnat ip to 172.31.253.1
 add rule inet nat postrouting oifname "<isp_port>" ip saddr <lan_subnet> snat to <ce_ip>

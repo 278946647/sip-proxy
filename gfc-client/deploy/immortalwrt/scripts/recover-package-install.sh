@@ -40,6 +40,7 @@ REQUIRED_IPKS=(
   kmod-nft-core
   kmod-nft-netdev
   kmod-dummy
+  kmod-veth
   nftables-json
   curl
   wget-ssl

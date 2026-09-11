@@ -123,7 +123,7 @@ func (r *Renderer) RenderActive(payload map[string]any, ruleSets []map[string]an
 	}
 	bindIface := wan
 	if proxyMode == "transparent" {
-		// Hitch RX is on dummy gfc-ce; SO_BINDTODEVICE on isp or gfc-ce
+		// Hitch RX is on veth gfc-ce; SO_BINDTODEVICE on isp or gfc-ce
 		// breaks the other direction. Dest is bypass_ip so OUTPUT is not
 		// marked into gfctun. Never bind gfctun (kernel-split loop).
 		bindIface = ""

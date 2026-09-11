@@ -63,7 +63,7 @@ inet 表 nat / gfc_dns_hijack / gfc 不改名、不改 hook/默认 mark。sing-b
 | cpe 出向 | `eg_cpe` | DNS/代理回程 `src MAC=PE` |
 | 回程 set | `hitch_reply` | inet_proto . 五元组；timeout |
 | 透明桥 | `br-trans` | isp+cpe；无 IP |
-| CE dummy | `gfc-ce` | 学到的 CE `/32`；禁止对外答 CE ARP |
+| CE punt | `gfc-ce` + `gfc-ce-fwd` | veth：`fwd` 打到 fwd 端，本机地址/inet 在 `gfc-ce`；禁止对外答 CE ARP |
 | DNS dummy | `gfc-dns` | DNS VIP `/32` |
 
 inet 继续：`nat` / `gfc_dns_hijack` / `gfc`。透明 punt 后的分类走现有 `prerouting_mangle_ct` / `_route`。`dns_hijack=off` 时：网关/旁路去掉「抢非本机 53」；透明电缆不拦 53，仍拦 `daddr=VIP:53`。
@@ -117,7 +117,7 @@ inet 继续：`nat` / `gfc_dns_hijack` / `gfc`。透明 punt 后的分类走现�
 1. 登记 `NFT_ARCHITECTURE.md` § 透明 `gfc_trans`（对照现有 gateway/bypass 写法）。  
 2. `internal/transparent` 学习+状态机（可先单测，不依赖真网卡）。  
 3. `gfc-routing.sh` / nft：建 `br-trans`、netdev 规则、fail-open（规则失败则纯桥）。  
-4. 搭车：dummy `gfc-ce`、SNAT、`hitch_reply`、TX MAC。  
+4. 搭车：veth `gfc-ce`/`gfc-ce-fwd`、SNAT、`hitch_reply`、TX MAC。  
 5. DNS punt + VIP `gfc-dns` + 三种模式 `dns_hijack` + 排除列表。  
 6. LuCI/Web：开模式、口角色、开关、VIP 展示、确认回滚。  
 7. `verify-dataplane-dns.sh` 与 §11 验收命令。

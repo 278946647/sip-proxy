@@ -11,7 +11,7 @@ import (
 var ifaceNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,14}$`)
 
 var reservedIfaces = map[string]struct{}{
-	"lo": {}, "gfctun": {}, DummyCE: {}, DummyDNS: {}, BridgeName: {},
+	"lo": {}, "gfctun": {}, DummyCE: {}, PuntFwdCE: {}, DummyDNS: {}, BridgeName: {},
 }
 
 // ValidatePorts enforces device-Web isp/cpe roles. lanIface is br-lan / management.

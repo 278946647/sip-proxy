@@ -16,6 +16,7 @@ kmod-tun
 kmod-nft-core
 kmod-nft-netdev
 kmod-dummy
+kmod-veth
 nftables-json
 dnsmasq-full
 libcap
