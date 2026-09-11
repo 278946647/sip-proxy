@@ -36,7 +36,7 @@ LAN / local process
   → international → ip rule table 2022 → gfctun
   → sing-box inbound tun-in (gvisor)
   → route rules (bypass → direct; intl → proxy-prefer)
-  → outbound proxy (VLESS Reality) bind_interface <wan>
+  → outbound proxy (VLESS Reality) bind_interface <wan> (transparent: gfc-ce)
   → Forward Node :8443
 ```
 
@@ -126,7 +126,7 @@ WAN interface: **runtime discovery** — `GFC_WAN_IFACE` / netlink. Never hardco
 | Order | Tag | Type | Purpose |
 |-------|-----|------|---------|
 | 1 | `direct-local` | `direct` | Loopback / no bind |
-| 2 | `direct` | `direct` | `bind_interface: <wan>` — bypass & handshake path |
+| 2 | `direct` | `direct` | `bind_interface: <wan>` (transparent: `gfc-ce`, never `gfctun` / isp slave) |
 | 3 | `proxy` | `vless` | Primary VLESS Reality |
 | 4 | `proxy-group` | `selector` | **Only if** multiple nodes in bundle |
 | 5 | `proxy-hy2` | `hysteria2` | Parallel Hysteria2 to same node IP (`:18443`) when bundle has credentials |
@@ -152,7 +152,7 @@ Route rules reference `direct`, `proxy`, `proxy-prefer`, or `proxy-hy2` — **no
   "server_port": 8443,
   "uuid": "<from-bundle>",
   "flow": "xtls-rprx-vision",
-  "bind_interface": "<wan-iface>",
+  "bind_interface": "<wan-iface | gfc-ce when proxy_mode=transparent>",
   "tls": {
     "enabled": true,
     "server_name": "www.cloudflare.com",
@@ -177,7 +177,7 @@ Must match Forward Node inbound Reality keys (control plane contract).
   "server": "<forward-node-ip>",
   "server_port": 18443,
   "password": "<from-bundle>",
-  "bind_interface": "<wan-iface>",
+  "bind_interface": "<wan-iface | gfc-ce when proxy_mode=transparent>",
   "up_mbps": "<floor(line_bandwidth_mbps * 0.93) when brutal>",
   "down_mbps": "<same>",
   "tls": {
@@ -450,7 +450,7 @@ Generated `sing-box.json` must:
 - Use renderer: `gfc-platform/node-agent/node_agent/singbox.py` (Forward Node)
 - Preserve outbound tag names and route rule order for kernel-split and client-ingress-only
 - Forward client-ingress: emit `auth_user` rules; `final: direct`; WAN via `resolve_snat_iface()`
-- Set `bind_interface` on VLESS and WAN-bound `direct` (Client)
+- Set `bind_interface` on VLESS and WAN-bound `direct` (Client). Transparent: `gfc-ce` so hitch returns (iif dummy) match the socket; still never `gfctun`.
 - Write config `0640` owned root:`GFC_SINGBOX_USER` group (Client)
 - Support idle vs active profiles via orchestrator (Client) / node-agent apply (Forward Node)
 

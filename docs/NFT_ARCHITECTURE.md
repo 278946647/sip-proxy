@@ -188,7 +188,7 @@ Chain names are API. Never rename. inet names stay as in gateway/bypass. netdev 
 | `ext_const` | `ipv4_addr` | Fixed international DNS upstream IPs |
 | `customer_hosts` | `ipv4_addr`, interval | **Bypass only.** Sources allowed to be marked / DNS-hijacked on WAN. Populated from **device Web UI** (not control plane). |
 | `hitch_reply` | `inet_proto . ipv4_addr . inet_service . ipv4_addr . inet_service`, timeout, dynamic | **Transparent only** (`netdev gfc_trans`). Reverse 5-tuple of box-originated hitchhike. Never a source-port range. |
-| `no_steal_dst` | `ipv4_addr`, interval, auto-merge | **Transparent only** (`netdev gfc_trans`). Destinations that stay L2 (RFC1918, learned **public** CE/GW, `bypass_ip`, and `TO_CN` in split). RFC1918 CE/GW are not listed as hosts (overlap with `10/8` `172.16/12` `192.168/16` is a load error). Not written into inet `TO_CN` / `bypass_ip` / `ext`. |
+| `no_steal_dst` | `ipv4_addr`, interval | **Transparent only** (`netdev gfc_trans`). Destinations that stay L2 (RFC1918, learned **public** CE/GW, `bypass_ip`, and `TO_CN` in split). RFC1918 CE/GW are not listed as hosts (overlap with `10/8` `172.16/12` `192.168/16` is a load error). OpenWrt nft on this SKU has no `auto-merge`. Not written into inet `TO_CN` / `bypass_ip` / `ext`. |
 | `dns_exclude` | `ipv4_addr`, interval | **Transparent / shared hijack.** Dest IPs whose :53 is never stolen (`dns_hijack_exclude`). |
 
 `ext` must support runtime updates and survive reloads. Never replace with static-only rules.
@@ -444,13 +444,15 @@ Non-nft companions (mandatory with these rules):
 add table netdev gfc_trans
 
 add set netdev gfc_trans hitch_reply { type inet_proto . ipv4_addr . inet_service . ipv4_addr . inet_service; timeout 2m; size 65536; flags dynamic,timeout; }
-add set netdev gfc_trans no_steal_dst { type ipv4_addr; flags interval, auto-merge; }
+add set netdev gfc_trans no_steal_dst { type ipv4_addr; flags interval; }
 # populated: RFC1918, learned public CE/GW (omit hosts already inside RFC1918), bypass_ip copy, and TO_CN copy when routing_mode=split
+# Do not set auto-merge: current ImmortalWrt nft rejects that flag.
 add set netdev gfc_trans dns_exclude { type ipv4_addr; flags interval; }
 
 # in_isp: hitch 5-tuple → local (gfc-ce); everything else L2 to CPE
 add chain netdev gfc_trans in_isp { type filter hook ingress device "<isp_port>" priority -500; policy accept; }
-add rule netdev gfc_trans in_isp meta l4proto { tcp, udp } meta l4proto . ip saddr . th sport . ip daddr . th dport @hitch_reply fwd to "gfc-ce"
+add rule netdev gfc_trans in_isp ip protocol tcp meta l4proto . ip saddr . tcp sport . ip daddr . tcp dport @hitch_reply fwd to "gfc-ce"
+add rule netdev gfc_trans in_isp ip protocol udp meta l4proto . ip saddr . udp sport . ip daddr . udp dport @hitch_reply fwd to "gfc-ce"
 
 # in_cpe: order is mandatory (first match wins). Default verdict accept = L2.
 add chain netdev gfc_trans in_cpe { type filter hook ingress device "<cpe_port>" priority -500; policy accept; }
@@ -476,7 +478,10 @@ add rule netdev gfc_trans in_cpe meta l4proto tcp fwd to "gfc-ce"
 
 # eg_isp: rewrite MAC only on locally originated frames (src MAC = NIC hardware MAC)
 add chain netdev gfc_trans eg_isp { type filter hook egress device "<isp_port>" priority 0; policy accept; }
-add rule netdev gfc_trans eg_isp ether saddr <isp_hw_mac> meta l4proto { tcp, udp } update @hitch_reply { meta l4proto . ip daddr . th dport . ip saddr . th sport timeout 2m }
+# First concat field must be `meta l4proto`. `{ tcp . ip daddr ...}` is a syntax error
+# on current ImmortalWrt nft (`tcp` inside braces is parsed as TCP header, not inet_proto).
+add rule netdev gfc_trans eg_isp ether saddr <isp_hw_mac> ip protocol tcp update @hitch_reply { meta l4proto . ip daddr . tcp dport . ip saddr . tcp sport timeout 2m }
+add rule netdev gfc_trans eg_isp ether saddr <isp_hw_mac> ip protocol udp update @hitch_reply { meta l4proto . ip daddr . udp dport . ip saddr . udp sport timeout 2m }
 add rule netdev gfc_trans eg_isp ether saddr <isp_hw_mac> ether saddr set <cpe_mac> ether daddr set <pe_mac>
 
 # eg_cpe: DNS / proxy return originated by the box (src MAC = CPE NIC hardware)
@@ -488,6 +493,11 @@ inet delta (existing chains; extra **match** rows only):
 
 ```nft
 # nat — management mini-gateway + DNS trampoline SNAT (never bare oif isp masquerade)
+# Hitch returns: CE /32 is removed from table local so tun replies to the real CPE
+# are not swallowed. netdev fwd does not restore SNAT conntrack, so dest is still
+# CE and would be forwarded off-box. DNAT hitch-bind before routing.
+add chain inet nat prerouting { type nat hook prerouting priority dstnat; policy accept; }
+add rule inet nat prerouting iifname "gfc-ce" ip daddr <ce_ip> dnat ip to 172.31.253.1
 add rule inet nat postrouting oifname "<isp_port>" ip saddr <lan_subnet> snat to <ce_ip>
 add rule inet nat postrouting oifname "<cpe_port>" udp sport 53 snat to ct original ip daddr
 add rule inet nat postrouting oifname "<cpe_port>" tcp sport 53 snat to ct original ip daddr

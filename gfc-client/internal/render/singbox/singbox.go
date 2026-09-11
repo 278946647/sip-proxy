@@ -123,8 +123,14 @@ func (r *Renderer) RenderActive(payload map[string]any, ruleSets []map[string]an
 	if wan == "" {
 		return nil, fmt.Errorf("WAN interface unknown — set GFC_WAN_IFACE in gfc.env and run apply-network.sh")
 	}
+	bindIface := wan
+	if proxyMode == "transparent" {
+		// Hitch returns are punted to dummy gfc-ce. SO_BINDTODEVICE on the
+		// isp slave would drop SYN-ACK. Never gfctun (kernel-split loop).
+		bindIface = "gfc-ce"
+	}
 	directLocal := map[string]any{"type": "direct", "tag": "direct-local"}
-	direct := map[string]any{"type": "direct", "tag": "direct", "bind_interface": wan}
+	direct := map[string]any{"type": "direct", "tag": "direct", "bind_interface": bindIface}
 
 	nodeTag := "proxy"
 	var outbounds []any
@@ -146,7 +152,7 @@ func (r *Renderer) RenderActive(payload map[string]any, ruleSets []map[string]an
 			if i == 0 {
 				tag = nodeTag
 			}
-			ob := buildVLESSOutbound(nm, tag, wan)
+			ob := buildVLESSOutbound(nm, tag, bindIface)
 			if ob != nil {
 				outbounds = append(outbounds, ob)
 				nodeTags = append(nodeTags, tag)
@@ -177,7 +183,7 @@ func (r *Renderer) RenderActive(payload map[string]any, ruleSets []map[string]an
 		hy2Port = int(p)
 	}
 	// Insert proxy-hy2 before proxy-prefer (and before optional proxy-group already appended).
-	hy2Outbound := buildHysteria2FromPayload(address, hy2Port, hy2Payload, wan)
+	hy2Outbound := buildHysteria2FromPayload(address, hy2Port, hy2Payload, bindIface)
 	if hy2Outbound != nil {
 		// Keep order: … proxy [| proxy-group] → proxy-hy2 → proxy-prefer
 		outbounds = append(outbounds, hy2Outbound)

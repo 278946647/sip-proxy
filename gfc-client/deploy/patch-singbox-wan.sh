@@ -31,11 +31,16 @@ if [[ -z "$WAN" ]]; then
   exit 1
 fi
 
-python3 - "$CFG" "$WAN" <<'PY'
+BIND="$WAN"
+if [[ "${GFC_PROXY_MODE:-}" == "transparent" ]]; then
+  BIND="gfc-ce"
+fi
+
+python3 - "$CFG" "$WAN" "$BIND" <<'PY'
 import json, sys
 from pathlib import Path
 
-path, wan = Path(sys.argv[1]), sys.argv[2]
+path, wan, bind = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
 cfg = json.loads(path.read_text())
 changed = False
 
@@ -50,8 +55,8 @@ if route.get("auto_detect_interface") is not False:
 for ob in cfg.get("outbounds", []):
     t, tag = ob.get("type"), ob.get("tag")
     if t == "vless" or (t == "direct" and tag == "direct"):
-        if ob.get("bind_interface") != wan:
-            ob["bind_interface"] = wan
+        if ob.get("bind_interface") != bind:
+            ob["bind_interface"] = bind
             changed = True
 
 for ib in cfg.get("inbounds", []):
@@ -69,9 +74,9 @@ for ib in cfg.get("inbounds", []):
 
 if changed:
     path.write_text(json.dumps(cfg, indent=2) + "\n")
-    print(f"    patched sing-box.json (wan={wan}, stack=gvisor)")
+    print(f"    patched sing-box.json (wan={wan} bind={bind}, stack=gvisor)")
 else:
-    print(f"    sing-box.json wan={wan} ok")
+    print(f"    sing-box.json wan={wan} bind={bind} ok")
 PY
 
 if command -v sing-box >/dev/null; then

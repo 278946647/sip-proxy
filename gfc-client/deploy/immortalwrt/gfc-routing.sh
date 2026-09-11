@@ -222,9 +222,10 @@ _clear_fwmark_rules() {
 }
 
 apply_wan_nat() {
-	local proxy_mode masq_match isp ce err
+	local proxy_mode masq_match hitch_prerouting isp ce err
 	proxy_mode="$(load_proxy_mode)"
 	masq_match="    oifname \"$WAN_IFACE\" masquerade"
+	hitch_prerouting=""
 	if [ "$proxy_mode" = "bypass" ]; then
 		masq_match="    oifname \"$WAN_IFACE\" ip saddr $LAN_CIDR masquerade"
 	elif [ "$proxy_mode" = "transparent" ]; then
@@ -235,12 +236,19 @@ apply_wan_nat() {
 		# `ct original ip daddr` syntax miss cannot wipe inet nat (set -e).
 		if is_hitch_ce "$ce"; then
 			if [ -n "$isp" ]; then
-				masq_match="    oifname \"$isp\" snat to $ce"
+				masq_match="    oifname \"$isp\" meta nfproto ipv4 snat ip to $ce"
 			fi
 			if ip link show br-trans >/dev/null 2>&1; then
 				masq_match="$masq_match
-    oifname \"br-trans\" ip saddr != $ce snat to $ce"
+    oifname \"br-trans\" meta nfproto ipv4 ip saddr != $ce snat ip to $ce"
 			fi
+			# CE /32 is not in table local; hitch returns would otherwise
+			# forward to the real CPE. See NFT_ARCHITECTURE.md §9.4.
+			hitch_prerouting="
+  chain prerouting {
+    type nat hook prerouting priority dstnat; policy accept;
+    iifname \"gfc-ce\" meta nfproto ipv4 ip daddr $ce dnat ip to 172.31.253.1
+  }"
 		fi
 		[ -n "$masq_match" ] || masq_match="    ip saddr $LAN_CIDR accept"
 	fi
@@ -248,6 +256,7 @@ apply_wan_nat() {
 	nft delete table inet nat 2>/dev/null || true
 	if ! nft -f - <<EOF 2>"$err"
 table inet nat {
+$hitch_prerouting
   chain postrouting {
     type nat hook postrouting priority srcnat; policy accept;
 $masq_match
@@ -276,21 +285,24 @@ EOF
 # DNS replies must keep the resolver the client asked (NFT §9.4). Insert at head
 # so hitch SNAT on br-trans does not rewrite sport 53 first. Never fail the table.
 apply_trans_dns_snat() {
-	local cpe proto oif
+	local cpe proto oif err
 	cpe="$(load_trans_cpe)"
 	[ -n "$cpe" ] || return 0
+	err="$(mktemp)" || return 0
 	for proto in udp tcp; do
 		for oif in "$cpe" br-trans; do
 			ip link show "$oif" >/dev/null 2>&1 || continue
-			if nft insert rule inet nat postrouting meta nfproto ipv4 oifname "$oif" "$proto" sport 53 snat ip to ct original ip daddr 2>/dev/null; then
+			: >"$err"
+			if nft insert rule inet nat postrouting meta nfproto ipv4 oifname "$oif" "$proto" sport 53 snat ip to ct original ip daddr 2>"$err"; then
 				continue
 			fi
-			if nft insert rule inet nat postrouting oifname "$oif" "$proto" sport 53 snat to ct original ip daddr 2>/dev/null; then
+			if nft insert rule inet nat postrouting meta nfproto ipv4 oifname "$oif" "$proto" sport 53 snat ip to ct original daddr 2>"$err"; then
 				continue
 			fi
-			echo "WARN: transparent DNS trampoline SNAT $proto oif $oif not applied" >&2
+			echo "WARN: transparent DNS trampoline SNAT $proto oif $oif: $(tr '\n' ' ' <"$err")" >&2
 		done
 	done
+	rm -f "$err"
 	return 0
 }
 
@@ -701,6 +713,8 @@ apply_trans_addrs() {
 	ip addr replace "$vip/32" dev gfc-dns 2>/dev/null || true
 	if is_hitch_ce "$ce"; then
 		ip addr replace "$ce/32" dev gfc-ce noprefixroute 2>/dev/null || true
+		# Not in table local: tun replies to the real CPE must not be swallowed.
+		# Hitch returns (iif gfc-ce dest=$ce) need inet nat DNAT to 172.31.253.1.
 		ip route del table local "$ce/32" 2>/dev/null || true
 		# Do not route via the enslaved cpe port — L3 must use br-trans.
 		if [ -n "$l3" ]; then
@@ -776,6 +790,7 @@ apply_trans_netdev() {
 	local isp cpe vip hijack tun_up exclude no_steal ce gw
 	local isp_mac cpe_hw learned_cpe_mac pe_mac
 	local dns_vip_rules dns_steal tcp_steal mac_isp mac_cpe hitch_upd exclude_set
+	local tmp err
 	isp="$(load_trans_isp)"
 	cpe="$(load_trans_cpe)"
 	vip="$(load_dns_vip)"
@@ -825,10 +840,7 @@ apply_trans_netdev() {
     meta l4proto tcp fwd to \"gfc-ce\""
 	fi
 	mac_isp=""
-	hitch_upd=""
 	if [ -n "$isp_mac" ] && [ -n "$learned_cpe_mac" ] && [ -n "$pe_mac" ]; then
-		hitch_upd="
-    ether saddr $isp_mac meta l4proto { tcp, udp } update @hitch_reply { meta l4proto . ip daddr . th dport . ip saddr . th sport timeout 2m }"
 		mac_isp="
     ether saddr $isp_mac ether saddr set $learned_cpe_mac ether daddr set $pe_mac"
 	fi
@@ -842,8 +854,36 @@ apply_trans_netdev() {
 		exclude_set="
     elements = { $exclude }"
 	fi
+	tmp="$(mktemp)"
 	err="$(mktemp)"
-	if ! nft -f - <<EOF 2>"$err"
+	# `{ tcp . ip daddr ...}` is a syntax error on this SKU: nft parses `tcp` as
+	# a header expression (sport/dport), not inet_proto. First concat field must
+	# be `meta l4proto`. Prefer explicit tcp/udp; fall back to `th` (already loaded here).
+	hitch_in_l4="
+    meta l4proto tcp meta l4proto . ip saddr . tcp sport . ip daddr . tcp dport @hitch_reply fwd to \"gfc-ce\"
+    meta l4proto udp meta l4proto . ip saddr . udp sport . ip daddr . udp dport @hitch_reply fwd to \"gfc-ce\""
+	hitch_upd_l4=""
+	hitch_in_th="
+    meta l4proto { tcp, udp } meta l4proto . ip saddr . th sport . ip daddr . th dport @hitch_reply fwd to \"gfc-ce\""
+	hitch_upd_th=""
+	if [ -n "$isp_mac" ]; then
+		hitch_upd_l4="
+    ether saddr $isp_mac ip protocol tcp update @hitch_reply { meta l4proto . ip daddr . tcp dport . ip saddr . tcp sport timeout 2m }
+    ether saddr $isp_mac ip protocol udp update @hitch_reply { meta l4proto . ip daddr . udp dport . ip saddr . udp sport timeout 2m }"
+		hitch_upd_th="
+    ether saddr $isp_mac meta l4proto { tcp, udp } update @hitch_reply { meta l4proto . ip daddr . th dport . ip saddr . th sport timeout 2m }"
+	fi
+	loaded=0
+	last_err=""
+	for dialect in l4 th; do
+		if [ "$dialect" = l4 ]; then
+			hitch_in="$hitch_in_l4"
+			hitch_upd="$hitch_upd_l4"
+		else
+			hitch_in="$hitch_in_th"
+			hitch_upd="$hitch_upd_th"
+		fi
+		cat > "$tmp" <<EOF
 table netdev gfc_trans {
   set hitch_reply {
     type inet_proto . ipv4_addr . inet_service . ipv4_addr . inet_service
@@ -853,7 +893,7 @@ table netdev gfc_trans {
   }
   set no_steal_dst {
     type ipv4_addr
-    flags interval, auto-merge
+    flags interval
     elements = { $no_steal }
   }
   set dns_exclude {
@@ -862,7 +902,7 @@ table netdev gfc_trans {
   }
   chain in_isp {
     type filter hook ingress device "$isp" priority -500; policy accept;
-    meta l4proto { tcp, udp } meta l4proto . ip saddr . th sport . ip daddr . th dport @hitch_reply fwd to "gfc-ce"
+$hitch_in
   }
   chain in_cpe {
     type filter hook ingress device "$cpe" priority -500; policy accept;
@@ -888,12 +928,18 @@ $mac_cpe
   }
 }
 EOF
-	then
-		echo "WARN: nft netdev gfc_trans failed: $(tr '\n' ' ' <"$err")" >&2
-		rm -f "$err"
+		nft delete table netdev gfc_trans 2>/dev/null || true
+		if nft -f "$tmp" 2>"$err"; then
+			loaded=1
+			break
+		fi
+		last_err="$(tr '\n' ' ' <"$err")"
+	done
+	rm -f "$tmp" "$err"
+	if [ "$loaded" -ne 1 ]; then
+		echo "WARN: nft netdev gfc_trans failed: $last_err" >&2
 		return 1
 	fi
-	rm -f "$err"
 	if ! nft list table netdev gfc_trans >/dev/null 2>&1; then
 		echo "WARN: netdev gfc_trans missing after load" >&2
 		return 1
