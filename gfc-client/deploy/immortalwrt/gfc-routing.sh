@@ -882,13 +882,20 @@ apply_trans_netdev() {
 	err="$(mktemp)"
 	# `{ tcp . ip daddr ...}` is a syntax error on this SKU: nft parses `tcp` as
 	# a header expression (sport/dport), not inet_proto. First concat field must
-	# be `meta l4proto`. Prefer explicit tcp/udp; fall back to `th` (already loaded here).
+	# be `meta l4proto`. Rewrite dest to hitch-bind before fwd: CE is not in
+	# table local, so a plain fwd would be forwarded to the real CPE.
+	hitch_bind="172.31.253.1"
 	hitch_in_l4="
+    meta l4proto tcp meta l4proto . ip saddr . tcp sport . ip daddr . tcp dport @hitch_reply ip daddr set $hitch_bind fwd to \"gfc-ce\"
+    meta l4proto udp meta l4proto . ip saddr . udp sport . ip daddr . udp dport @hitch_reply ip daddr set $hitch_bind fwd to \"gfc-ce\""
+	hitch_in_l4_plain="
     meta l4proto tcp meta l4proto . ip saddr . tcp sport . ip daddr . tcp dport @hitch_reply fwd to \"gfc-ce\"
     meta l4proto udp meta l4proto . ip saddr . udp sport . ip daddr . udp dport @hitch_reply fwd to \"gfc-ce\""
-	hitch_upd_l4=""
 	hitch_in_th="
+    meta l4proto { tcp, udp } meta l4proto . ip saddr . th sport . ip daddr . th dport @hitch_reply ip daddr set $hitch_bind fwd to \"gfc-ce\""
+	hitch_in_th_plain="
     meta l4proto { tcp, udp } meta l4proto . ip saddr . th sport . ip daddr . th dport @hitch_reply fwd to \"gfc-ce\""
+	hitch_upd_l4=""
 	hitch_upd_th=""
 	if [ -n "$isp_mac" ]; then
 		hitch_upd_l4="
@@ -899,14 +906,14 @@ apply_trans_netdev() {
 	fi
 	loaded=0
 	last_err=""
-	for dialect in th l4; do
-		if [ "$dialect" = l4 ]; then
-			hitch_in="$hitch_in_l4"
-			hitch_upd="$hitch_upd_l4"
-		else
-			hitch_in="$hitch_in_th"
-			hitch_upd="$hitch_upd_th"
-		fi
+	hitch_used=""
+	for dialect in th_set l4_set th l4; do
+		case "$dialect" in
+			th_set) hitch_in="$hitch_in_th"; hitch_upd="$hitch_upd_th" ;;
+			l4_set) hitch_in="$hitch_in_l4"; hitch_upd="$hitch_upd_l4" ;;
+			th) hitch_in="$hitch_in_th_plain"; hitch_upd="$hitch_upd_th" ;;
+			*) hitch_in="$hitch_in_l4_plain"; hitch_upd="$hitch_upd_l4" ;;
+		esac
 		cat > "$tmp" <<EOF
 table netdev gfc_trans {
   set hitch_reply {
@@ -955,6 +962,7 @@ EOF
 		nft delete table netdev gfc_trans 2>/dev/null || true
 		if nft -f "$tmp" 2>"$err"; then
 			loaded=1
+			hitch_used="$dialect"
 			break
 		fi
 		last_err="$(tr '\n' ' ' <"$err")"
@@ -969,7 +977,7 @@ EOF
 		return 1
 	fi
 	fill_netdev_no_steal
-	echo "transparent netdev gfc_trans: isp=$isp cpe=$cpe hijack=$hijack tun=$tun_up vip=$vip"
+	echo "transparent netdev gfc_trans: isp=$isp cpe=$cpe hijack=$hijack tun=$tun_up vip=$vip hitch=$hitch_used"
 }
 
 fill_netdev_no_steal() {

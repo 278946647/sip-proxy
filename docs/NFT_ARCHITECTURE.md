@@ -449,10 +449,12 @@ add set netdev gfc_trans no_steal_dst { type ipv4_addr; flags interval; }
 # Do not set auto-merge: current ImmortalWrt nft rejects that flag.
 add set netdev gfc_trans dns_exclude { type ipv4_addr; flags interval; }
 
-# in_isp: hitch 5-tuple → local (gfc-ce); everything else L2 to CPE
+# in_isp: hitch 5-tuple → rewrite dest to hitch-bind 172.31.253.1 → fwd gfc-ce.
+# CE /32 is not in table local (tun replies must reach the real CPE). A plain
+# fwd leaves dest=CE and the packet is forwarded off-box; inet DNAT on dummy
+# is not reliable after nft_fwd_netdev.
 add chain netdev gfc_trans in_isp { type filter hook ingress device "<isp_port>" priority -500; policy accept; }
-add rule netdev gfc_trans in_isp ip protocol tcp meta l4proto . ip saddr . tcp sport . ip daddr . tcp dport @hitch_reply fwd to "gfc-ce"
-add rule netdev gfc_trans in_isp ip protocol udp meta l4proto . ip saddr . udp sport . ip daddr . udp dport @hitch_reply fwd to "gfc-ce"
+add rule netdev gfc_trans in_isp meta l4proto { tcp, udp } meta l4proto . ip saddr . th sport . ip daddr . th dport @hitch_reply ip daddr set 172.31.253.1 fwd to "gfc-ce"
 
 # in_cpe: order is mandatory (first match wins). Default verdict accept = L2.
 add chain netdev gfc_trans in_cpe { type filter hook ingress device "<cpe_port>" priority -500; policy accept; }
