@@ -33,7 +33,7 @@ fi
 
 BIND="$WAN"
 if [[ "${GFC_PROXY_MODE:-}" == "transparent" ]]; then
-  BIND="gfc-ce"
+  BIND=""
 fi
 
 python3 - "$CFG" "$WAN" "$BIND" <<'PY'
@@ -55,8 +55,12 @@ if route.get("auto_detect_interface") is not False:
 for ob in cfg.get("outbounds", []):
     t, tag = ob.get("type"), ob.get("tag")
     if t == "vless" or (t == "direct" and tag == "direct"):
-        if ob.get("bind_interface") != bind:
-            ob["bind_interface"] = bind
+        if bind:
+            if ob.get("bind_interface") != bind:
+                ob["bind_interface"] = bind
+                changed = True
+        elif "bind_interface" in ob:
+            del ob["bind_interface"]
             changed = True
 
 for ib in cfg.get("inbounds", []):

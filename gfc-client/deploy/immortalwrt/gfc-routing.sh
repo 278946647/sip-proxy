@@ -222,18 +222,17 @@ _clear_fwmark_rules() {
 }
 
 apply_wan_nat() {
-	local proxy_mode masq_match hitch_prerouting isp ce err
+	local proxy_mode masq_match isp ce err
 	proxy_mode="$(load_proxy_mode)"
 	masq_match="    oifname \"$WAN_IFACE\" masquerade"
-	hitch_prerouting=""
 	if [ "$proxy_mode" = "bypass" ]; then
 		masq_match="    oifname \"$WAN_IFACE\" ip saddr $LAN_CIDR masquerade"
 	elif [ "$proxy_mode" = "transparent" ]; then
 		isp="$(load_trans_isp)"
 		ce="$(load_trans_ce)"
 		masq_match=""
-		# Hitch SNAT only. DNS trampoline SNAT is inserted afterwards so a
-		# `ct original ip daddr` syntax miss cannot wipe inet nat (set -e).
+		# Hitch SNAT only. DNAT/DNS trampoline are added afterwards so a
+		# syntax miss cannot wipe inet nat (set -e).
 		if is_hitch_ce "$ce"; then
 			if [ -n "$isp" ]; then
 				masq_match="    oifname \"$isp\" meta nfproto ipv4 snat ip to $ce"
@@ -242,13 +241,6 @@ apply_wan_nat() {
 				masq_match="$masq_match
     oifname \"br-trans\" meta nfproto ipv4 ip saddr != $ce snat ip to $ce"
 			fi
-			# CE /32 is not in table local; hitch returns would otherwise
-			# forward to the real CPE. See NFT_ARCHITECTURE.md §9.4.
-			hitch_prerouting="
-  chain prerouting {
-    type nat hook prerouting priority dstnat; policy accept;
-    iifname \"gfc-ce\" meta nfproto ipv4 ip daddr $ce dnat ip to 172.31.253.1
-  }"
 		fi
 		[ -n "$masq_match" ] || masq_match="    ip saddr $LAN_CIDR accept"
 	fi
@@ -256,7 +248,6 @@ apply_wan_nat() {
 	nft delete table inet nat 2>/dev/null || true
 	if ! nft -f - <<EOF 2>"$err"
 table inet nat {
-$hitch_prerouting
   chain postrouting {
     type nat hook postrouting priority srcnat; policy accept;
 $masq_match
@@ -278,8 +269,32 @@ EOF
 	fi
 	rm -f "$err"
 	if [ "$proxy_mode" = "transparent" ]; then
+		apply_trans_hitch_dnat || true
 		apply_trans_dns_snat || true
 	fi
+}
+
+# Hitch returns dest=CE after SNAT; CE is not in table local, so without DNAT
+# they are forwarded to the real CPE. Never fail the SNAT table.
+apply_trans_hitch_dnat() {
+	local ce err
+	ce="$(load_trans_ce)"
+	is_hitch_ce "$ce" || return 0
+	ip link show gfc-ce >/dev/null 2>&1 || return 0
+	err="$(mktemp)" || return 0
+	nft add chain inet nat prerouting '{ type nat hook prerouting priority dstnat; policy accept; }' 2>/dev/null || true
+	nft flush chain inet nat prerouting 2>/dev/null || true
+	if nft add rule inet nat prerouting iifname "gfc-ce" meta nfproto ipv4 ip daddr "$ce" dnat ip to 172.31.253.1 2>"$err"; then
+		rm -f "$err"
+		return 0
+	fi
+	if nft add rule inet nat prerouting iifname "gfc-ce" ip daddr "$ce" dnat to 172.31.253.1 2>"$err"; then
+		rm -f "$err"
+		return 0
+	fi
+	echo "WARN: hitch return DNAT: $(tr '\n' ' ' <"$err")" >&2
+	rm -f "$err"
+	return 0
 }
 
 # DNS replies must keep the resolver the client asked (NFT §9.4). Insert at head
@@ -660,6 +675,7 @@ apply_trans_sysctl() {
 		sysctl -w "net.ipv4.conf.${dev}.rp_filter=2" >/dev/null 2>&1 || true
 		sysctl -w "net.ipv4.conf.${dev}.arp_ignore=2" >/dev/null 2>&1 || true
 		sysctl -w "net.ipv4.conf.${dev}.arp_announce=2" >/dev/null 2>&1 || true
+		sysctl -w "net.ipv4.conf.${dev}.accept_local=1" >/dev/null 2>&1 || true
 	done
 }
 

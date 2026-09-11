@@ -125,12 +125,16 @@ func (r *Renderer) RenderActive(payload map[string]any, ruleSets []map[string]an
 	}
 	bindIface := wan
 	if proxyMode == "transparent" {
-		// Hitch returns are punted to dummy gfc-ce. SO_BINDTODEVICE on the
-		// isp slave would drop SYN-ACK. Never gfctun (kernel-split loop).
-		bindIface = "gfc-ce"
+		// Hitch RX is on dummy gfc-ce; SO_BINDTODEVICE on isp or gfc-ce
+		// breaks the other direction. Dest is bypass_ip so OUTPUT is not
+		// marked into gfctun. Never bind gfctun (kernel-split loop).
+		bindIface = ""
 	}
 	directLocal := map[string]any{"type": "direct", "tag": "direct-local"}
-	direct := map[string]any{"type": "direct", "tag": "direct", "bind_interface": bindIface}
+	direct := map[string]any{"type": "direct", "tag": "direct"}
+	if bindIface != "" {
+		direct["bind_interface"] = bindIface
+	}
 
 	nodeTag := "proxy"
 	var outbounds []any
@@ -159,7 +163,7 @@ func (r *Renderer) RenderActive(payload map[string]any, ruleSets []map[string]an
 			}
 		}
 	} else {
-		outbounds = append(outbounds, buildVLESSFromPayload(address, port, vless, nodeTag, wan))
+		outbounds = append(outbounds, buildVLESSFromPayload(address, port, vless, nodeTag, bindIface))
 	}
 
 	if len(nodeTags) > 1 {
@@ -328,13 +332,12 @@ func buildVLESSFromPayload(address string, port int, vless map[string]any, tag, 
 	pk, _ := vless["publicKey"].(string)
 	sid, _ := vless["shortId"].(string)
 	ob := map[string]any{
-		"type":            "vless",
-		"tag":             tag,
-		"server":          address,
-		"server_port":     port,
-		"uuid":            vless["uuid"],
-		"flow":            flow,
-		"bind_interface":  wan,
+		"type":        "vless",
+		"tag":         tag,
+		"server":      address,
+		"server_port": port,
+		"uuid":        vless["uuid"],
+		"flow":        flow,
 		"tls": map[string]any{
 			"enabled":     true,
 			"server_name": sni,
@@ -345,6 +348,9 @@ func buildVLESSFromPayload(address string, port int, vless map[string]any, tag, 
 				"short_id":   sid,
 			},
 		},
+	}
+	if wan != "" {
+		ob["bind_interface"] = wan
 	}
 	return ob
 }
@@ -385,17 +391,19 @@ func buildHysteria2FromPayload(address string, port int, hy2 map[string]any, wan
 		down = int(v)
 	}
 	ob := map[string]any{
-		"type":           "hysteria2",
-		"tag":            hy2ProxyTag,
-		"server":         address,
-		"server_port":    port,
-		"password":       password,
-		"bind_interface": wan,
+		"type":        "hysteria2",
+		"tag":         hy2ProxyTag,
+		"server":      address,
+		"server_port": port,
+		"password":    password,
 		"tls": map[string]any{
 			"enabled":     true,
 			"server_name": sni,
 			"insecure":    insecure,
 		},
+	}
+	if wan != "" {
+		ob["bind_interface"] = wan
 	}
 	if up > 0 {
 		ob["up_mbps"] = up
