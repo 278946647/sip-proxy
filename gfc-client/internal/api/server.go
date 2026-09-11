@@ -80,6 +80,19 @@ func NewServer(cfg *config.Config, st *store.Store, mode string) *Server {
 	s.trans = transparent.NewSupervisor(cfg)
 	s.trans.Notify(proxymode.NormalizeMode(cfg.ProxyMode))
 	policyrouting.StartDNSSnoop(cfg, s.policyRoutingEnv)
+	if proxymode.LiveMode(cfg) == proxymode.ModeTransparent {
+		go func() {
+			time.Sleep(3 * time.Second)
+			if ok, msg := s.engine.ReloadSingbox(); !ok {
+				log.Printf("transparent: sing-box rebind failed: %s", msg)
+			} else {
+				log.Printf("transparent: sing-box rebind: %s", msg)
+			}
+			if ok, msg := s.engine.ReloadDNS(); !ok {
+				log.Printf("transparent: unbound hitch-src apply: %s", msg)
+			}
+		}()
+	}
 	return s
 }
 
@@ -133,6 +146,9 @@ func (s *Server) reloadProxyModeDataplaneLocked(mode string) {
 	if ok, msg := s.engine.ReloadRoutingPolicy(); !ok {
 		log.Printf("proxy-mode routing apply: %s", msg)
 		return
+	}
+	if ok, msg := s.engine.ReloadSingbox(); !ok {
+		log.Printf("proxy-mode sing-box apply: %s", msg)
 	}
 	if ok, msg := s.engine.ReloadDNS(); !ok {
 		log.Printf("proxy-mode dns apply: %s", msg)

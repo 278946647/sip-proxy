@@ -120,6 +120,7 @@ func (r *Renderer) Render(payload map[string]any) error {
 	if platform.IsOpenWrt() {
 		text = patchOpenWrtPaths(text)
 	}
+	text = applyTransparentOutgoing(text, r.cfg)
 	if err := os.MkdirAll(filepath.Dir(r.cfg.Paths.UnboundConfig), 0o755); err != nil {
 		return err
 	}
@@ -147,14 +148,7 @@ func extraACLHosts(cfg *config.Config) []string {
 	if cfg == nil {
 		return nil
 	}
-	mode := proxymode.NormalizeMode(cfg.ProxyMode)
-	env := strings.ToLower(strings.TrimSpace(os.Getenv("GFC_PROXY_MODE")))
-	if env == proxymode.ModeBypass || env == proxymode.ModeTransparent {
-		mode = env
-	} else {
-		mode = proxymode.CommittedMode(cfg)
-	}
-	switch mode {
+	switch proxymode.LiveMode(cfg) {
 	case proxymode.ModeBypass:
 		return proxymode.LoadHosts(cfg)
 	case proxymode.ModeTransparent:
@@ -200,6 +194,29 @@ func RenderExtraACL(hosts []string) string {
 		b.WriteString("    access-control: " + net + " allow\n")
 	}
 	return b.String()
+}
+
+func applyTransparentOutgoing(text string, cfg *config.Config) string {
+	const marker = "outgoing-interface:"
+	const line = "    outgoing-interface: 172.31.253.1"
+	if proxymode.LiveMode(cfg) != proxymode.ModeTransparent {
+		if !strings.Contains(text, marker) {
+			return text
+		}
+		lines := strings.Split(text, "\n")
+		out := make([]string, 0, len(lines))
+		for _, l := range lines {
+			if strings.Contains(l, marker) {
+				continue
+			}
+			out = append(out, l)
+		}
+		return strings.Join(out, "\n")
+	}
+	if strings.Contains(text, marker) {
+		return text
+	}
+	return strings.Replace(text, "    prefer-ip4: yes", "    prefer-ip4: yes\n"+line, 1)
 }
 
 func patchIntlForwardZone(text, intlServer string) string {

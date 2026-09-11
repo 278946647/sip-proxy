@@ -2,6 +2,7 @@ package singbox
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/278946647/sip-proxy/gfc-client/internal/config"
@@ -186,4 +187,33 @@ func TestIntlDNSCidrsFromEnv(t *testing.T) {
 		t.Fatalf("got %v", got)
 	}
 	_ = os.Unsetenv("GFC_EXT_CONST_IPS")
+}
+
+func TestAlignBindWithProxyModeStripsTransparent(t *testing.T) {
+	t.Setenv("GFC_PROXY_MODE", "transparent")
+	dir := t.TempDir()
+	path := dir + "/sing-box.json"
+	doc := map[string]any{
+		"outbounds": []any{
+			map[string]any{"type": "direct", "tag": "direct", "bind_interface": "eth0"},
+			map[string]any{"type": "vless", "tag": "proxy", "bind_interface": "eth0"},
+		},
+	}
+	if err := WriteConfig(path, doc); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := AlignBindWithProxyMode(path, &config.Config{ProxyMode: "transparent"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("expected bind strip")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "bind_interface") {
+		t.Fatalf("bind leftover: %s", raw)
+	}
 }

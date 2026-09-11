@@ -50,6 +50,10 @@ func (e *Engine) ReloadDNS() (bool, string) {
 	return e.Orchestrator.ReloadDNS()
 }
 
+func (e *Engine) ReloadSingbox() (bool, string) {
+	return e.Orchestrator.ReloadSingbox()
+}
+
 func (e *Engine) LoadBundle() map[string]any {
 	return e.Orchestrator.LoadBundle()
 }

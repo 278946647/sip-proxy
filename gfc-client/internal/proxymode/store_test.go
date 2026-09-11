@@ -13,3 +13,11 @@ func TestSwitchRequestFromBodyIsInAPI(t *testing.T) {
 		t.Fatal(CommittedMode(cfg))
 	}
 }
+
+func TestLiveModeEnvWins(t *testing.T) {
+	cfg := &config.Config{Paths: config.Paths{Etc: t.TempDir()}, ProxyMode: ModeGateway}
+	t.Setenv("GFC_PROXY_MODE", "transparent")
+	if LiveMode(cfg) != ModeTransparent {
+		t.Fatalf("got %s", LiveMode(cfg))
+	}
+}

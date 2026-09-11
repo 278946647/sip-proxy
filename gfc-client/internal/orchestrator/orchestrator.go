@@ -13,6 +13,7 @@ import (
 	"github.com/278946647/sip-proxy/gfc-client/internal/dnslists"
 	"github.com/278946647/sip-proxy/gfc-client/internal/payload"
 	"github.com/278946647/sip-proxy/gfc-client/internal/platform"
+	"github.com/278946647/sip-proxy/gfc-client/internal/proxymode"
 	"github.com/278946647/sip-proxy/gfc-client/internal/render/unbound"
 	"github.com/278946647/sip-proxy/gfc-client/internal/render/singbox"
 	"github.com/278946647/sip-proxy/gfc-client/internal/rules"
@@ -457,6 +458,47 @@ func (o *Orchestrator) ReloadDNS() (bool, string) {
 		return false, err.Error()
 	}
 	return true, o.restartUnit(config.ServiceUnbound)
+}
+
+// ReloadSingbox re-renders (or strips leftover bind_interface) so transparent
+// hitch returns can hit sockets. ImmortalWrt never runs patch-singbox-wan.sh.
+func (o *Orchestrator) ReloadSingbox() (bool, string) {
+	var msgs []string
+	restart := false
+	p := o.LoadBundle()
+	if p != nil {
+		p["proxyMode"] = proxymode.LiveMode(o.cfg)
+		node, _ := p["node"].(map[string]any)
+		addr, _ := node["address"].(string)
+		if strings.TrimSpace(addr) != "" {
+			ruleSets := o.rules.Entries()
+			cfg, err := o.singbox.RenderActive(p, ruleSets)
+			if err != nil {
+				msgs = append(msgs, "sing-box render: "+err.Error())
+			} else if err := singbox.WriteConfig(o.cfg.Paths.SingboxConfig, cfg); err != nil {
+				return false, err.Error()
+			} else if err := singbox.CheckConfig(o.cfg.Paths.SingboxConfig); err != nil {
+				return false, "sing-box: " + err.Error()
+			} else {
+				msgs = append(msgs, "sing-box rerendered")
+				restart = true
+			}
+		}
+	}
+	changed, err := singbox.AlignBindWithProxyMode(o.cfg.Paths.SingboxConfig, o.cfg)
+	if err != nil {
+		msgs = append(msgs, "sing-box bind align: "+err.Error())
+	} else if changed {
+		msgs = append(msgs, "sing-box bind stripped")
+		restart = true
+	}
+	if restart {
+		msgs = append(msgs, o.restartUnit(config.ServiceSingbox))
+	}
+	if len(msgs) == 0 {
+		return true, "sing-box bind already aligned"
+	}
+	return true, joinMsgs(msgs)
 }
 
 func (o *Orchestrator) RestartServices() []string {

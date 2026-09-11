@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/278946647/sip-proxy/gfc-client/internal/config"
+	"github.com/278946647/sip-proxy/gfc-client/internal/proxymode"
 )
 
 var domesticDNS = []string{
@@ -113,10 +114,7 @@ func (r *Renderer) RenderActive(payload map[string]any, ruleSets []map[string]an
 		port = int(p)
 	}
 
-	proxyMode := strings.ToLower(strings.TrimSpace(fmt.Sprint(payload["proxyMode"])))
-	if proxyMode == "" {
-		proxyMode = r.cfg.ProxyMode
-	}
+	proxyMode := proxymode.LiveMode(r.cfg)
 	scheme := r.RoutingScheme()
 
 	wan := r.resolveWanIface()
@@ -724,6 +722,46 @@ func WriteConfig(path string, data map[string]any) error {
 	}
 	fixSingboxConfigOwner(path)
 	return nil
+}
+
+// AlignBindWithProxyMode strips SO_BINDTODEVICE on transparent leftover JSON
+// (mode switch / OEM persist does not re-render sing-box). Gateway/bypass unchanged.
+func AlignBindWithProxyMode(path string, cfg *config.Config) (bool, error) {
+	if proxymode.LiveMode(cfg) != proxymode.ModeTransparent {
+		return false, nil
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return false, err
+	}
+	changed := false
+	outs, _ := doc["outbounds"].([]any)
+	for _, item := range outs {
+		ob, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		t, _ := ob["type"].(string)
+		tag, _ := ob["tag"].(string)
+		if t != "vless" && t != "hysteria2" && !(t == "direct" && tag == "direct") {
+			continue
+		}
+		if _, ok := ob["bind_interface"]; ok {
+			delete(ob, "bind_interface")
+			changed = true
+		}
+	}
+	if !changed {
+		return false, nil
+	}
+	return true, WriteConfig(path, doc)
 }
 
 func fixSingboxConfigOwner(path string) {

@@ -284,6 +284,14 @@ apply_trans_hitch_dnat() {
 	err="$(mktemp)" || return 0
 	nft add chain inet nat prerouting '{ type nat hook prerouting priority dstnat; policy accept; }' 2>/dev/null || true
 	nft flush chain inet nat prerouting 2>/dev/null || true
+	if nft add rule inet nat prerouting iifname "gfc-ce" meta nfproto ipv4 ip daddr "$ce" dnat ip to ct original ip saddr 2>"$err"; then
+		rm -f "$err"
+		return 0
+	fi
+	if nft add rule inet nat prerouting iifname "gfc-ce" ip daddr "$ce" dnat to ct original saddr 2>"$err"; then
+		rm -f "$err"
+		return 0
+	fi
 	if nft add rule inet nat prerouting iifname "gfc-ce" meta nfproto ipv4 ip daddr "$ce" dnat ip to 172.31.253.1 2>"$err"; then
 		rm -f "$err"
 		return 0
@@ -891,7 +899,7 @@ apply_trans_netdev() {
 	fi
 	loaded=0
 	last_err=""
-	for dialect in l4 th; do
+	for dialect in th l4; do
 		if [ "$dialect" = l4 ]; then
 			hitch_in="$hitch_in_l4"
 			hitch_upd="$hitch_upd_l4"

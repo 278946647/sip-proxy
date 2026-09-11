@@ -66,6 +66,7 @@ Hijack (`gfc_dns_hijack`) is the **enforcement** path so recursive queries reach
 | Transparent on | Cable steal + inet trampoline `dnat to VIP` on `iif gfc-ce` (no naked `redirect`) |
 | Exclude list | Optional dest IPs whose :53 is never stolen (internal authoritative DNS) |
 | Transparent ACL | Learned CE `/32` in `gfc-bypass-acl.conf` include (same file as bypass hosts) |
+| Transparent hitch source | `outgoing-interface: 172.31.253.1` (dummy bind; **not** a listen/forward-zone change) |
 | Forbidden | `access-control: 0.0.0.0/0 allow`; treating RFC1918 dest :53 as auto-bypass of hijack |
 
 ---

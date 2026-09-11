@@ -70,6 +70,20 @@ func CommittedMode(cfg *config.Config) string {
 	return NormalizeMode(cfg.ProxyMode)
 }
 
+// LiveMode matches gfc-routing.sh load_proxy_mode: env (pending switch) then
+// proxy-mode.json then cfg. Device Web is authoritative; payload is not.
+func LiveMode(cfg *config.Config) string {
+	env := strings.ToLower(strings.TrimSpace(os.Getenv("GFC_PROXY_MODE")))
+	switch env {
+	case ModeGateway, ModeBypass, ModeTransparent:
+		return env
+	}
+	if cfg != nil {
+		return CommittedMode(cfg)
+	}
+	return ModeGateway
+}
+
 func LoadCommitted(cfg *config.Config) (CommittedState, error) {
 	var st CommittedState
 	data, err := os.ReadFile(proxyModePath(cfg))
