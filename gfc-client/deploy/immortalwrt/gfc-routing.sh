@@ -127,6 +127,20 @@ is_onlink_gw() {
 	return 0
 }
 
+# nft interval sets reject a host that already sits inside a listed prefix.
+# RFC1918 CE/GW are covered by the static 10/8 172.16/12 192.168/16 rows.
+no_steal_needs_host() {
+	local ip="$1"
+	is_ipv4 "$ip" || return 1
+	case "$ip" in
+		127.*) return 1 ;;
+	esac
+	if is_rfc1918 "$ip"; then
+		return 1
+	fi
+	return 0
+}
+
 # Comma-separated IPv4 addresses on an iface (no prefix). Bypass DNS pointed
 # at the WAN IP must skip redirect; inet `fib daddr type local` may not match.
 list_iface_ipv4_csv() {
@@ -784,10 +798,10 @@ apply_trans_netdev() {
 	no_steal="10.0.0.0/8, 127.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16"
 	ce="$(load_trans_ce)"
 	gw="$(load_trans_gw)"
-	if is_hitch_ce "$ce"; then
+	if is_hitch_ce "$ce" && no_steal_needs_host "$ce"; then
 		no_steal="$no_steal, $ce"
 	fi
-	if is_onlink_gw "$ce" "$gw"; then
+	if is_onlink_gw "$ce" "$gw" && no_steal_needs_host "$gw"; then
 		no_steal="$no_steal, $gw"
 	fi
 	dns_vip_rules="
@@ -828,7 +842,8 @@ apply_trans_netdev() {
 		exclude_set="
     elements = { $exclude }"
 	fi
-	if ! nft -f - <<EOF
+	err="$(mktemp)"
+	if ! nft -f - <<EOF 2>"$err"
 table netdev gfc_trans {
   set hitch_reply {
     type inet_proto . ipv4_addr . inet_service . ipv4_addr . inet_service
@@ -838,7 +853,7 @@ table netdev gfc_trans {
   }
   set no_steal_dst {
     type ipv4_addr
-    flags interval
+    flags interval, auto-merge
     elements = { $no_steal }
   }
   set dns_exclude {
@@ -874,11 +889,13 @@ $mac_cpe
 }
 EOF
 	then
-		echo "WARN: nft netdev gfc_trans failed (need kmod-nft-netdev / nft_fwd_netdev)" >&2
+		echo "WARN: nft netdev gfc_trans failed: $(tr '\n' ' ' <"$err")" >&2
+		rm -f "$err"
 		return 1
 	fi
+	rm -f "$err"
 	if ! nft list table netdev gfc_trans >/dev/null 2>&1; then
-		echo "WARN: netdev gfc_trans missing after load (need kmod-nft-netdev)" >&2
+		echo "WARN: netdev gfc_trans missing after load" >&2
 		return 1
 	fi
 	fill_netdev_no_steal

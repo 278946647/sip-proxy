@@ -188,7 +188,7 @@ Chain names are API. Never rename. inet names stay as in gateway/bypass. netdev 
 | `ext_const` | `ipv4_addr` | Fixed international DNS upstream IPs |
 | `customer_hosts` | `ipv4_addr`, interval | **Bypass only.** Sources allowed to be marked / DNS-hijacked on WAN. Populated from **device Web UI** (not control plane). |
 | `hitch_reply` | `inet_proto . ipv4_addr . inet_service . ipv4_addr . inet_service`, timeout, dynamic | **Transparent only** (`netdev gfc_trans`). Reverse 5-tuple of box-originated hitchhike. Never a source-port range. |
-| `no_steal_dst` | `ipv4_addr`, interval | **Transparent only** (`netdev gfc_trans`). Destinations that stay L2 (RFC1918, learned CE/GW, `bypass_ip`, and `TO_CN` in split). Not written into inet `TO_CN` / `bypass_ip` / `ext`. |
+| `no_steal_dst` | `ipv4_addr`, interval, auto-merge | **Transparent only** (`netdev gfc_trans`). Destinations that stay L2 (RFC1918, learned **public** CE/GW, `bypass_ip`, and `TO_CN` in split). RFC1918 CE/GW are not listed as hosts (overlap with `10/8` `172.16/12` `192.168/16` is a load error). Not written into inet `TO_CN` / `bypass_ip` / `ext`. |
 | `dns_exclude` | `ipv4_addr`, interval | **Transparent / shared hijack.** Dest IPs whose :53 is never stolen (`dns_hijack_exclude`). |
 
 `ext` must support runtime updates and survive reloads. Never replace with static-only rules.
@@ -444,8 +444,8 @@ Non-nft companions (mandatory with these rules):
 add table netdev gfc_trans
 
 add set netdev gfc_trans hitch_reply { type inet_proto . ipv4_addr . inet_service . ipv4_addr . inet_service; timeout 2m; size 65536; flags dynamic,timeout; }
-add set netdev gfc_trans no_steal_dst { type ipv4_addr; flags interval; }
-# populated: RFC1918, learned CE, learned GW, bypass_ip copy, and TO_CN copy when routing_mode=split
+add set netdev gfc_trans no_steal_dst { type ipv4_addr; flags interval, auto-merge; }
+# populated: RFC1918, learned public CE/GW (omit hosts already inside RFC1918), bypass_ip copy, and TO_CN copy when routing_mode=split
 add set netdev gfc_trans dns_exclude { type ipv4_addr; flags interval; }
 
 # in_isp: hitch 5-tuple → local (gfc-ce); everything else L2 to CPE

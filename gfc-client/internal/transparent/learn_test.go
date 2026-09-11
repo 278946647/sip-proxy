@@ -90,6 +90,29 @@ func TestISPTransitIPv4DoesNotBecomeGW(t *testing.T) {
 	}
 }
 
+func TestFieldCPEUnicastICMPToGWLearnsDual(t *testing.T) {
+	// Field: eth1 00:e2:69:1b:31:60 192.168.88.193 → 192.168.88.1 (PE 00:a5:27:e0:28:18).
+	st := &Learned{State: StateISPOnly, PEMAC: "00:a5:27:e0:28:18", GWIP: "192.168.88.1"}
+	cpeMAC, _ := net.ParseMAC("00:e2:69:1b:31:60")
+	peMAC, _ := net.ParseMAC("00:a5:27:e0:28:18")
+	ce := net.IPv4(192, 168, 88, 193).To4()
+	gw := net.IPv4(192, 168, 88, 1).To4()
+	frame := make([]byte, 14+20)
+	copy(frame[0:6], peMAC)
+	copy(frame[6:12], cpeMAC)
+	binary.BigEndian.PutUint16(frame[12:14], etherIPv4)
+	frame[14] = 0x45
+	copy(frame[26:30], ce)
+	copy(frame[30:34], gw)
+	ApplyFrame(RoleCPE, frame, st)
+	if st.State != StateDual || !st.LearnedCustomer {
+		t.Fatalf("expected dual after cpe unicast, got %+v", st)
+	}
+	if st.CEIP != "192.168.88.193" || st.CPEMAC != "00:e2:69:1b:31:60" {
+		t.Fatalf("ce/mac %+v", st)
+	}
+}
+
 func TestApplyFrameIPv4LearnsCE(t *testing.T) {
 	st := &Learned{}
 	cpeMAC := []byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x01}

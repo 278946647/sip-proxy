@@ -29,12 +29,15 @@ func startCapture(ports Ports, handle func(Role, []byte)) func() {
 		fds = append(fds, fd)
 		mu.Unlock()
 		wg.Add(1)
-		go func(fd int) {
+		go func(role Role, name string, fd int) {
 			defer wg.Done()
 			buf := make([]byte, 2048)
 			for {
 				n, err := unix.Read(fd, buf)
 				if err != nil {
+					if err != unix.EBADF && err != unix.EINTR {
+						log.Printf("transparent: capture read %s %s: %v", role, name, err)
+					}
 					return
 				}
 				if n < 14 {
@@ -44,7 +47,7 @@ func startCapture(ports Ports, handle func(Role, []byte)) func() {
 				copy(frame, buf[:n])
 				handle(role, frame)
 			}
-		}(fd)
+		}(role, name, fd)
 	}
 	for _, proto := range []uint16{unix.ETH_P_ARP, unix.ETH_P_IP} {
 		open(RoleISP, ports.ISP, proto)
@@ -71,12 +74,23 @@ func openPacket(name string, etherType uint16) (int, error) {
 	if err != nil {
 		return -1, err
 	}
-	_ = unix.SetsockoptInt(fd, unix.SOL_PACKET, 0x17, 1) // PACKET_IGNORE_OUTGOING
+	_ = unix.SetsockoptInt(fd, unix.SOL_PACKET, unix.PACKET_IGNORE_OUTGOING, 1)
 	sll := &unix.SockaddrLinklayer{
 		Protocol: proto,
 		Ifindex:  iface.Index,
 	}
 	if err := unix.Bind(fd, sll); err != nil {
+		_ = unix.Close(fd)
+		return -1, err
+	}
+	// Bridge unicast (CPE→PE) is PACKET_OTHERHOST. IFF_PROMISC on the NIC
+	// lets the bridge forward; the socket still drops OTHERHOST unless it
+	// joins PACKET_MR_PROMISC (tcpdump does this; ETH_P_ALL is still avoided).
+	mreq := unix.PacketMreq{
+		Ifindex: int32(iface.Index),
+		Type:    unix.PACKET_MR_PROMISC,
+	}
+	if err := unix.SetsockoptPacketMreq(fd, unix.SOL_PACKET, unix.PACKET_ADD_MEMBERSHIP, &mreq); err != nil {
 		_ = unix.Close(fd)
 		return -1, err
 	}
