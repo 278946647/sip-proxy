@@ -277,19 +277,20 @@ EOF
 # Hitch returns dest=CE after SNAT; CE is not in table local, so without DNAT
 # they are forwarded to the real CPE. Never fail the SNAT table.
 apply_trans_hitch_dnat() {
-	local ce err
+	local ce err iif isp
 	ce="$(load_trans_ce)"
 	is_hitch_ce "$ce" || return 0
+	isp="$(load_trans_isp)"
 	ip link show gfc-ce >/dev/null 2>&1 || ip link show br-trans >/dev/null 2>&1 || return 0
 	err="$(mktemp)" || return 0
 	nft add chain inet nat prerouting '{ type nat hook prerouting priority dstnat; policy accept; }' 2>/dev/null || true
 	nft flush chain inet nat prerouting 2>/dev/null || true
-	for iif in gfc-ce br-trans; do
+	# MAC-punt local receive is often iif=isp (bridge slave), not br-trans.
+	# Never DNAT iif gfctun — tun replies to the real CPE must keep dest=CE.
+	for iif in gfc-ce br-trans $isp; do
+		[ -n "$iif" ] || continue
 		ip link show "$iif" >/dev/null 2>&1 || continue
 		if nft add rule inet nat prerouting iifname "$iif" meta nfproto ipv4 ip daddr "$ce" dnat ip to 172.31.253.1 2>"$err"; then
-			continue
-		fi
-		if nft add rule inet nat prerouting iifname "$iif" ip daddr "$ce" dnat to 172.31.253.1 2>"$err"; then
 			continue
 		fi
 		echo "WARN: hitch return DNAT iif $iif: $(tr '\n' ' ' <"$err")" >&2
@@ -388,21 +389,22 @@ apply_dns_hijack() {
   }"
 		fi
 		set_block="$exclude_set"
-		trans_rules="
-    iifname \"gfc-ce\" udp dport 53 ip daddr $vip return
-    iifname \"gfc-ce\" tcp dport 53 ip daddr $vip return
-    iifname \"gfc-ce\" udp dport 53 ip daddr @dns_exclude return
-    iifname \"gfc-ce\" tcp dport 53 ip daddr @dns_exclude return
-    iifname \"br-trans\" udp dport 53 ip daddr $vip return
-    iifname \"br-trans\" tcp dport 53 ip daddr $vip return
-    iifname \"br-trans\" udp dport 53 ip daddr @dns_exclude return
-    iifname \"br-trans\" tcp dport 53 ip daddr @dns_exclude return"
-		if [ "$hijack" = "on" ]; then
+		trans_rules=""
+		for iif in gfc-ce br-trans "$(load_trans_isp)"; do
+			[ -n "$iif" ] || continue
 			trans_rules="$trans_rules
-    iifname \"gfc-ce\" udp dport 53 dnat to $vip
-    iifname \"gfc-ce\" tcp dport 53 dnat to $vip
-    iifname \"br-trans\" udp dport 53 dnat to $vip
-    iifname \"br-trans\" tcp dport 53 dnat to $vip"
+    iifname \"$iif\" udp dport 53 ip daddr $vip return
+    iifname \"$iif\" tcp dport 53 ip daddr $vip return
+    iifname \"$iif\" udp dport 53 ip daddr @dns_exclude return
+    iifname \"$iif\" tcp dport 53 ip daddr @dns_exclude return"
+		done
+		if [ "$hijack" = "on" ]; then
+			for iif in gfc-ce br-trans "$(load_trans_isp)"; do
+				[ -n "$iif" ] || continue
+				trans_rules="$trans_rules
+    iifname \"$iif\" udp dport 53 dnat ip to $vip
+    iifname \"$iif\" tcp dport 53 dnat ip to $vip"
+			done
 		fi
 	fi
 	nft -f - <<EOF
@@ -691,6 +693,9 @@ try_veth_add() {
 # Do not delete gfc-ce until a veth create has succeeded — a failed add used to
 # leave no bind address and skip the whole steal table.
 ensure_ce_veth() {
+	if [ -f /tmp/gfc-veth-missing ]; then
+		return 1
+	fi
 	if ip link show gfc-ce >/dev/null 2>&1 && ip link show gfc-ce-fwd >/dev/null 2>&1; then
 		if ip -d link show gfc-ce 2>/dev/null | grep -qw veth; then
 			ip link set gfc-ce up 2>/dev/null || true
@@ -701,12 +706,14 @@ ensure_ce_veth() {
 		fi
 	fi
 	if ! load_veth_ko; then
+		touch /tmp/gfc-veth-missing 2>/dev/null || true
 		echo "ERROR: veth.ko not loaded (need kmod-veth in image)" >&2
 		return 1
 	fi
 	del_trans_dev gfc-ce-probe
 	del_trans_dev gfc-ce-fwd-probe
 	if ! try_veth_add gfc-ce-probe gfc-ce-fwd-probe; then
+		touch /tmp/gfc-veth-missing 2>/dev/null || true
 		return 1
 	fi
 	del_trans_dev gfc-ce-probe
@@ -1200,7 +1207,7 @@ ensure_unbound_bypass_include() {
 }
 
 apply_policy_table_architecture() {
-	local ext_const routing_mode proxy_mode hosts ce
+	local ext_const routing_mode proxy_mode hosts ce isp
 	local cn_preroute_rule cn_output_rule cn_wan_rule output_customer_rule
 	local ct_head ct_wan route_head route_wan forward_customer customer_set
 	ext_const="$(fmt_ext_const_elements)"
@@ -1257,15 +1264,24 @@ ${cn_wan_rule}
 		output_customer_rule="    ip daddr @customer_hosts return"
 	fi
 	if [ "$proxy_mode" = "transparent" ]; then
+		isp="$(load_trans_isp)"
 		ct_head="    iifname \"$TUN_IFACE\" return
     fib daddr type { local, broadcast, multicast } return"
 		route_head="    iifname \"$TUN_IFACE\" return
     fib daddr type { local, broadcast, multicast } return"
 		ct_wan="    iifname \"gfc-ce\" ct mark set $MARK accept
     iifname \"br-trans\" ct mark set $MARK accept"
+		if [ -n "$isp" ]; then
+			ct_wan="$ct_wan
+    iifname \"$isp\" ct mark set $MARK accept"
+		fi
 		if [ "$routing_mode" != "global" ]; then
 			cn_wan_rule="    iifname \"gfc-ce\" ip daddr @TO_CN return
     iifname \"br-trans\" ip daddr @TO_CN return"
+			if [ -n "$isp" ]; then
+				cn_wan_rule="$cn_wan_rule
+    iifname \"$isp\" ip daddr @TO_CN return"
+			fi
 		fi
 		route_wan="    iifname \"gfc-ce\" ip daddr { 10.0.0.0/8, 127.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 } return
     iifname \"gfc-ce\" ip daddr $LAN_CIDR return
@@ -1276,10 +1292,23 @@ ${cn_wan_rule}
     iifname \"br-trans\" ip daddr $LAN_CIDR return
     iifname \"br-trans\" udp dport { 53, 67, 68, 123 } return
     iifname \"br-trans\" ip daddr @bypass_ip return
-    iifname \"br-trans\" ip daddr @ext_const ct mark $MARK meta mark set ct mark return
+    iifname \"br-trans\" ip daddr @ext_const ct mark $MARK meta mark set ct mark return"
+		if [ -n "$isp" ]; then
+			route_wan="$route_wan
+    iifname \"$isp\" ip daddr { 10.0.0.0/8, 127.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 } return
+    iifname \"$isp\" ip daddr $LAN_CIDR return
+    iifname \"$isp\" udp dport { 53, 67, 68, 123 } return
+    iifname \"$isp\" ip daddr @bypass_ip return
+    iifname \"$isp\" ip daddr @ext_const ct mark $MARK meta mark set ct mark return"
+		fi
+		route_wan="$route_wan
 ${cn_wan_rule}
     iifname \"gfc-ce\" ct mark $MARK meta mark set ct mark
     iifname \"br-trans\" ct mark $MARK meta mark set ct mark"
+		if [ -n "$isp" ]; then
+			route_wan="$route_wan
+    iifname \"$isp\" ct mark $MARK meta mark set ct mark"
+		fi
 		ce="$(load_trans_ce)"
 		if is_hitch_ce "$ce"; then
 			forward_customer="    ct state new ip saddr $ce ct mark set meta mark"

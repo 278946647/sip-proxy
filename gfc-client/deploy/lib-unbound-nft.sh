@@ -182,10 +182,10 @@ if mode == "transparent":
         '    iifname "br-trans" tcp dport 53 ip daddr @dns_exclude return',
     ]
     if hijack_on:
-        trans_lines.append(f'    iifname "gfc-ce" udp dport 53 dnat to {vip}')
-        trans_lines.append(f'    iifname "gfc-ce" tcp dport 53 dnat to {vip}')
-        trans_lines.append(f'    iifname "br-trans" udp dport 53 dnat to {vip}')
-        trans_lines.append(f'    iifname "br-trans" tcp dport 53 dnat to {vip}')
+        trans_lines.append(f'    iifname "gfc-ce" udp dport 53 dnat ip to {vip}')
+        trans_lines.append(f'    iifname "gfc-ce" tcp dport 53 dnat ip to {vip}')
+        trans_lines.append(f'    iifname "br-trans" udp dport 53 dnat ip to {vip}')
+        trans_lines.append(f'    iifname "br-trans" tcp dport 53 dnat ip to {vip}')
     trans_rules = "\n" + "\n".join(trans_lines)
 text = f"""#!/usr/sbin/nft -f
 # DNS hijack — docs/NFT_ARCHITECTURE.md (no skuid OUTPUT bypass)

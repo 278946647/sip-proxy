@@ -501,6 +501,7 @@ inet delta (existing chains; extra **match** rows only):
 add chain inet nat prerouting { type nat hook prerouting priority dstnat; policy accept; }
 add rule inet nat prerouting iifname "gfc-ce" ip daddr <ce_ip> dnat ip to 172.31.253.1
 add rule inet nat prerouting iifname "br-trans" ip daddr <ce_ip> dnat ip to 172.31.253.1
+add rule inet nat prerouting iifname "<isp_port>" ip daddr <ce_ip> dnat ip to 172.31.253.1
 add rule inet nat postrouting oifname "<isp_port>" ip saddr <lan_subnet> snat to <ce_ip>
 add rule inet nat postrouting oifname "<cpe_port>" udp sport 53 snat to ct original ip daddr
 add rule inet nat postrouting oifname "<cpe_port>" tcp sport 53 snat to ct original ip daddr
@@ -511,14 +512,16 @@ add rule inet gfc_dns_hijack prerouting iifname "gfc-ce" udp dport 53 ip daddr <
 add rule inet gfc_dns_hijack prerouting iifname "gfc-ce" tcp dport 53 ip daddr <dns_vip> return
 add rule inet gfc_dns_hijack prerouting iifname "gfc-ce" udp dport 53 ip daddr @dns_exclude return
 add rule inet gfc_dns_hijack prerouting iifname "gfc-ce" tcp dport 53 ip daddr @dns_exclude return
-add rule inet gfc_dns_hijack prerouting iifname "gfc-ce" udp dport 53 dnat to <dns_vip>
-add rule inet gfc_dns_hijack prerouting iifname "gfc-ce" tcp dport 53 dnat to <dns_vip>
+add rule inet gfc_dns_hijack prerouting iifname "gfc-ce" udp dport 53 dnat ip to <dns_vip>
+add rule inet gfc_dns_hijack prerouting iifname "gfc-ce" tcp dport 53 dnat ip to <dns_vip>
 add rule inet gfc_dns_hijack prerouting iifname "br-trans" udp dport 53 ip daddr <dns_vip> return
 add rule inet gfc_dns_hijack prerouting iifname "br-trans" tcp dport 53 ip daddr <dns_vip> return
 add rule inet gfc_dns_hijack prerouting iifname "br-trans" udp dport 53 ip daddr @dns_exclude return
 add rule inet gfc_dns_hijack prerouting iifname "br-trans" tcp dport 53 ip daddr @dns_exclude return
-add rule inet gfc_dns_hijack prerouting iifname "br-trans" udp dport 53 dnat to <dns_vip>
-add rule inet gfc_dns_hijack prerouting iifname "br-trans" tcp dport 53 dnat to <dns_vip>
+add rule inet gfc_dns_hijack prerouting iifname "br-trans" udp dport 53 dnat ip to <dns_vip>
+add rule inet gfc_dns_hijack prerouting iifname "br-trans" tcp dport 53 dnat ip to <dns_vip>
+add rule inet gfc_dns_hijack prerouting iifname "<isp_port>" udp dport 53 dnat ip to <dns_vip>
+add rule inet gfc_dns_hijack prerouting iifname "<isp_port>" tcp dport 53 dnat ip to <dns_vip>
 
 # inet gfc — stolen packets look like LAN mini-gateway (iif gfc-ce)
 add rule inet gfc prerouting_mangle_ct iifname "gfctun" return
@@ -526,6 +529,7 @@ add rule inet gfc prerouting_mangle_ct fib daddr type { local, broadcast, multic
 add rule inet gfc prerouting_mangle_ct iifname "<lan_iface>" ct mark set 0x00002023 accept
 add rule inet gfc prerouting_mangle_ct iifname "gfc-ce" ct mark set 0x00002023 accept
 add rule inet gfc prerouting_mangle_ct iifname "br-trans" ct mark set 0x00002023 accept
+add rule inet gfc prerouting_mangle_ct iifname "<isp_port>" ct mark set 0x00002023 accept
 # prerouting_mangle_route / gfc_forward: same classify order as §9.2 LAN, with iifname "gfc-ce" and "br-trans"
 # output_mangle_route: identical to §9.2 (plus ip daddr <ce_ip> return so hitch replies are not marked)
 ```
