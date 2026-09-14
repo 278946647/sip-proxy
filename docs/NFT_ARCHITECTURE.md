@@ -292,13 +292,17 @@ add rule inet gfc gfc_forward ct state new ip saddr <lan_subnet> ct mark set met
 add rule inet gfc gfc_forward accept
 
 # 12. output_mangle_route
+# Never-proxy dests MUST clear mark *before* "already marked" skip.
+# Transparent VLESS omits bind_interface; tun-inbound may copy 0x2023 onto the
+# node dial. Leaving that mark sends :8443 into table 2022 → gfctun (timeout).
+# Gateway bind_interface still works; unmark is the nft contract for bypass_ip.
 add chain inet gfc output_mangle_route { type route hook output priority filter; policy accept; }
+add rule inet gfc output_mangle_route tcp dport 212 meta mark set 0x00000000 ct mark set 0x00000000 return
+add rule inet gfc output_mangle_route ip daddr @TO_RFC1918 meta mark set 0x00000000 ct mark set 0x00000000 return
+add rule inet gfc output_mangle_route ip daddr 127.0.0.0/8 meta mark set 0x00000000 ct mark set 0x00000000 return
+add rule inet gfc output_mangle_route ip daddr @TO_CN meta mark set 0x00000000 ct mark set 0x00000000 return
+add rule inet gfc output_mangle_route ip daddr @bypass_ip counter meta mark set 0x00000000 ct mark set 0x00000000 return
 add rule inet gfc output_mangle_route meta mark != 0x00000000 return
-add rule inet gfc output_mangle_route tcp dport 212 return
-add rule inet gfc output_mangle_route ip daddr @TO_RFC1918 return
-add rule inet gfc output_mangle_route ip daddr 127.0.0.0/8 return
-add rule inet gfc output_mangle_route ip daddr @TO_CN return
-add rule inet gfc output_mangle_route ip daddr @bypass_ip counter return
 add rule inet gfc output_mangle_route meta mark set 0x00002023
 add rule inet gfc output_mangle_route ct mark set meta mark
 ```
@@ -390,13 +394,13 @@ add rule inet gfc gfc_forward accept
 
 # 12. output_mangle_route — §9.2 plus bypass customer return (before catch-all mark)
 add chain inet gfc output_mangle_route { type route hook output priority filter; policy accept; }
+add rule inet gfc output_mangle_route tcp dport 212 meta mark set 0x00000000 ct mark set 0x00000000 return
+add rule inet gfc output_mangle_route ip daddr @TO_RFC1918 meta mark set 0x00000000 ct mark set 0x00000000 return
+add rule inet gfc output_mangle_route ip daddr 127.0.0.0/8 meta mark set 0x00000000 ct mark set 0x00000000 return
+add rule inet gfc output_mangle_route ip daddr @customer_hosts meta mark set 0x00000000 ct mark set 0x00000000 return
+add rule inet gfc output_mangle_route ip daddr @TO_CN meta mark set 0x00000000 ct mark set 0x00000000 return
+add rule inet gfc output_mangle_route ip daddr @bypass_ip counter meta mark set 0x00000000 ct mark set 0x00000000 return
 add rule inet gfc output_mangle_route meta mark != 0x00000000 return
-add rule inet gfc output_mangle_route tcp dport 212 return
-add rule inet gfc output_mangle_route ip daddr @TO_RFC1918 return
-add rule inet gfc output_mangle_route ip daddr 127.0.0.0/8 return
-add rule inet gfc output_mangle_route ip daddr @customer_hosts return
-add rule inet gfc output_mangle_route ip daddr @TO_CN return
-add rule inet gfc output_mangle_route ip daddr @bypass_ip counter return
 add rule inet gfc output_mangle_route meta mark set 0x00002023
 add rule inet gfc output_mangle_route ct mark set meta mark
 ```
@@ -531,7 +535,10 @@ add rule inet gfc prerouting_mangle_ct iifname "gfc-ce" ct mark set 0x00002023 a
 add rule inet gfc prerouting_mangle_ct iifname "br-trans" ct mark set 0x00002023 accept
 add rule inet gfc prerouting_mangle_ct iifname "<isp_port>" ct mark set 0x00002023 accept
 # prerouting_mangle_route / gfc_forward: same classify order as §9.2 LAN, with iifname "gfc-ce" and "br-trans"
-# output_mangle_route: identical to §9.2 (plus ip daddr <ce_ip> return so hitch replies are not marked)
+# output_mangle_route: identical to §9.2, including bypass_ip/TO_CN/RFC1918/SSH unmark
+# before "already marked" skip (plus ip daddr <ce_ip> unmark return so hitch replies
+# are not marked into gfctun). Transparent VLESS has no bind_interface; dest @bypass_ip
+# must leave with mark 0 or the node dial follows 0x2023 → 2022 → gfctun.
 ```
 
 `dns_hijack=off`: omit LAN `redirect` (gateway) or WAN customer `redirect` (bypass); on transparent omit the non-VIP `:53 fwd` rules in `in_cpe`. Unbound stays on `:53`. Do not write learned CE/GW into `TO_CN` / `bypass_ip` / `ext` / `ext_const`.
@@ -541,6 +548,8 @@ add rule inet gfc prerouting_mangle_ct iifname "<isp_port>" ct mark set 0x000020
 ### Client business rules (never proxy)
 
 Controller, forward node, China DNS, SSH (port **212**), LAN local, RFC1918, China IP (`TO_CN`), health check, Reality handshake — enforced at nft layer via `bypass_ip` and `TO_CN`.
+
+**OUTPUT:** those destinations (and bypass `@customer_hosts` / transparent learned CE) must `meta mark set 0` / `ct mark set 0` **before** `meta mark != 0 return`. A leftover `0x2023` on the socket (typical: tun-inbound copied onto a transparent VLESS dial with no `bind_interface`) would otherwise skip the whitelist and follow table `2022` → `gfctun`.
 
 **Forbidden:** skuid-based bypass for sing-box or DNS daemons as a substitute for `bypass_ip` or `TO_CN`.
 
@@ -632,10 +641,16 @@ WAN masquerade must remain enabled.
 ### Client (gateway, bypass, and transparent)
 
 ```
-fwmark 0x2023 → table 2022 → default dev gfctun
+pref 90  to <each bypass_ip>/32  lookup main
+pref 100 fwmark 0x2023          lookup 2022
+table 2022: <each bypass_ip>/32 via main-default-nexthop
+            default dev gfctun
 ```
 
-Bypass and transparent must **enable** this rule. Disabling policy routing in `proxy_mode=bypass` or `transparent` is a bug.
+`pref 90` and the `/32` in table `2022` are mandatory. `output_mangle_route` clearing `0x2023` for dest `@bypass_ip` is not enough: a socket with `SO_MARK=0x2023` (transparent VLESS dial copies tun-inbound mark; no `bind_interface`) does FIB **before** nft. Without these rules, `connect()` to the node uses `2022 → gfctun` and hitch never sees `:8443`.
+
+Bypass and transparent must **enable** the fwmark rule. Disabling policy routing in `proxy_mode=bypass` or `transparent` is a bug. Do not add new table numbers.
+
 ### Forward Node — local egress
 
 ```

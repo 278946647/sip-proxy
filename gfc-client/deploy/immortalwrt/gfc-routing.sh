@@ -9,6 +9,7 @@ TUN_IFACE="${GFC_TUN_INTERFACE:-gfctun}"
 WAN_IFACE="${GFC_WAN_IFACE:-eth0}"
 MARK="${GFC_POLICY_MARK:-0x2023}"
 TABLE="${GFC_POLICY_TABLE:-2022}"
+BYPASS_RULE_PREF="${GFC_BYPASS_RULE_PREF:-90}"
 ROUTING_SCHEME="${GFC_ROUTING_SCHEME:-kernel-split}"
 REDIRECT_PORT="${GFC_REDIRECT_PORT:-11800}"
 SSH_PORT="${GFC_SSH_PORT:-212}"
@@ -172,6 +173,7 @@ purge_dnsmasq_dns_hijack() {
 
 stop_proxy_only() {
 	_clear_fwmark_rules
+	_clear_bypass_fib_rules
 	ip -4 route flush table "$TABLE" 2>/dev/null || true
 	nft delete table inet gfc 2>/dev/null || true
 	nft delete table inet gfc_client_mangle 2>/dev/null || true
@@ -192,6 +194,7 @@ start_direct() {
 
 stop_rules() {
 	_clear_fwmark_rules
+	_clear_bypass_fib_rules
 	ip -4 route flush table "$TABLE" 2>/dev/null || true
 	nft delete table inet gfc 2>/dev/null || true
 	nft delete table inet gfc_client_mangle 2>/dev/null || true
@@ -218,6 +221,65 @@ _clear_fwmark_rules() {
 			continue
 		fi
 		break
+	done
+}
+
+# Dest @bypass_ip must FIB via main even when the socket already has SO_MARK
+# 0x2023 (nft OUTPUT unmark runs after connect() lookup).
+_clear_bypass_fib_rules() {
+	local i=0
+	while [ "$i" -lt 64 ]; do
+		if ip -4 rule del pref "$BYPASS_RULE_PREF" 2>/dev/null; then
+			i=$((i + 1))
+			continue
+		fi
+		break
+	done
+}
+
+_each_bypass_ip() {
+	[ -f "$BYPASS_AUDIT" ] || return 0
+	local ip
+	while read -r ip; do
+		ip="${ip%%/*}"
+		ip="${ip%%#*}"
+		ip="$(echo "$ip" | tr -d ' \t\r')"
+		[ -n "$ip" ] || continue
+		is_ipv4 "$ip" || continue
+		echo "$ip"
+	done < "$BYPASS_AUDIT"
+}
+
+apply_bypass_fib_rules() {
+	local ip n=0
+	_clear_bypass_fib_rules
+	for ip in $(_each_bypass_ip); do
+		if ip -4 rule add pref "$BYPASS_RULE_PREF" to "$ip" lookup main 2>/dev/null || \
+			ip -4 rule add pref "$BYPASS_RULE_PREF" to "$ip/32" lookup main 2>/dev/null || \
+			ip -4 rule add pref "$BYPASS_RULE_PREF" to "$ip" table main 2>/dev/null; then
+			n=$((n + 1))
+		else
+			echo "WARN: ip rule pref $BYPASS_RULE_PREF to $ip lookup main failed" >&2
+		fi
+	done
+	[ "$n" -gt 0 ] && echo "bypass fib: $n dest(s) pref $BYPASS_RULE_PREF lookup main"
+}
+
+apply_bypass_policy_host_routes() {
+	local ip via dev def
+	def="$(ip -4 route show default 2>/dev/null | awk '/^default/ { print; exit }')"
+	[ -n "$def" ] || return 0
+	echo "$def" | grep -qw "dev $TUN_IFACE" && return 0
+	via="$(echo "$def" | awk '{ for (i = 1; i <= NF; i++) if ($i == "via") { print $(i + 1); exit } }')"
+	dev="$(echo "$def" | awk '{ for (i = 1; i <= NF; i++) if ($i == "dev") { print $(i + 1); exit } }')"
+	[ -n "$dev" ] || return 0
+	for ip in $(_each_bypass_ip); do
+		if [ -n "$via" ]; then
+			ip -4 route replace "$ip/32" via "$via" dev "$dev" onlink table "$TABLE" 2>/dev/null || \
+				ip -4 route replace "$ip/32" via "$via" dev "$dev" table "$TABLE" 2>/dev/null || true
+		else
+			ip -4 route replace "$ip/32" dev "$dev" table "$TABLE" 2>/dev/null || true
+		fi
 	done
 }
 
@@ -959,10 +1021,24 @@ apply_trans_netdev() {
     ip daddr @no_steal_dst accept
     meta l4proto tcp $punt_end"
 	fi
+	hitch_src_macs=""
+	for _cand in "$isp_mac" "$(hw_mac br-trans)"; do
+		[ -n "$_cand" ] || continue
+		_dup=0
+		for _have in $hitch_src_macs; do
+			if [ "$_have" = "$_cand" ]; then
+				_dup=1
+				break
+			fi
+		done
+		[ "$_dup" = 1 ] || hitch_src_macs="$hitch_src_macs $_cand"
+	done
 	mac_isp=""
-	if [ -n "$isp_mac" ] && [ -n "$learned_cpe_mac" ] && [ -n "$pe_mac" ]; then
-		mac_isp="
-    ether saddr $isp_mac ether saddr set $learned_cpe_mac ether daddr set $pe_mac"
+	if [ -n "$learned_cpe_mac" ] && [ -n "$pe_mac" ]; then
+		for m in $hitch_src_macs; do
+			mac_isp="$mac_isp
+    ether saddr $m ether saddr set $learned_cpe_mac ether daddr set $pe_mac"
+		done
 	fi
 	mac_cpe=""
 	if [ -n "$cpe_hw" ] && [ -n "$pe_mac" ]; then
@@ -994,13 +1070,13 @@ apply_trans_netdev() {
     meta l4proto { tcp, udp } meta l4proto . ip saddr . th sport . ip daddr . th dport @hitch_reply ip daddr set $hitch_bind $punt_end"
 	hitch_upd_l4=""
 	hitch_upd_th=""
-	if [ -n "$isp_mac" ]; then
-		hitch_upd_l4="
-    ether saddr $isp_mac ip protocol tcp update @hitch_reply { meta l4proto . ip daddr . tcp dport . ip saddr . tcp sport timeout 2m }
-    ether saddr $isp_mac ip protocol udp update @hitch_reply { meta l4proto . ip daddr . udp dport . ip saddr . udp sport timeout 2m }"
-		hitch_upd_th="
-    ether saddr $isp_mac meta l4proto { tcp, udp } update @hitch_reply { meta l4proto . ip daddr . th dport . ip saddr . th sport timeout 2m }"
-	fi
+	for m in $hitch_src_macs; do
+		hitch_upd_l4="$hitch_upd_l4
+    ether saddr $m ip protocol tcp update @hitch_reply { meta l4proto . ip daddr . tcp dport . ip saddr . tcp sport timeout 2m }
+    ether saddr $m ip protocol udp update @hitch_reply { meta l4proto . ip daddr . udp dport . ip saddr . udp sport timeout 2m }"
+		hitch_upd_th="$hitch_upd_th
+    ether saddr $m meta l4proto { tcp, udp } update @hitch_reply { meta l4proto . ip daddr . th dport . ip saddr . th sport timeout 2m }"
+	done
 	loaded=0
 	last_err=""
 	hitch_used=""
@@ -1122,6 +1198,10 @@ refresh_trans() {
 	apply_wan_nat || echo "WARN: hitch NAT refresh failed" >&2
 	apply_trans_netdev || echo "WARN: netdev gfc_trans refresh failed (L2 fail-open)" >&2
 	write_bypass_unbound_acl
+	if ip link show "$TUN_IFACE" >/dev/null 2>&1; then
+		apply_bypass_policy_host_routes
+		apply_bypass_fib_rules
+	fi
 }
 
 apply_bypass_sysctl() {
@@ -1226,7 +1306,7 @@ apply_policy_table_architecture() {
 	customer_set=""
 	if [ "$routing_mode" != "global" ]; then
 		cn_preroute_rule="    iifname \"$LAN_IFACE\" ip daddr @TO_CN return"
-		cn_output_rule="    ip daddr @TO_CN return"
+		cn_output_rule="    ip daddr @TO_CN meta mark set 0x00000000 ct mark set 0x00000000 return"
 	fi
 	if [ "$proxy_mode" = "bypass" ]; then
 		if [ -n "$hosts" ]; then
@@ -1261,7 +1341,7 @@ apply_policy_table_architecture() {
 ${cn_wan_rule}
     iifname \"$WAN_IFACE\" ip saddr @customer_hosts ct mark $MARK meta mark set ct mark"
 		forward_customer="    ct state new ip saddr @customer_hosts ct mark set meta mark"
-		output_customer_rule="    ip daddr @customer_hosts return"
+		output_customer_rule="    ip daddr @customer_hosts meta mark set 0x00000000 ct mark set 0x00000000 return"
 	fi
 	if [ "$proxy_mode" = "transparent" ]; then
 		isp="$(load_trans_isp)"
@@ -1312,7 +1392,7 @@ ${cn_wan_rule}
 		ce="$(load_trans_ce)"
 		if is_hitch_ce "$ce"; then
 			forward_customer="    ct state new ip saddr $ce ct mark set meta mark"
-			output_customer_rule="    ip daddr $ce return"
+			output_customer_rule="    ip daddr $ce meta mark set 0x00000000 ct mark set 0x00000000 return"
 		fi
 	fi
 	nft -f - <<EOF
@@ -1384,16 +1464,16 @@ $forward_customer
 
   chain output_mangle_route {
     type route hook output priority filter; policy accept;
-    meta mark != 0x00000000 return
-    tcp dport $SSH_PORT return
-    ip daddr @TO_RFC1918 return
-    ip daddr 127.0.0.0/8 return
+    tcp dport $SSH_PORT meta mark set 0x00000000 ct mark set 0x00000000 return
+    ip daddr @TO_RFC1918 meta mark set 0x00000000 ct mark set 0x00000000 return
+    ip daddr 127.0.0.0/8 meta mark set 0x00000000 ct mark set 0x00000000 return
 ${output_customer_rule}
 ${cn_output_rule}
-    ip daddr @bypass_ip counter return
+    ip daddr @bypass_ip counter meta mark set 0x00000000 ct mark set 0x00000000 return
     # --- GFC_USER_OVERLAY_OUTPUT_BEGIN (after bypass_ip / before catch-all mark) ---
     jump output_user_overlay
     # --- GFC_USER_OVERLAY_OUTPUT_END ---
+    meta mark != 0x00000000 return
     meta mark set $MARK
     ct mark set meta mark
   }
@@ -1684,6 +1764,9 @@ start_rules() {
 	_clear_fwmark_rules
 	ip -4 rule add pref 100 fwmark "$MARK" lookup "$TABLE" || echo "WARN: ip rule add fwmark $MARK failed" >&2
 	ip -4 route replace default dev "$TUN_IFACE" table "$TABLE" || echo "WARN: policy table $TABLE default via $TUN_IFACE failed" >&2
+	apply_bypass_policy_host_routes
+	apply_bypass_fib_rules
+	ip -4 route flush cache 2>/dev/null || true
 	if [ -x "$GFC_ROOT/deploy/apply-tc-htb.sh" ]; then
 		sh "$GFC_ROOT/deploy/apply-tc-htb.sh" apply 2>/dev/null || true
 	fi
@@ -1710,6 +1793,7 @@ case "$ACTION" in
 		[ -f "$CN_AUDIT" ] && wc -l "$CN_AUDIT" || true
 		[ -f "$BYPASS_AUDIT" ] && cat "$BYPASS_AUDIT" || true
 		ip -4 rule list | grep "$TABLE" || true
+		ip -4 rule list | grep "pref $BYPASS_RULE_PREF" || ip -4 rule list | awk -v p="$BYPASS_RULE_PREF" '$1 == p":"' || true
 		ip -4 route show table "$TABLE" 2>/dev/null || true
 		if [ "$(load_proxy_mode)" = "transparent" ]; then
 			echo "trans_ports isp=$(load_trans_isp) cpe=$(load_trans_cpe)"

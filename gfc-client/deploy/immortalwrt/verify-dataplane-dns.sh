@@ -209,6 +209,17 @@ if [ "$PROXY_MODE" = "transparent" ]; then
 	else
 		fail "transparent missing fwmark 0x2023 policy rule"
 	fi
+	if ip -4 rule list 2>/dev/null | grep -qE '^[[:space:]]*90:'; then
+		ok "bypass dest ip rule pref 90"
+	else
+		fail "transparent missing pref 90 to bypass_ip lookup main (VLESS else loops to gfctun)"
+	fi
+	out_rt="$(nft list chain inet gfc output_mangle_route 2>/dev/null || true)"
+	if echo "$out_rt" | grep -q 'daddr @bypass_ip' && echo "$out_rt" | grep 'daddr @bypass_ip' | grep -q 'mark set 0'; then
+		ok "output_mangle_route bypass_ip unmark"
+	else
+		fail "transparent output_mangle_route must clear mark for dest @bypass_ip (VLESS else loops to gfctun)"
+	fi
 	brnf="$(sysctl -n net.bridge.bridge-nf-call-iptables 2>/dev/null || echo 0)"
 	[ "$brnf" = "0" ] && ok "bridge-nf-call-iptables=0" || fail "bridge-nf-call-iptables=$brnf (must be 0)"
 	if grep -q '0.0.0.0/0' /etc/unbound/conf.d/gfc-bypass-acl.conf 2>/dev/null; then
