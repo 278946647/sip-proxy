@@ -328,18 +328,26 @@ def render_architecture(cfg: dict) -> str:
     iifname "{tun}" return
     fib daddr type {{ local, broadcast, multicast }} return"""
         ct_wan = """
-    iifname "gfc-ce" ct mark set {mark} accept""".format(mark=mark)
+    iifname "gfc-ce" ct mark set {mark} accept
+    iifname "br-trans" ct mark set {mark} accept""".format(mark=mark)
         cn_ce = ""
         if routing_mode != "global":
             cn_ce = """
-    iifname "gfc-ce" ip daddr @TO_CN return"""
+    iifname "gfc-ce" ip daddr @TO_CN return
+    iifname "br-trans" ip daddr @TO_CN return"""
         route_wan = f"""
     iifname "gfc-ce" ip daddr {{ 10.0.0.0/8, 127.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 }} return
     iifname "gfc-ce" ip daddr {lan_cidr} return
     iifname "gfc-ce" udp dport {{ 53, 67, 68, 123 }} return
     iifname "gfc-ce" ip daddr @bypass_ip return
-    iifname "gfc-ce" ip daddr @ext_const ct mark {mark} meta mark set ct mark return{cn_ce}
-    iifname "gfc-ce" ct mark {mark} meta mark set ct mark"""
+    iifname "gfc-ce" ip daddr @ext_const ct mark {mark} meta mark set ct mark return
+    iifname "br-trans" ip daddr {{ 10.0.0.0/8, 127.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 }} return
+    iifname "br-trans" ip daddr {lan_cidr} return
+    iifname "br-trans" udp dport {{ 53, 67, 68, 123 }} return
+    iifname "br-trans" ip daddr @bypass_ip return
+    iifname "br-trans" ip daddr @ext_const ct mark {mark} meta mark set ct mark return{cn_ce}
+    iifname "gfc-ce" ct mark {mark} meta mark set ct mark
+    iifname "br-trans" ct mark {mark} meta mark set ct mark"""
         if ce:
             forward_customer = f"""
     ct state new ip saddr {ce} ct mark set meta mark"""

@@ -189,10 +189,15 @@ if [ "$PROXY_MODE" = "transparent" ]; then
 	else
 		fail "transparent missing gfc-dns VIP"
 	fi
-	if ip link show gfc-ce >/dev/null 2>&1 && ip link show gfc-ce-fwd >/dev/null 2>&1; then
-		ok "gfc-ce veth pair exists"
+	if ip link show gfc-ce >/dev/null 2>&1; then
+		ok "gfc-ce punt device exists"
 	else
-		fail "transparent missing gfc-ce/gfc-ce-fwd (need kmod-veth)"
+		fail "transparent missing gfc-ce"
+	fi
+	if nft list table netdev gfc_trans >/dev/null 2>&1; then
+		ok "netdev gfc_trans present"
+	else
+		fail "transparent missing netdev gfc_trans"
 	fi
 	if nft list table inet gfc >/dev/null 2>&1; then
 		ok "inet gfc present"

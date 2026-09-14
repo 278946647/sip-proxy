@@ -65,6 +65,9 @@ func TestBuildOverlayChainNFTTransparent(t *testing.T) {
 	if !strings.Contains(text, `iifname "gfc-ce"`) {
 		t.Fatalf("missing gfc-ce overlay:\n%s", text)
 	}
+	if !strings.Contains(text, `iifname "br-trans"`) {
+		t.Fatalf("missing br-trans overlay:\n%s", text)
+	}
 }
 
 func TestSanitizeSetID(t *testing.T) {

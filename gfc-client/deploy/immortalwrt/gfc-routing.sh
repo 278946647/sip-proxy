@@ -280,27 +280,20 @@ apply_trans_hitch_dnat() {
 	local ce err
 	ce="$(load_trans_ce)"
 	is_hitch_ce "$ce" || return 0
-	ip link show gfc-ce >/dev/null 2>&1 || return 0
+	ip link show gfc-ce >/dev/null 2>&1 || ip link show br-trans >/dev/null 2>&1 || return 0
 	err="$(mktemp)" || return 0
 	nft add chain inet nat prerouting '{ type nat hook prerouting priority dstnat; policy accept; }' 2>/dev/null || true
 	nft flush chain inet nat prerouting 2>/dev/null || true
-	if nft add rule inet nat prerouting iifname "gfc-ce" meta nfproto ipv4 ip daddr "$ce" dnat ip to ct original ip saddr 2>"$err"; then
-		rm -f "$err"
-		return 0
-	fi
-	if nft add rule inet nat prerouting iifname "gfc-ce" ip daddr "$ce" dnat to ct original saddr 2>"$err"; then
-		rm -f "$err"
-		return 0
-	fi
-	if nft add rule inet nat prerouting iifname "gfc-ce" meta nfproto ipv4 ip daddr "$ce" dnat ip to 172.31.253.1 2>"$err"; then
-		rm -f "$err"
-		return 0
-	fi
-	if nft add rule inet nat prerouting iifname "gfc-ce" ip daddr "$ce" dnat to 172.31.253.1 2>"$err"; then
-		rm -f "$err"
-		return 0
-	fi
-	echo "WARN: hitch return DNAT: $(tr '\n' ' ' <"$err")" >&2
+	for iif in gfc-ce br-trans; do
+		ip link show "$iif" >/dev/null 2>&1 || continue
+		if nft add rule inet nat prerouting iifname "$iif" meta nfproto ipv4 ip daddr "$ce" dnat ip to 172.31.253.1 2>"$err"; then
+			continue
+		fi
+		if nft add rule inet nat prerouting iifname "$iif" ip daddr "$ce" dnat to 172.31.253.1 2>"$err"; then
+			continue
+		fi
+		echo "WARN: hitch return DNAT iif $iif: $(tr '\n' ' ' <"$err")" >&2
+	done
 	rm -f "$err"
 	return 0
 }
@@ -399,11 +392,17 @@ apply_dns_hijack() {
     iifname \"gfc-ce\" udp dport 53 ip daddr $vip return
     iifname \"gfc-ce\" tcp dport 53 ip daddr $vip return
     iifname \"gfc-ce\" udp dport 53 ip daddr @dns_exclude return
-    iifname \"gfc-ce\" tcp dport 53 ip daddr @dns_exclude return"
+    iifname \"gfc-ce\" tcp dport 53 ip daddr @dns_exclude return
+    iifname \"br-trans\" udp dport 53 ip daddr $vip return
+    iifname \"br-trans\" tcp dport 53 ip daddr $vip return
+    iifname \"br-trans\" udp dport 53 ip daddr @dns_exclude return
+    iifname \"br-trans\" tcp dport 53 ip daddr @dns_exclude return"
 		if [ "$hijack" = "on" ]; then
 			trans_rules="$trans_rules
     iifname \"gfc-ce\" udp dport 53 dnat to $vip
-    iifname \"gfc-ce\" tcp dport 53 dnat to $vip"
+    iifname \"gfc-ce\" tcp dport 53 dnat to $vip
+    iifname \"br-trans\" udp dport 53 dnat to $vip
+    iifname \"br-trans\" tcp dport 53 dnat to $vip"
 		fi
 	fi
 	nft -f - <<EOF
@@ -660,9 +659,38 @@ ensure_dummy() {
 	return 0
 }
 
-# veth: nft fwd to gfc-ce-fwd appears as RX on gfc-ce (inet iifname gfc-ce).
-ensure_ce_veth() {
+# Load veth.ko even if modules.dep is stale (common after OEM incremental).
+load_veth_ko() {
+	local kver ko
+	if lsmod 2>/dev/null | grep -q '^veth'; then
+		return 0
+	fi
 	modprobe veth 2>/dev/null || true
+	if lsmod 2>/dev/null | grep -q '^veth'; then
+		return 0
+	fi
+	kver="$(uname -r 2>/dev/null || true)"
+	[ -n "$kver" ] || return 1
+	ko="$(find "/lib/modules/$kver" -name 'veth.ko*' 2>/dev/null | head -1 || true)"
+	if [ -n "$ko" ]; then
+		insmod "$ko" 2>/dev/null || true
+	fi
+	lsmod 2>/dev/null | grep -q '^veth'
+}
+
+try_veth_add() {
+	local a="$1" b="$2" err
+	err="$(ip link add name "$a" type veth peer name "$b" 2>&1)" && return 0
+	err="$(ip link add "$a" type veth peer name "$b" 2>&1)" && return 0
+	err="$(ip link add name "$a" type veth peer "$b" 2>&1)" && return 0
+	echo "ERROR: ip link add veth $a/$b: $err" >&2
+	return 1
+}
+
+# veth: nft fwd to gfc-ce-fwd appears as RX on gfc-ce (inet iifname gfc-ce).
+# Do not delete gfc-ce until a veth create has succeeded — a failed add used to
+# leave no bind address and skip the whole steal table.
+ensure_ce_veth() {
 	if ip link show gfc-ce >/dev/null 2>&1 && ip link show gfc-ce-fwd >/dev/null 2>&1; then
 		if ip -d link show gfc-ce 2>/dev/null | grep -qw veth; then
 			ip link set gfc-ce up 2>/dev/null || true
@@ -672,18 +700,26 @@ ensure_ce_veth() {
 			return 0
 		fi
 	fi
+	if ! load_veth_ko; then
+		echo "ERROR: veth.ko not loaded (need kmod-veth in image)" >&2
+		return 1
+	fi
+	del_trans_dev gfc-ce-probe
+	del_trans_dev gfc-ce-fwd-probe
+	if ! try_veth_add gfc-ce-probe gfc-ce-fwd-probe; then
+		return 1
+	fi
+	del_trans_dev gfc-ce-probe
 	del_trans_dev gfc-ce
 	del_trans_dev gfc-ce-fwd
-	if ip link add gfc-ce type veth peer name gfc-ce-fwd 2>/dev/null; then
-		echo "transparent: gfc-ce/gfc-ce-fwd type veth"
-	else
-		echo "ERROR: cannot create gfc-ce veth (need kmod-veth)" >&2
+	if ! try_veth_add gfc-ce gfc-ce-fwd; then
 		return 1
 	fi
 	ip link set gfc-ce up 2>/dev/null || return 1
 	ip link set gfc-ce-fwd up 2>/dev/null || return 1
 	ip link set gfc-ce arp off 2>/dev/null || true
 	ip link set gfc-ce-fwd arp off 2>/dev/null || true
+	echo "transparent: gfc-ce/gfc-ce-fwd type veth"
 	return 0
 }
 
@@ -734,7 +770,10 @@ apply_trans_bridge() {
 	release_wan_from_netifd
 	modprobe dummy 2>/dev/null || true
 	modprobe veth 2>/dev/null || true
-	ensure_ce_veth || echo "WARN: gfc-ce veth missing; netdev fwd will fail-open" >&2
+	if ! ensure_ce_veth; then
+		echo "WARN: gfc-ce veth failed; dummy + br-trans MAC punt" >&2
+		ensure_dummy gfc-ce || echo "WARN: gfc-ce missing; hitch bind IP cannot be mounted" >&2
+	fi
 	ensure_dummy gfc-dns || echo "WARN: gfc-dns missing; DNS VIP not mounted" >&2
 	ip link show br-trans >/dev/null 2>&1 || ip link add name br-trans type bridge 2>/dev/null || true
 	ip link set "$isp" nomaster 2>/dev/null || true
@@ -843,7 +882,7 @@ apply_trans_netdev() {
 	local isp cpe vip hijack tun_up exclude no_steal ce gw
 	local isp_mac cpe_hw learned_cpe_mac pe_mac
 	local dns_vip_rules dns_steal tcp_steal mac_isp mac_cpe hitch_upd exclude_set
-	local tmp err punt_fwd punt_mac
+	local tmp err punt_fwd punt_mac punt_end punt_mode
 	isp="$(load_trans_isp)"
 	cpe="$(load_trans_cpe)"
 	vip="$(load_dns_vip)"
@@ -856,14 +895,29 @@ apply_trans_netdev() {
 	[ -n "$isp" ] && [ -n "$cpe" ] || return 1
 	modprobe nft_fwd_netdev 2>/dev/null || true
 	modprobe nft-fwd-netdev 2>/dev/null || true
-	if ! ip link show gfc-ce >/dev/null 2>&1 || ! ip link show gfc-ce-fwd >/dev/null 2>&1; then
-		echo "WARN: gfc-ce veth missing; skip netdev gfc_trans (L2 fail-open)" >&2
-		return 1
+	punt_mode=""
+	punt_end=""
+	punt_fwd=""
+	punt_mac=""
+	if ip link show gfc-ce >/dev/null 2>&1 && ip link show gfc-ce-fwd >/dev/null 2>&1 && ip -d link show gfc-ce 2>/dev/null | grep -qw veth; then
+		punt_mode="veth"
+		punt_fwd="gfc-ce-fwd"
+		punt_mac="$(hw_mac gfc-ce)"
+		punt_end="ether daddr set $punt_mac fwd to \"$punt_fwd\""
+	else
+		punt_mode="mac"
+		ensure_dummy gfc-ce || true
+		if ! ip link show br-trans >/dev/null 2>&1; then
+			echo "WARN: br-trans missing; skip netdev gfc_trans (L2 fail-open)" >&2
+			return 1
+		fi
+		punt_fwd="br-trans"
+		punt_mac="$(hw_mac br-trans)"
+		punt_end="ether daddr set $punt_mac accept"
+		echo "transparent: punt fallback ether daddr set $punt_mac accept (no veth)" >&2
 	fi
-	punt_fwd="gfc-ce-fwd"
-	punt_mac="$(hw_mac gfc-ce)"
-	if [ -z "$punt_mac" ]; then
-		echo "WARN: gfc-ce has no MAC; skip netdev gfc_trans (L2 fail-open)" >&2
+	if [ -z "$punt_mac" ] || [ -z "$punt_end" ]; then
+		echo "WARN: punt dest MAC empty (mode=$punt_mode); skip netdev gfc_trans (L2 fail-open)" >&2
 		return 1
 	fi
 	nft delete table netdev gfc_trans 2>/dev/null || true
@@ -879,8 +933,8 @@ apply_trans_netdev() {
 		no_steal="$no_steal, $gw"
 	fi
 	dns_vip_rules="
-    udp dport 53 ip daddr $vip ether daddr set $punt_mac fwd to \"$punt_fwd\"
-    tcp dport 53 ip daddr $vip ether daddr set $punt_mac fwd to \"$punt_fwd\""
+    udp dport 53 ip daddr $vip $punt_end
+    tcp dport 53 ip daddr $vip $punt_end"
 	dns_steal=""
 	if [ "$hijack" = "on" ] && [ "$tun_up" -eq 1 ]; then
 		if [ -n "$exclude" ]; then
@@ -889,14 +943,14 @@ apply_trans_netdev() {
     tcp dport 53 ip daddr @dns_exclude accept"
 		fi
 		dns_steal="$dns_steal
-    udp dport 53 ether daddr set $punt_mac fwd to \"$punt_fwd\"
-    tcp dport 53 ether daddr set $punt_mac fwd to \"$punt_fwd\""
+    udp dport 53 $punt_end
+    tcp dport 53 $punt_end"
 	fi
 	tcp_steal=""
 	if [ "$tun_up" -eq 1 ]; then
 		tcp_steal="
     ip daddr @no_steal_dst accept
-    meta l4proto tcp ether daddr set $punt_mac fwd to \"$punt_fwd\""
+    meta l4proto tcp $punt_end"
 	fi
 	mac_isp=""
 	if [ -n "$isp_mac" ] && [ -n "$learned_cpe_mac" ] && [ -n "$pe_mac" ]; then
@@ -922,15 +976,15 @@ apply_trans_netdev() {
 	# iif gfc-ce updates L4 checksums. ip daddr set is a last-resort dialect.
 	hitch_bind="172.31.253.1"
 	hitch_in_l4="
-    meta l4proto tcp meta l4proto . ip saddr . tcp sport . ip daddr . tcp dport @hitch_reply ether daddr set $punt_mac fwd to \"$punt_fwd\"
-    meta l4proto udp meta l4proto . ip saddr . udp sport . ip daddr . udp dport @hitch_reply ether daddr set $punt_mac fwd to \"$punt_fwd\""
+    meta l4proto tcp meta l4proto . ip saddr . tcp sport . ip daddr . tcp dport @hitch_reply $punt_end
+    meta l4proto udp meta l4proto . ip saddr . udp sport . ip daddr . udp dport @hitch_reply $punt_end"
 	hitch_in_l4_set="
-    meta l4proto tcp meta l4proto . ip saddr . tcp sport . ip daddr . tcp dport @hitch_reply ip daddr set $hitch_bind ether daddr set $punt_mac fwd to \"$punt_fwd\"
-    meta l4proto udp meta l4proto . ip saddr . udp sport . ip daddr . udp dport @hitch_reply ip daddr set $hitch_bind ether daddr set $punt_mac fwd to \"$punt_fwd\""
+    meta l4proto tcp meta l4proto . ip saddr . tcp sport . ip daddr . tcp dport @hitch_reply ip daddr set $hitch_bind $punt_end
+    meta l4proto udp meta l4proto . ip saddr . udp sport . ip daddr . udp dport @hitch_reply ip daddr set $hitch_bind $punt_end"
 	hitch_in_th="
-    meta l4proto { tcp, udp } meta l4proto . ip saddr . th sport . ip daddr . th dport @hitch_reply ether daddr set $punt_mac fwd to \"$punt_fwd\""
+    meta l4proto { tcp, udp } meta l4proto . ip saddr . th sport . ip daddr . th dport @hitch_reply $punt_end"
 	hitch_in_th_set="
-    meta l4proto { tcp, udp } meta l4proto . ip saddr . th sport . ip daddr . th dport @hitch_reply ip daddr set $hitch_bind ether daddr set $punt_mac fwd to \"$punt_fwd\""
+    meta l4proto { tcp, udp } meta l4proto . ip saddr . th sport . ip daddr . th dport @hitch_reply ip daddr set $hitch_bind $punt_end"
 	hitch_upd_l4=""
 	hitch_upd_th=""
 	if [ -n "$isp_mac" ]; then
@@ -1013,7 +1067,7 @@ EOF
 		return 1
 	fi
 	fill_netdev_no_steal
-	echo "transparent netdev gfc_trans: isp=$isp cpe=$cpe hijack=$hijack tun=$tun_up vip=$vip hitch=$hitch_used fwd=$punt_fwd"
+	echo "transparent netdev gfc_trans: isp=$isp cpe=$cpe hijack=$hijack tun=$tun_up vip=$vip hitch=$hitch_used punt=$punt_mode fwd=$punt_fwd"
 }
 
 fill_netdev_no_steal() {
@@ -1050,7 +1104,10 @@ fill_netdev_no_steal() {
 
 refresh_trans() {
 	[ "$(load_proxy_mode)" = "transparent" ] || return 0
-	ensure_ce_veth || echo "WARN: gfc-ce veth missing; netdev fwd will fail-open" >&2
+	if ! ensure_ce_veth; then
+		echo "WARN: gfc-ce veth failed; dummy + br-trans MAC punt" >&2
+		ensure_dummy gfc-ce || echo "WARN: gfc-ce missing" >&2
+	fi
 	ensure_dummy gfc-dns || echo "WARN: gfc-dns missing" >&2
 	apply_trans_sysctl
 	apply_trans_addrs
@@ -1204,17 +1261,25 @@ ${cn_wan_rule}
     fib daddr type { local, broadcast, multicast } return"
 		route_head="    iifname \"$TUN_IFACE\" return
     fib daddr type { local, broadcast, multicast } return"
-		ct_wan="    iifname \"gfc-ce\" ct mark set $MARK accept"
+		ct_wan="    iifname \"gfc-ce\" ct mark set $MARK accept
+    iifname \"br-trans\" ct mark set $MARK accept"
 		if [ "$routing_mode" != "global" ]; then
-			cn_wan_rule="    iifname \"gfc-ce\" ip daddr @TO_CN return"
+			cn_wan_rule="    iifname \"gfc-ce\" ip daddr @TO_CN return
+    iifname \"br-trans\" ip daddr @TO_CN return"
 		fi
 		route_wan="    iifname \"gfc-ce\" ip daddr { 10.0.0.0/8, 127.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 } return
     iifname \"gfc-ce\" ip daddr $LAN_CIDR return
     iifname \"gfc-ce\" udp dport { 53, 67, 68, 123 } return
     iifname \"gfc-ce\" ip daddr @bypass_ip return
     iifname \"gfc-ce\" ip daddr @ext_const ct mark $MARK meta mark set ct mark return
+    iifname \"br-trans\" ip daddr { 10.0.0.0/8, 127.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 } return
+    iifname \"br-trans\" ip daddr $LAN_CIDR return
+    iifname \"br-trans\" udp dport { 53, 67, 68, 123 } return
+    iifname \"br-trans\" ip daddr @bypass_ip return
+    iifname \"br-trans\" ip daddr @ext_const ct mark $MARK meta mark set ct mark return
 ${cn_wan_rule}
-    iifname \"gfc-ce\" ct mark $MARK meta mark set ct mark"
+    iifname \"gfc-ce\" ct mark $MARK meta mark set ct mark
+    iifname \"br-trans\" ct mark $MARK meta mark set ct mark"
 		ce="$(load_trans_ce)"
 		if is_hitch_ce "$ce"; then
 			forward_customer="    ct state new ip saddr $ce ct mark set meta mark"
@@ -1624,6 +1689,7 @@ case "$ACTION" in
 			echo "gfc_trans=$(nft list table netdev gfc_trans >/dev/null 2>&1 && echo yes || echo no)"
 			echo "default=$(ip -4 route show default 2>/dev/null | head -1)"
 			echo "modules=$(lsmod 2>/dev/null | awk '/dummy|veth|nft_fwd|nft_netdev/ { printf \"%s \", $1 }')"
+			echo "veth_ko=$(find /lib/modules/$(uname -r) -name 'veth.ko*' 2>/dev/null | head -1)"
 		fi
 		;;
 	*) echo "usage: $0 {start|direct|stop|restart|status|refresh-trans|leave-trans}" >&2; exit 2 ;;

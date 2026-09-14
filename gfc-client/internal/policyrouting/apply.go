@@ -350,6 +350,10 @@ func buildOverlayChainNFT(groups []Group, policies []Policy, env Env, lan, wan, 
 				"add rule inet gfc prerouting_user_overlay iifname %q %s %s comment %q\n",
 				"gfc-ce", match, action, comment+" trans",
 			))
+			b.WriteString(fmt.Sprintf(
+				"add rule inet gfc prerouting_user_overlay iifname %q %s %s comment %q\n",
+				"br-trans", match, action, comment+" trans-br",
+			))
 		}
 		b.WriteString(fmt.Sprintf("add rule inet gfc output_user_overlay %s %s comment %q\n", match, action, comment+" out"))
 	}

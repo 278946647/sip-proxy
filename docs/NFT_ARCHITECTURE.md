@@ -429,7 +429,8 @@ Same inet tables `nat` / `gfc_dns_hijack` / `gfc`, same chain names, same mark `
 Non-nft companions (mandatory with these rules):
 
 - `br-trans`: slaves `<isp_port>` + `<cpe_port>` only; **no** IP; **never** enslave `<lan_iface>` / `br-lan`
-- Veth pair `gfc-ce` / `gfc-ce-fwd`: `nft fwd` is TX (`dev_queue_xmit`). Dummy would kfree the skb (no RX). `fwd to gfc-ce-fwd` appears as RX on `gfc-ce`. Learned CE `/32` on `gfc-ce` (`noprefixroute`; dest-CE on-link via br-trans so tun replies are not swallowed by `local`)
+- Veth pair `gfc-ce` / `gfc-ce-fwd` when `kmod-veth` loads: `fwd to gfc-ce-fwd` appears as RX on `gfc-ce`. Learned CE `/32` on `gfc-ce` (`noprefixroute`; dest-CE on-link via br-trans so tun replies are not swallowed by `local`)
+- If veth cannot be created: keep dummy `gfc-ce` for hitch-bind; steal by `ether daddr set <br-trans MAC> accept` so the bridge delivers locally (`iif br-trans`). inet classify/DNAT/DNS trampoline match **both** `gfc-ce` and `br-trans`.
 - Dummy `gfc-dns`: DNS VIP `/32` (default `172.31.253.53`)
 - Hitch bind address on `gfc-ce`: `172.31.253.1/32` (reserved pool; not fake-ip `198.18.0.0/15`)
 - `net.bridge.bridge-nf-call-iptables=0` (and ip6/arp if the module is loaded)
@@ -450,8 +451,8 @@ add set netdev gfc_trans no_steal_dst { type ipv4_addr; flags interval; }
 add set netdev gfc_trans dns_exclude { type ipv4_addr; flags interval; }
 
 # in_isp: hitch 5-tuple → ether daddr = gfc-ce MAC → fwd gfc-ce-fwd (veth RX).
-# nft fwd is TX; dummy would drop. Dest MAC must be gfc-ce or ip_rcv drops
-# PACKET_OTHERHOST. Dest IP stays CE; inet DNAT on iif gfc-ce updates L4 csum.
+# Fallback without veth: ether daddr set <br-trans MAC> accept (local on bridge).
+# Dest IP stays CE; inet DNAT on iif gfc-ce / br-trans updates L4 csum.
 # CE /32 is not in table local (tun replies must reach the real CPE).
 add chain netdev gfc_trans in_isp { type filter hook ingress device "<isp_port>" priority -500; policy accept; }
 add rule netdev gfc_trans in_isp meta l4proto { tcp, udp } meta l4proto . ip saddr . th sport . ip daddr . th dport @hitch_reply ether daddr set <gfc-ce_mac> fwd to "gfc-ce-fwd"
@@ -499,6 +500,7 @@ inet delta (existing chains; extra **match** rows only):
 # are not swallowed. veth RX on gfc-ce hits this DNAT (checksum updated here).
 add chain inet nat prerouting { type nat hook prerouting priority dstnat; policy accept; }
 add rule inet nat prerouting iifname "gfc-ce" ip daddr <ce_ip> dnat ip to 172.31.253.1
+add rule inet nat prerouting iifname "br-trans" ip daddr <ce_ip> dnat ip to 172.31.253.1
 add rule inet nat postrouting oifname "<isp_port>" ip saddr <lan_subnet> snat to <ce_ip>
 add rule inet nat postrouting oifname "<cpe_port>" udp sport 53 snat to ct original ip daddr
 add rule inet nat postrouting oifname "<cpe_port>" tcp sport 53 snat to ct original ip daddr
@@ -511,13 +513,20 @@ add rule inet gfc_dns_hijack prerouting iifname "gfc-ce" udp dport 53 ip daddr @
 add rule inet gfc_dns_hijack prerouting iifname "gfc-ce" tcp dport 53 ip daddr @dns_exclude return
 add rule inet gfc_dns_hijack prerouting iifname "gfc-ce" udp dport 53 dnat to <dns_vip>
 add rule inet gfc_dns_hijack prerouting iifname "gfc-ce" tcp dport 53 dnat to <dns_vip>
+add rule inet gfc_dns_hijack prerouting iifname "br-trans" udp dport 53 ip daddr <dns_vip> return
+add rule inet gfc_dns_hijack prerouting iifname "br-trans" tcp dport 53 ip daddr <dns_vip> return
+add rule inet gfc_dns_hijack prerouting iifname "br-trans" udp dport 53 ip daddr @dns_exclude return
+add rule inet gfc_dns_hijack prerouting iifname "br-trans" tcp dport 53 ip daddr @dns_exclude return
+add rule inet gfc_dns_hijack prerouting iifname "br-trans" udp dport 53 dnat to <dns_vip>
+add rule inet gfc_dns_hijack prerouting iifname "br-trans" tcp dport 53 dnat to <dns_vip>
 
 # inet gfc — stolen packets look like LAN mini-gateway (iif gfc-ce)
 add rule inet gfc prerouting_mangle_ct iifname "gfctun" return
 add rule inet gfc prerouting_mangle_ct fib daddr type { local, broadcast, multicast } return
 add rule inet gfc prerouting_mangle_ct iifname "<lan_iface>" ct mark set 0x00002023 accept
 add rule inet gfc prerouting_mangle_ct iifname "gfc-ce" ct mark set 0x00002023 accept
-# prerouting_mangle_route / gfc_forward: same classify order as §9.2 LAN, with iifname "gfc-ce"
+add rule inet gfc prerouting_mangle_ct iifname "br-trans" ct mark set 0x00002023 accept
+# prerouting_mangle_route / gfc_forward: same classify order as §9.2 LAN, with iifname "gfc-ce" and "br-trans"
 # output_mangle_route: identical to §9.2 (plus ip daddr <ce_ip> return so hitch replies are not marked)
 ```
 
