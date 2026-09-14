@@ -150,7 +150,7 @@ Changing hook priority is prohibited without user approval and an update to this
 | Table | Family | Purpose |
 |-------|--------|---------|
 | `nat` | `inet` | SNAT / masquerade. Gateway: all `oif WAN`. Bypass: **only** `ip saddr <lan_subnet>` (management mini-gateway). Transparent: management `oif isp` `ip saddr <lan_subnet>` SNAT to learned CE; DNS reply `snat to ct original daddr`. |
-| `gfc_dns_hijack` | `inet` | DNS redirect to local `:53`. Gateway: `iif LAN`. Bypass: `iif LAN` plus `iif WAN` + `saddr @customer_hosts` (with local-dest skip). Transparent: **no** naked `redirect` on the cable; trampoline `dnat` to DNS VIP on `iif gfc-ce` (see §9.4). |
+| `gfc_dns_hijack` | `inet` | DNS redirect to local `:53`. Gateway: `iif LAN`. Bypass: `iif LAN` plus `iif WAN` + `saddr @customer_hosts` (with local-dest skip). Transparent: **no** naked `redirect` on the cable; trampoline `dnat ip to` DNS VIP on `iif gfc-ce` / `br-trans` / isp / **cpe** (MAC-punt RX is often the slave). |
 | `gfc` | `inet` | Classification, forward sync, output routing |
 | `gfc_trans` | `netdev` | **Transparent only.** Steal + TX MAC on isp/cpe. Not an inet table; do not merge into `gfc`. |
 
@@ -172,8 +172,9 @@ Do not merge tables. Do not rename tables. Do not open `bridge-nf-call-iptables`
 | `in_cpe` | ingress | filter | in table `netdev gfc_trans` (device `<cpe_port>`) |
 | `eg_isp` | egress | filter | in table `netdev gfc_trans` (device `<isp_port>`) |
 | `eg_cpe` | egress | filter | in table `netdev gfc_trans` (device `<cpe_port>`) |
+| `eg_trans` | egress | filter | in table `netdev gfc_trans` (device `br-trans`). Local hitch TX; dummy fallback oif is the bridge, not the isp NIC. |
 
-Chain names are API. Never rename. inet names stay as in gateway/bypass. netdev names are the only steal-layer API (2026-09-09).
+Chain names are API. Never rename. inet names stay as in gateway/bypass. netdev names are the only steal-layer API (2026-09-09). `eg_trans` is the dummy/bridge local-TX companion; do not use it to steal bridged customer frames (those never `xmit` on `br-trans`).
 
 ---
 
@@ -483,13 +484,22 @@ add rule netdev gfc_trans in_cpe ip daddr @no_steal_dst accept
 # international TCP only (phase 1); other UDP (QUIC) L2
 add rule netdev gfc_trans in_cpe meta l4proto tcp ether daddr set <gfc-ce_mac> fwd to "gfc-ce-fwd"
 
-# eg_isp: rewrite MAC only on locally originated frames (src MAC = NIC hardware MAC)
+# eg_isp: locally originated frames on the isp slave (src MAC != learned CPE).
+# Bridged customer CPE→PE already has CPE src MAC — do not hitch/rewrite those.
 add chain netdev gfc_trans eg_isp { type filter hook egress device "<isp_port>" priority 0; policy accept; }
 # First concat field must be `meta l4proto`. `{ tcp . ip daddr ...}` is a syntax error
 # on current ImmortalWrt nft (`tcp` inside braces is parsed as TCP header, not inet_proto).
-add rule netdev gfc_trans eg_isp ether saddr <isp_hw_mac> ip protocol tcp update @hitch_reply { meta l4proto . ip daddr . tcp dport . ip saddr . tcp sport timeout 2m }
-add rule netdev gfc_trans eg_isp ether saddr <isp_hw_mac> ip protocol udp update @hitch_reply { meta l4proto . ip daddr . udp dport . ip saddr . udp sport timeout 2m }
-add rule netdev gfc_trans eg_isp ether saddr <isp_hw_mac> ether saddr set <cpe_mac> ether daddr set <pe_mac>
+add rule netdev gfc_trans eg_isp ether saddr != <cpe_mac> ip protocol tcp update @hitch_reply { meta l4proto . ip daddr . tcp dport . ip saddr . tcp sport timeout 2m }
+add rule netdev gfc_trans eg_isp ether saddr != <cpe_mac> ip protocol udp update @hitch_reply { meta l4proto . ip daddr . udp dport . ip saddr . udp sport timeout 2m }
+add rule netdev gfc_trans eg_isp ether saddr != <cpe_mac> ether saddr set <cpe_mac> ether daddr set <pe_mac>
+
+# eg_trans: local stack xmit on br-trans (dummy fallback / hitch default oif).
+# Bridged CPE↔PE never ndo_start_xmit on the bridge, so this is local-only.
+# Hitch first, then rewrite CPE+PE so FDB sends the frame out the isp slave.
+add chain netdev gfc_trans eg_trans { type filter hook egress device "br-trans" priority 0; policy accept; }
+add rule netdev gfc_trans eg_trans ip daddr != <ce_ip> meta l4proto { tcp, udp } update @hitch_reply { meta l4proto . ip daddr . th dport . ip saddr . th sport timeout 2m }
+add rule netdev gfc_trans eg_trans ip daddr != <ce_ip> ether saddr set <cpe_mac> ether daddr set <pe_mac>
+add rule netdev gfc_trans eg_trans ip daddr <ce_ip> ether saddr set <pe_mac> ether daddr set <cpe_mac>
 
 # eg_cpe: DNS / proxy return originated by the box (src MAC = CPE NIC hardware)
 add chain netdev gfc_trans eg_cpe { type filter hook egress device "<cpe_port>" priority 0; policy accept; }
@@ -526,6 +536,10 @@ add rule inet gfc_dns_hijack prerouting iifname "br-trans" udp dport 53 dnat ip 
 add rule inet gfc_dns_hijack prerouting iifname "br-trans" tcp dport 53 dnat ip to <dns_vip>
 add rule inet gfc_dns_hijack prerouting iifname "<isp_port>" udp dport 53 dnat ip to <dns_vip>
 add rule inet gfc_dns_hijack prerouting iifname "<isp_port>" tcp dport 53 dnat ip to <dns_vip>
+add rule inet gfc_dns_hijack prerouting iifname "<cpe_port>" udp dport 53 ip daddr <dns_vip> return
+add rule inet gfc_dns_hijack prerouting iifname "<cpe_port>" tcp dport 53 ip daddr <dns_vip> return
+add rule inet gfc_dns_hijack prerouting iifname "<cpe_port>" udp dport 53 dnat ip to <dns_vip>
+add rule inet gfc_dns_hijack prerouting iifname "<cpe_port>" tcp dport 53 dnat ip to <dns_vip>
 
 # inet gfc — stolen packets look like LAN mini-gateway (iif gfc-ce)
 add rule inet gfc prerouting_mangle_ct iifname "gfctun" return
@@ -722,6 +736,7 @@ nft list table inet gfc_dns_hijack
 nft list table netdev gfc_trans
 nft list chain netdev gfc_trans in_isp
 nft list chain netdev gfc_trans in_cpe
+nft list chain netdev gfc_trans eg_trans
 nft list set netdev gfc_trans hitch_reply
 bridge link
 ip -4 addr show dev gfc-ce

@@ -59,7 +59,8 @@ inet 表 nat / gfc_dns_hijack / gfc 不改名、不改 hook/默认 mark。sing-b
 | netdev 表 | `gfc_trans` | 偷流 + TX MAC；family `netdev` |
 | isp 入向 | `in_isp` | hitch 回程 punt；其余 L2 |
 | cpe 入向 | `in_cpe` | DNS / 国际 TCP punt；协议白名单 L2 |
-| isp 出向 | `eg_isp` | 本机帧 `src MAC=CPE` |
+| isp 出向 | `eg_isp` | 本机帧 `src MAC!=CPE` → 记 hitch、改 CPE+PE |
+| 桥出向 | `eg_trans` | 本机 oif=`br-trans`（dummy 回退）；先 hitch 再改 MAC |
 | cpe 出向 | `eg_cpe` | DNS/代理回程 `src MAC=PE` |
 | 回程 set | `hitch_reply` | inet_proto . 五元组；timeout |
 | 透明桥 | `br-trans` | isp+cpe；无 IP |

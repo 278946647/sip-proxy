@@ -172,6 +172,11 @@ if [ "$PROXY_MODE" = "transparent" ]; then
 	else
 		fail "transparent missing in_isp/in_cpe"
 	fi
+	if nft list chain netdev gfc_trans eg_trans >/dev/null 2>&1; then
+		ok "gfc_trans eg_trans (local hitch on br-trans)"
+	else
+		fail "transparent missing eg_trans (VLESS SYN on br-trans is not recorded)"
+	fi
 	if ip link show br-trans >/dev/null 2>&1; then
 		ok "br-trans exists"
 		if bridge link 2>/dev/null | grep -q br-trans; then
@@ -236,6 +241,17 @@ if [ "$PROXY_MODE" = "transparent" ]; then
 		ok "transparent DNS trampoline iif gfc-ce"
 	else
 		fail "transparent missing gfc-ce DNS trampoline"
+	fi
+	hijack_tbl="$(nft list table inet gfc_dns_hijack 2>/dev/null || true)"
+	if echo "$hijack_tbl" | grep -q 'dnat ip to'; then
+		ok "transparent DNS trampoline uses dnat ip to"
+	else
+		fail "transparent DNS trampoline missing dnat ip to"
+	fi
+	if echo "$hijack_tbl" | grep -q 'br-trans'; then
+		ok "transparent DNS trampoline iif br-trans"
+	else
+		fail "transparent DNS trampoline missing iif br-trans"
 	fi
 fi
 

@@ -369,7 +369,7 @@ apply_trans_dns_snat() {
 	[ -n "$cpe" ] || return 0
 	err="$(mktemp)" || return 0
 	for proto in udp tcp; do
-		for oif in "$cpe" br-trans; do
+		for oif in "$cpe" br-trans "$(load_trans_isp)"; do
 			ip link show "$oif" >/dev/null 2>&1 || continue
 			: >"$err"
 			if nft insert rule inet nat postrouting meta nfproto ipv4 oifname "$oif" "$proto" sport 53 snat ip to ct original ip daddr 2>"$err"; then
@@ -386,7 +386,7 @@ apply_trans_dns_snat() {
 }
 
 apply_dns_hijack() {
-	local proxy_mode hosts wan_rules set_block wan_local wan_ips hijack lan_rules trans_rules vip exclude exclude_set
+	local proxy_mode hosts wan_rules set_block wan_local wan_ips hijack lan_rules trans_rules vip exclude exclude_set cpe_if
 	proxy_mode="$(load_proxy_mode)"
 	hijack="$(load_dns_hijack)"
 	hosts="$(load_customer_host_elements)"
@@ -452,7 +452,9 @@ apply_dns_hijack() {
 		fi
 		set_block="$exclude_set"
 		trans_rules=""
-		for iif in gfc-ce br-trans "$(load_trans_isp)"; do
+		cpe_if="$(load_trans_cpe)"
+		# MAC-punt local RX is often iif=cpe (query) or iif=isp (hitch). Include both slaves.
+		for iif in gfc-ce br-trans "$(load_trans_isp)" "$cpe_if"; do
 			[ -n "$iif" ] || continue
 			trans_rules="$trans_rules
     iifname \"$iif\" udp dport 53 ip daddr $vip return
@@ -461,7 +463,7 @@ apply_dns_hijack() {
     iifname \"$iif\" tcp dport 53 ip daddr @dns_exclude return"
 		done
 		if [ "$hijack" = "on" ]; then
-			for iif in gfc-ce br-trans "$(load_trans_isp)"; do
+			for iif in gfc-ce br-trans "$(load_trans_isp)" "$cpe_if"; do
 				[ -n "$iif" ] || continue
 				trans_rules="$trans_rules
     iifname \"$iif\" udp dport 53 dnat ip to $vip
@@ -950,7 +952,7 @@ apply_trans_addrs() {
 apply_trans_netdev() {
 	local isp cpe vip hijack tun_up exclude no_steal ce gw
 	local isp_mac cpe_hw learned_cpe_mac pe_mac
-	local dns_vip_rules dns_steal tcp_steal mac_isp mac_cpe hitch_upd exclude_set
+	local dns_vip_rules dns_steal tcp_steal mac_isp mac_cpe mac_trans hitch_upd hitch_local exclude_set
 	local tmp err punt_fwd punt_mac punt_end punt_mode
 	isp="$(load_trans_isp)"
 	cpe="$(load_trans_cpe)"
@@ -1022,7 +1024,7 @@ apply_trans_netdev() {
     meta l4proto tcp $punt_end"
 	fi
 	hitch_src_macs=""
-	for _cand in "$isp_mac" "$(hw_mac br-trans)"; do
+	for _cand in "$isp_mac" "$(hw_mac br-trans)" "$(hw_mac gfc-ce)"; do
 		[ -n "$_cand" ] || continue
 		_dup=0
 		for _have in $hitch_src_macs; do
@@ -1034,11 +1036,10 @@ apply_trans_netdev() {
 		[ "$_dup" = 1 ] || hitch_src_macs="$hitch_src_macs $_cand"
 	done
 	mac_isp=""
+	mac_trans=""
 	if [ -n "$learned_cpe_mac" ] && [ -n "$pe_mac" ]; then
-		for m in $hitch_src_macs; do
-			mac_isp="$mac_isp
-    ether saddr $m ether saddr set $learned_cpe_mac ether daddr set $pe_mac"
-		done
+		mac_isp="
+    ether saddr != $learned_cpe_mac ether saddr set $learned_cpe_mac ether daddr set $pe_mac"
 	fi
 	mac_cpe=""
 	if [ -n "$cpe_hw" ] && [ -n "$pe_mac" ]; then
@@ -1070,22 +1071,54 @@ apply_trans_netdev() {
     meta l4proto { tcp, udp } meta l4proto . ip saddr . th sport . ip daddr . th dport @hitch_reply ip daddr set $hitch_bind $punt_end"
 	hitch_upd_l4=""
 	hitch_upd_th=""
-	for m in $hitch_src_macs; do
-		hitch_upd_l4="$hitch_upd_l4
+	hitch_local_l4=""
+	hitch_local_th=""
+	mac_trans=""
+	if is_hitch_ce "$ce" && [ -n "$learned_cpe_mac" ] && [ -n "$pe_mac" ]; then
+		# Internet hitch: not dest=CE. DNS/trampoline replies dest=CE must go CPE, not PE.
+		hitch_local_l4="
+    ip daddr != $ce ip protocol tcp update @hitch_reply { meta l4proto . ip daddr . tcp dport . ip saddr . tcp sport timeout 2m }
+    ip daddr != $ce ip protocol udp update @hitch_reply { meta l4proto . ip daddr . udp dport . ip saddr . udp sport timeout 2m }"
+		hitch_local_th="
+    ip daddr != $ce meta l4proto { tcp, udp } update @hitch_reply { meta l4proto . ip daddr . th dport . ip saddr . th sport timeout 2m }"
+		mac_trans="
+    ip daddr != $ce ether saddr set $learned_cpe_mac ether daddr set $pe_mac
+    ip daddr $ce ether saddr set $pe_mac ether daddr set $learned_cpe_mac"
+	else
+		hitch_local_l4="
+    ip protocol tcp update @hitch_reply { meta l4proto . ip daddr . tcp dport . ip saddr . tcp sport timeout 2m }
+    ip protocol udp update @hitch_reply { meta l4proto . ip daddr . udp dport . ip saddr . udp sport timeout 2m }"
+		hitch_local_th="
+    meta l4proto { tcp, udp } update @hitch_reply { meta l4proto . ip daddr . th dport . ip saddr . th sport timeout 2m }"
+		if [ -n "$learned_cpe_mac" ] && [ -n "$pe_mac" ]; then
+			mac_trans="
+    ether saddr set $learned_cpe_mac ether daddr set $pe_mac"
+		fi
+	fi
+	if [ -n "$learned_cpe_mac" ]; then
+		hitch_upd_l4="
+    ether saddr != $learned_cpe_mac ip protocol tcp update @hitch_reply { meta l4proto . ip daddr . tcp dport . ip saddr . tcp sport timeout 2m }
+    ether saddr != $learned_cpe_mac ip protocol udp update @hitch_reply { meta l4proto . ip daddr . udp dport . ip saddr . udp sport timeout 2m }"
+		hitch_upd_th="
+    ether saddr != $learned_cpe_mac meta l4proto { tcp, udp } update @hitch_reply { meta l4proto . ip daddr . th dport . ip saddr . th sport timeout 2m }"
+	else
+		for m in $hitch_src_macs; do
+			hitch_upd_l4="$hitch_upd_l4
     ether saddr $m ip protocol tcp update @hitch_reply { meta l4proto . ip daddr . tcp dport . ip saddr . tcp sport timeout 2m }
     ether saddr $m ip protocol udp update @hitch_reply { meta l4proto . ip daddr . udp dport . ip saddr . udp sport timeout 2m }"
-		hitch_upd_th="$hitch_upd_th
+			hitch_upd_th="$hitch_upd_th
     ether saddr $m meta l4proto { tcp, udp } update @hitch_reply { meta l4proto . ip daddr . th dport . ip saddr . th sport timeout 2m }"
-	done
+		done
+	fi
 	loaded=0
 	last_err=""
 	hitch_used=""
 	for dialect in th l4 th_set l4_set; do
 		case "$dialect" in
-			th) hitch_in="$hitch_in_th"; hitch_upd="$hitch_upd_th" ;;
-			l4) hitch_in="$hitch_in_l4"; hitch_upd="$hitch_upd_l4" ;;
-			th_set) hitch_in="$hitch_in_th_set"; hitch_upd="$hitch_upd_th" ;;
-			*) hitch_in="$hitch_in_l4_set"; hitch_upd="$hitch_upd_l4" ;;
+			th) hitch_in="$hitch_in_th"; hitch_upd="$hitch_upd_th"; hitch_local="$hitch_local_th" ;;
+			l4) hitch_in="$hitch_in_l4"; hitch_upd="$hitch_upd_l4"; hitch_local="$hitch_local_l4" ;;
+			th_set) hitch_in="$hitch_in_th_set"; hitch_upd="$hitch_upd_th"; hitch_local="$hitch_local_th" ;;
+			*) hitch_in="$hitch_in_l4_set"; hitch_upd="$hitch_upd_l4"; hitch_local="$hitch_local_l4" ;;
 		esac
 		cat > "$tmp" <<EOF
 table netdev gfc_trans {
@@ -1126,6 +1159,11 @@ $tcp_steal
 $hitch_upd
 $mac_isp
   }
+  chain eg_trans {
+    type filter hook egress device "br-trans" priority 0; policy accept;
+$hitch_local
+$mac_trans
+  }
   chain eg_cpe {
     type filter hook egress device "$cpe" priority 0; policy accept;
 $mac_cpe
@@ -1150,7 +1188,7 @@ EOF
 		return 1
 	fi
 	fill_netdev_no_steal
-	echo "transparent netdev gfc_trans: isp=$isp cpe=$cpe hijack=$hijack tun=$tun_up vip=$vip hitch=$hitch_used punt=$punt_mode fwd=$punt_fwd"
+	echo "transparent netdev gfc_trans: isp=$isp cpe=$cpe hijack=$hijack tun=$tun_up vip=$vip hitch=$hitch_used punt=$punt_mode fwd=$punt_fwd eg_trans=1"
 }
 
 fill_netdev_no_steal() {
