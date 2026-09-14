@@ -224,7 +224,7 @@
 
 - 源 IP = 主 CE（SNAT 或 bind 在 dummy /32）；本机 **禁止** 对 CE 发 ARP。  
 - 邻居：GW IP → PE MAC 写死在 isp 口。  
-- POP 等基础设施仍在 `bypass_ip`，避免 VLESS 再被偷进 TUN。`output_mangle_route` 对目的 `@bypass_ip` **必须清掉** `0x2023`（在 `meta mark != 0 return` 之前）。仅清 skb mark 不够：透明 VLESS 省略 `bind_interface` 时，套接字 `SO_MARK=0x2023` 在 nft 之前查 FIB，必须另有 `ip rule pref 90 to <bypass_ip> lookup main`（及 table `2022` 的 `/32` 搭车路由），否则 `:8443` 进 `gfctun`。FIB 走 `br-trans` 之后，本机帧在桥上 `xmit`：必须在 **`eg_trans`（device br-trans）** 记 hitch。目的 **不是 CE** 的才改成 CPE 源 MAC + PE 目的 MAC（VLESS 出 isp）；目的 **是 CE** 的是 DNS/trampoline 回客户，必须改成 PE 源 MAC + CPE 目的 MAC（出 cpe）。禁止把回给 CE 的包改成 PE 目的 MAC（下联 DNS 会超时）。`eg_isp` 仅对 `ether saddr != CPE MAC` 记 hitch。电缆 DNS inet DNAT 必须覆盖 **iif cpe**（MAC-punt 后查询常从 cpe 奴口上栈）。  
+- POP 等基础设施仍在 `bypass_ip`，避免 VLESS 再被偷进 TUN。`output_mangle_route` 对目的 `@bypass_ip` **必须清掉** `0x2023`（在 `meta mark != 0 return` 之前）。仅清 skb mark 不够：透明 VLESS 省略 `bind_interface` 时，套接字 `SO_MARK=0x2023` 在 nft 之前查 FIB，必须另有 `ip rule pref 90 to <bypass_ip> lookup main`（及 table `2022` 的 `/32` 搭车路由），否则 `:8443` 进 `gfctun`。FIB 走 `br-trans` 之后，本机帧在桥上 `xmit`：必须在 **`eg_trans`（device br-trans）** 记 hitch。目的 **不是 CE** 的才改成 CPE 源 MAC + PE 目的 MAC（VLESS 出 isp）；目的 **是 CE** 的是 DNS/trampoline 回客户，必须改成 PE 源 MAC + CPE 目的 MAC（出 cpe）。禁止把回给 CE 的包改成 PE 目的 MAC（下联 DNS 会超时）。`eg_isp` 仅对 `ether saddr != CPE MAC` 记 hitch。电缆 DNS inet DNAT 必须覆盖 **iif cpe**（MAC-punt 后查询常从 cpe 奴口上栈）。`inet nat postrouting` 对 **udp/tcp sport 53 必须 `return`，再** 做 hitch `snat to CE`；否则应答源变成 CE、目的也是 CE，下联当 martian 丢掉。hitch 回程 DNAT 必须先 `dnat to ct original ip saddr`，**后面必须再留** `dnat to 172.31.253.1` 兜底（MAC-punt 回包可能对 conntrack 呈 NEW，只留 ct original 会把 `223.5.5.5` 应答转给真 CE，盒子国内 DNS 超时）。禁止只写 `ct original` 且加载成功就不再加 hitch bind。  
 - 私网 CE：上游设备继续 NAT/路由；GFC 不另要公网地址。  
 - 在 OUTPUT/SNAT 后写入 hitch 回程五元组（超时跟随连接）。
 
@@ -314,6 +314,7 @@ nft list table inet gfc_dns_hijack   # 网关/旁路开关可见；透明另有 
 
 | 日期 | 说明 |
 |------|------|
+| 2026-09-14 | hitch SNAT 不得覆盖 sport 53；回程 DNAT 恢复 `ct original ip saddr` |
 | 2026-09-11 | punt 口：`gfc-ce`/`gfc-ce-fwd` veth（`nft fwd` 必须进 RX）；`gfc-dns` 仍 dummy |
 | 2026-09-09 | 一期合入：`netdev gfc_trans`；设备 Web 开放 `transparent`；确认/回滚对齐旁路 |
 | 2026-08-31 | 讨论冻结：L2+punt、禁 proxy-ARP、状态机与 ARP 让权、默认全拦 53、跨模式劫持开关、DNS VIP、私网互联同机制 |

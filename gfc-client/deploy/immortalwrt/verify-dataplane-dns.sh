@@ -253,6 +253,21 @@ if [ "$PROXY_MODE" = "transparent" ]; then
 	else
 		fail "transparent DNS trampoline missing iif br-trans"
 	fi
+	nat_post="$(nft list chain inet nat postrouting 2>/dev/null || true)"
+	if echo "$nat_post" | grep -qE 'udp sport 53.*return|sport 53 return'; then
+		ok "transparent DNS replies skip hitch SNAT (sport 53 return)"
+	else
+		fail "transparent postrouting must return on sport 53 before hitch SNAT to CE"
+	fi
+	nat_pre="$(nft list chain inet nat prerouting 2>/dev/null || true)"
+	if echo "$nat_pre" | grep -q '172.31.253.1'; then
+		ok "transparent hitch return DNAT has hitch-bind fallback"
+	else
+		fail "transparent hitch return DNAT missing 172.31.253.1 fallback (box domestic DNS will time out)"
+	fi
+	if echo "$nat_pre" | grep -q 'ct original'; then
+		ok "transparent hitch return DNAT also restores ct original saddr"
+	fi
 fi
 
 if [ -x /etc/init.d/firewall ]; then

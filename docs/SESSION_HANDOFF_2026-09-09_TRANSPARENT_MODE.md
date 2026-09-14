@@ -15,7 +15,7 @@
 |----|------|
 | 规格 | **冻结** → `TRANSPARENT_MODE.md` |
 | 开发授权 | **已授权**（2026-09-09） |
-| 代码 | **一期已合入**（`netdev gfc_trans` / `internal/transparent` / 设备 Web 开放；确认/回滚对齐旁路） |
+| 代码 | **一期已合入**。2026-09-14：`sport 53 return` 先于 hitch SNAT；回程 DNAT `ct original ip saddr` |
 | 产品号 / `PKG_RELEASE` | **禁止**因试编升号（§1.5） |
 | 正式发版 | 交付时再定级 Dataplane-Arch / Major |
 

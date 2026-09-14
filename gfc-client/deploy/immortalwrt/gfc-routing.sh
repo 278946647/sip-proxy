@@ -296,8 +296,14 @@ apply_wan_nat() {
 		# Hitch SNAT only. DNAT/DNS trampoline are added afterwards so a
 		# syntax miss cannot wipe inet nat (set -e).
 		if is_hitch_ce "$ce"; then
+			# DNS server replies (sport 53) must not hitch-SNAT to CE.
+			# Later oif SNAT would overwrite conntrack un-DNAT / trampoline
+			# and emit src=CE dst=CE; clients drop that as a martian timeout.
+			masq_match="    udp sport 53 return
+    tcp sport 53 return"
 			if [ -n "$isp" ]; then
-				masq_match="    oifname \"$isp\" meta nfproto ipv4 snat ip to $ce"
+				masq_match="$masq_match
+    oifname \"$isp\" meta nfproto ipv4 snat ip to $ce"
 			fi
 			if ip link show br-trans >/dev/null 2>&1; then
 				masq_match="$masq_match
@@ -339,7 +345,7 @@ EOF
 # Hitch returns dest=CE after SNAT; CE is not in table local, so without DNAT
 # they are forwarded to the real CPE. Never fail the SNAT table.
 apply_trans_hitch_dnat() {
-	local ce err iif isp
+	local ce err iif isp cpe
 	ce="$(load_trans_ce)"
 	is_hitch_ce "$ce" || return 0
 	isp="$(load_trans_isp)"
@@ -349,9 +355,16 @@ apply_trans_hitch_dnat() {
 	nft flush chain inet nat prerouting 2>/dev/null || true
 	# MAC-punt local receive is often iif=isp (bridge slave), not br-trans.
 	# Never DNAT iif gfctun — tun replies to the real CPE must keep dest=CE.
-	for iif in gfc-ce br-trans $isp; do
+	# ct original first (VLESS may bind gfctun 172.19.0.1). Always also add
+	# hardcoded hitch bind: MAC-punt replies can look NEW and miss ct original,
+	# which forwarded 223.5.5.5 answers to the real CE and timed out box DNS.
+	cpe="$(load_trans_cpe)"
+	for iif in gfc-ce br-trans $isp $cpe; do
 		[ -n "$iif" ] || continue
 		ip link show "$iif" >/dev/null 2>&1 || continue
+		: >"$err"
+		nft add rule inet nat prerouting iifname "$iif" meta nfproto ipv4 ip daddr "$ce" dnat ip to ct original ip saddr 2>"$err" || \
+			nft add rule inet nat prerouting iifname "$iif" meta nfproto ipv4 ip daddr "$ce" dnat ip to ct original saddr 2>"$err" || true
 		if nft add rule inet nat prerouting iifname "$iif" meta nfproto ipv4 ip daddr "$ce" dnat ip to 172.31.253.1 2>"$err"; then
 			continue
 		fi
@@ -361,8 +374,9 @@ apply_trans_hitch_dnat() {
 	return 0
 }
 
-# DNS replies must keep the resolver the client asked (NFT §9.4). Insert at head
-# so hitch SNAT on br-trans does not rewrite sport 53 first. Never fail the table.
+# DNS replies must keep the resolver the client asked (NFT §9.4). Insert at
+# head, before sport-53 return + hitch SNAT. The return in apply_wan_nat is
+# the stop so hitch SNAT cannot overwrite. Never fail the table.
 apply_trans_dns_snat() {
 	local cpe proto oif err
 	cpe="$(load_trans_cpe)"

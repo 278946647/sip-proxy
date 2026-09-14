@@ -513,12 +513,29 @@ inet delta (existing chains; extra **match** rows only):
 # Hitch returns: CE /32 is removed from table local so tun replies to the real CPE
 # are not swallowed. veth RX on gfc-ce hits this DNAT (checksum updated here).
 add chain inet nat prerouting { type nat hook prerouting priority dstnat; policy accept; }
+# Hitch returns dest=CE. Try ct original saddr first (VLESS may bind gfctun
+# 172.19.0.1). Always keep hardcoded hitch bind after it: MAC-punt UDP replies
+# can miss conntrack and must still land on 172.31.253.1 (unbound outgoing-iface).
+add rule inet nat prerouting iifname "gfc-ce" ip daddr <ce_ip> dnat ip to ct original ip saddr
 add rule inet nat prerouting iifname "gfc-ce" ip daddr <ce_ip> dnat ip to 172.31.253.1
+add rule inet nat prerouting iifname "br-trans" ip daddr <ce_ip> dnat ip to ct original ip saddr
 add rule inet nat prerouting iifname "br-trans" ip daddr <ce_ip> dnat ip to 172.31.253.1
+add rule inet nat prerouting iifname "<isp_port>" ip daddr <ce_ip> dnat ip to ct original ip saddr
 add rule inet nat prerouting iifname "<isp_port>" ip daddr <ce_ip> dnat ip to 172.31.253.1
-add rule inet nat postrouting oifname "<isp_port>" ip saddr <lan_subnet> snat to <ce_ip>
+# DNS server replies (sport 53) must return BEFORE hitch SNAT. Otherwise
+# oif isp/br-trans snat-to-CE overwrites conntrack un-DNAT / trampoline and
+# emits src=CE dst=CE (client drops; looks like DNS timeout).
+add rule inet nat postrouting udp sport 53 return
+add rule inet nat postrouting tcp sport 53 return
+add rule inet nat postrouting oifname "<isp_port>" snat ip to <ce_ip>
+add rule inet nat postrouting oifname "br-trans" ip saddr != <ce_ip> snat ip to <ce_ip>
+# Optional trampoline at head: restore the resolver the client asked.
 add rule inet nat postrouting oifname "<cpe_port>" udp sport 53 snat to ct original ip daddr
 add rule inet nat postrouting oifname "<cpe_port>" tcp sport 53 snat to ct original ip daddr
+add rule inet nat postrouting oifname "br-trans" udp sport 53 snat to ct original ip daddr
+add rule inet nat postrouting oifname "br-trans" tcp sport 53 snat to ct original ip daddr
+add rule inet nat postrouting oifname "<isp_port>" udp sport 53 snat to ct original ip daddr
+add rule inet nat postrouting oifname "<isp_port>" tcp sport 53 snat to ct original ip daddr
 
 # gfc_dns_hijack — LAN mini-gateway redirect kept when dns_hijack=on (same as gateway LAN).
 # Cable DNS: dnat to VIP (source stays CE). Forbidden: redirect that exposes the box address.
@@ -741,6 +758,8 @@ nft list set netdev gfc_trans hitch_reply
 bridge link
 ip -4 addr show dev gfc-ce
 ip -4 addr show dev gfc-dns
+nft list chain inet nat postrouting   # sport 53 return before hitch snat to CE
+nft list chain inet nat prerouting    # hitch DNAT ct original ip saddr
 sysctl net.bridge.bridge-nf-call-iptables   # expect 0
 ip rule | grep 0x2023
 
