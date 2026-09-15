@@ -40,6 +40,8 @@ alwaysApply: true
 - 将 `proxy-prefer` 的 `outbounds` 加入 `direct`（开放 WAN 网关）
 - 修改规范 outbound tag：`direct`、`proxy`、`proxy-prefer`、`tun-in`
 - VLESS `bind_interface` 指向 `gfctun` 而非 WAN
+- 将 Client `route.default_interface` 全局写死为 `br-trans`（仅透明且该桥存在时才允许）
+- 切离透明后不把 WAN `bind_interface` / WAN `default_interface` 写回 JSON
 - `route.final` 改为 `proxy` / `proxy-prefer`（kernel-split 必须为 `direct`）
 - 因 `proxy_mode=bypass` 改 TUN / `auto_route` / `route.final`（旁路分类在 nft，sing-box 契约不变）
 - 用 skuid / process 规则替代 `ip_cidr` bypass
@@ -70,6 +72,8 @@ alwaysApply: true
 | VLESS | `:8443`, `xtls-rprx-vision`, `www.cloudflare.com` |
 | Route 顺序 | bypass → private → domestic:53 → intl DNS → catch-all proxy-prefer |
 | VLESS 故障 | 不自动切 direct（当前版本） |
+| `bind_interface` | 网关/旁路 = WAN；透明 **省略**（禁止 `gfctun` / isp 从口 / `gfc-ce`） |
+| `default_interface` | 网关/旁路 = 运行时 WAN；透明且 `br-trans` 存在 = 该桥 |
 
 ## Forward Node client-ingress 强制契约（摘要）
 

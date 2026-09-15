@@ -36,13 +36,15 @@ LAN / local process
   → international → ip rule table 2022 → gfctun
   → sing-box inbound tun-in (gvisor)
   → route rules (bypass → direct; intl → proxy-prefer)
-  → outbound proxy (VLESS Reality) bind_interface <wan> (transparent: omit; hitch SNAT/DNAT)
+  → outbound proxy (VLESS Reality) bind_interface <wan> (transparent: omit bind; `default_interface` = `br-trans`)
   → Forward Node :8443
 ```
 
 **Sing-box does not decide CN vs international IP split** in kernel-split. That is **nft only**.
 
 **`proxy_mode` (gateway vs bypass)** does not change kernel-split sing-box: still TUN `gfctun`, `auto_route: false`, `route.final: direct`. Bypass only changes nft ingress (`iif WAN` + `@customer_hosts`). See [`BYPASS_MODE.md`](BYPASS_MODE.md).
+
+**`proxy_mode=transparent`** still does not change TUN / `auto_route` / `route.final`. It **omits** VLESS/`direct` `bind_interface` (hitch SNAT/DNAT). `route.default_interface` is **`br-trans`** when that bridge exists — never the isp/cpe slave, never `gfctun`, never `gfc-ce`. Gateway and bypass keep WAN (`GFC_WAN_IFACE` / `network-roles.json` / default route). Do not hardcode `br-trans` for all modes.
 
 ### GFC Forward Node
 
@@ -91,7 +93,7 @@ This document **normatively defines `kernel-split`** unless a section explicitly
 | Clash API | `127.0.0.1:9090` | Active config only |
 | Redirect port (byst only) | `11800` | `GFC_REDIRECT_PORT` |
 
-WAN interface: **runtime discovery** — `GFC_WAN_IFACE` / netlink. Never hardcode `eth0` in JSON.
+WAN interface: **runtime discovery** — `GFC_WAN_IFACE` / netlink. Never hardcode `eth0` in JSON. Transparent `route.default_interface` is `br-trans` when that bridge exists; generator must not emit `br-trans` for gateway or bypass.
 
 ---
 
@@ -238,7 +240,7 @@ Override env: `GFC_PROXY_HEALTH_URL`, `GFC_PROXY_HEALTH_INTERVAL`.
 ```json
 {
   "auto_detect_interface": false,
-  "default_interface": "<wan-iface>",
+  "default_interface": "<wan-iface; transparent: br-trans when that device exists>",
   "final": "direct",
   "rules": [ "... ordered as above ..." ]
 }
@@ -246,6 +248,7 @@ Override env: `GFC_PROXY_HEALTH_URL`, `GFC_PROXY_HEALTH_INTERVAL`.
 
 - `final: direct` is **mandatory** for kernel-split (nft already filtered; unmatched TUN traffic should not exist).
 - **No** `rule_set` / `geoip-cn` / `geosite-cn` in kernel-split active config.
+- `default_interface`: gateway/bypass = runtime WAN. Transparent = `br-trans` (cable L3). Never hardcode `eth0`. Never set `br-trans` while `proxy_mode` is gateway or bypass.
 
 ### bypass_ip population (route rule #1)
 
@@ -450,7 +453,7 @@ Generated `sing-box.json` must:
 - Use renderer: `gfc-platform/node-agent/node_agent/singbox.py` (Forward Node)
 - Preserve outbound tag names and route rule order for kernel-split and client-ingress-only
 - Forward client-ingress: emit `auth_user` rules; `final: direct`; WAN via `resolve_snat_iface()`
-- Set `bind_interface` on VLESS and WAN-bound `direct` (Client). Transparent: **omit** so TX follows hitch routing and RX after DNAT on `gfc-ce` can hit the socket; still never `gfctun`.
+- Set `bind_interface` on VLESS and WAN-bound `direct` (Client). Transparent: **omit** so TX follows hitch routing; still never `gfctun`. Transparent `route.default_interface` is `br-trans` when present; mode switch must realign leftover JSON (`AlignBindWithProxyMode`) so leaving transparent restores WAN bind + WAN `default_interface`.
 - Write config `0640` owned root:`GFC_SINGBOX_USER` group (Client)
 - Support idle vs active profiles via orchestrator (Client) / node-agent apply (Forward Node)
 
@@ -461,6 +464,7 @@ Generated `sing-box.json` must:
 | Component | Generator | kernel-split | Notes |
 |-----------|-----------|--------------|-------|
 | Client active | `singbox.go` | Aligned | `v0.3.0` proxy-only urltest |
+| Client transparent iface | `singbox.go` `AlignBindWithProxyMode` | Aligned | 2026-09-15: omit bind; `default_interface=br-trans` when present; leave-mode restores WAN |
 | Client tests | `singbox_route_test.go` | Aligned | |
 | Forward TPROXY | `node_agent/singbox.py` | Aligned | |
 | Forward client-ingress | `node_agent/singbox.py` | Aligned | `auth_user` + `final: direct` validated 2026-07 |
@@ -489,6 +493,8 @@ pp = next(o for o in c["outbounds"] if o.get("tag")=="proxy-prefer")
 assert pp["outbounds"] == ["proxy"] or pp["outbounds"] == ["proxy-group"]
 assert c["route"]["final"] == "direct"
 assert not c["route"].get("rule_set")
+# transparent: default_interface == "br-trans" and no outbound bind_interface
+# gateway/bypass: default_interface == WAN (not br-trans)
 print("kernel-split OK")
 PY
 

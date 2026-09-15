@@ -444,6 +444,10 @@ Non-nft companions (mandatory with these rules):
 - Fail-open: if `netdev gfc_trans` apply fails, keep `br-trans` forwarding (pure L2)
 - DNS steal fail-open when `gfctun` is down (do not blackhole 53 during install)
 - Device Web: isp/cpe roles, `dns_hijack`, exclude list, VIP; confirm-within-timeout rollback (same as bypass)
+- OEM image **must** ship `kmod-veth` (`veth.ko` in ORIG). Product steal RX is veth `fwd to gfc-ce-fwd`. MAC-punt + `tc skbedit ptype host` is the **no-module fallback**, not the preferred path.
+- Learned CE `/32` on `br-trans` (and hitch L3) **must** use `src <dns_vip>` so unbound replies match DNAT reverse. Kernel picking management LAN creates a new conntrack (`original daddr` = CE) and trampoline then emits `src=CE dst=CE`.
+- Trampoline SNAT (`sport 53` → `ct original ip daddr`) **must skip** when `ct original ip daddr` is already the learned CE.
+- Client sing-box (not nft): transparent `route.default_interface` is `br-trans` when that bridge exists; gateway/bypass stay WAN. See [`SINGBOX_ARCHITECTURE.md`](SINGBOX_ARCHITECTURE.md). Never bind `gfctun` / isp slave / `gfc-ce`.
 
 ```nft
 # netdev steal + TX MAC. Devices are runtime isp/cpe names (never hardcoded eth0).
@@ -526,15 +530,13 @@ add rule inet nat postrouting tcp sport 53 return
 add rule inet nat postrouting oifname "<isp_port>" snat ip to <ce_ip>
 add rule inet nat postrouting oifname "br-trans" ip saddr != <ce_ip> snat ip to <ce_ip>
 # Optional trampoline at head: restore the resolver the client asked.
-add rule inet nat postrouting oifname "<cpe_port>" udp sport 53 snat to ct original ip daddr
-add rule inet nat postrouting oifname "<cpe_port>" tcp sport 53 snat to ct original ip daddr
-add rule inet nat postrouting oifname "br-trans" udp sport 53 snat to ct original ip daddr
-add rule inet nat postrouting oifname "br-trans" tcp sport 53 snat to ct original ip daddr
-add rule inet nat postrouting oifname "<isp_port>" udp sport 53 snat to ct original ip daddr
-add rule inet nat postrouting oifname "<isp_port>" tcp sport 53 snat to ct original ip daddr
-# CE /32 on br-trans must use src <dns_vip> so unbound replies from the VIP
-# and match the DNAT reverse. Kernel otherwise picks management LAN, trampoline
-# treats that as a new flow (original daddr = CE) and emits src=CE dst=CE.
+add rule inet nat postrouting oifname "<cpe_port>" udp sport 53 ct original ip daddr != <ce_ip> snat to ct original ip daddr
+add rule inet nat postrouting oifname "<cpe_port>" tcp sport 53 ct original ip daddr != <ce_ip> snat to ct original ip daddr
+add rule inet nat postrouting oifname "br-trans" udp sport 53 ct original ip daddr != <ce_ip> snat to ct original ip daddr
+add rule inet nat postrouting oifname "br-trans" tcp sport 53 ct original ip daddr != <ce_ip> snat to ct original ip daddr
+add rule inet nat postrouting oifname "<isp_port>" udp sport 53 ct original ip daddr != <ce_ip> snat to ct original ip daddr
+add rule inet nat postrouting oifname "<isp_port>" tcp sport 53 ct original ip daddr != <ce_ip> snat to ct original ip daddr
+# Non-nft: ip route replace <ce>/32 dev br-trans src <dns_vip>
 
 # gfc_dns_hijack — LAN mini-gateway redirect kept when dns_hijack=on (same as gateway LAN).
 # Cable DNS: dnat to VIP (source stays CE). Forbidden: redirect that exposes the box address.
@@ -771,4 +773,4 @@ ip route show table 100
 
 ---
 
-*Document version: 2026-09-09. Maintained by project owner. AI agents must read this file before any nft-related code change.*
+*Document version: 2026-09-15. Maintained by project owner. AI agents must read this file before any nft-related code change.*

@@ -460,8 +460,9 @@ func (o *Orchestrator) ReloadDNS() (bool, string) {
 	return true, o.restartUnit(config.ServiceUnbound)
 }
 
-// ReloadSingbox re-renders (or strips leftover bind_interface) so transparent
-// hitch returns can hit sockets. ImmortalWrt never runs patch-singbox-wan.sh.
+// ReloadSingbox re-renders then AlignBindWithProxyMode: transparent omits bind
+// and sets default_interface=br-trans; gateway/bypass restore WAN bind + WAN
+// default_interface. ImmortalWrt never runs patch-singbox-wan.sh.
 func (o *Orchestrator) ReloadSingbox() (bool, string) {
 	var msgs []string
 	restart := false
@@ -489,7 +490,7 @@ func (o *Orchestrator) ReloadSingbox() (bool, string) {
 	if err != nil {
 		msgs = append(msgs, "sing-box bind align: "+err.Error())
 	} else if changed {
-		msgs = append(msgs, "sing-box bind stripped")
+		msgs = append(msgs, "sing-box iface aligned")
 		restart = true
 	}
 	if restart {

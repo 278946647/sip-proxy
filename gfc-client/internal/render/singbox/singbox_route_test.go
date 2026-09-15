@@ -191,6 +191,9 @@ func TestIntlDNSCidrsFromEnv(t *testing.T) {
 
 func TestAlignBindWithProxyModeStripsTransparent(t *testing.T) {
 	t.Setenv("GFC_PROXY_MODE", "transparent")
+	prev := ifaceExists
+	ifaceExists = func(name string) bool { return name == transBridgeIface }
+	t.Cleanup(func() { ifaceExists = prev })
 	dir := t.TempDir()
 	path := dir + "/sing-box.json"
 	doc := map[string]any{
@@ -198,22 +201,68 @@ func TestAlignBindWithProxyModeStripsTransparent(t *testing.T) {
 			map[string]any{"type": "direct", "tag": "direct", "bind_interface": "eth0"},
 			map[string]any{"type": "vless", "tag": "proxy", "bind_interface": "eth0"},
 		},
+		"route": map[string]any{"default_interface": "eth0", "final": "direct"},
 	}
 	if err := WriteConfig(path, doc); err != nil {
 		t.Fatal(err)
 	}
-	changed, err := AlignBindWithProxyMode(path, &config.Config{ProxyMode: "transparent"})
+	changed, err := AlignBindWithProxyMode(path, &config.Config{ProxyMode: "transparent", WanIface: "eth0"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !changed {
-		t.Fatal("expected bind strip")
+		t.Fatal("expected bind strip and br-trans default_interface")
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(raw), "bind_interface") {
+	s := string(raw)
+	if strings.Contains(s, "bind_interface") {
 		t.Fatalf("bind leftover: %s", raw)
+	}
+	if !strings.Contains(s, `"default_interface": "br-trans"`) && !strings.Contains(s, `"default_interface":"br-trans"`) {
+		t.Fatalf("want default_interface br-trans: %s", raw)
+	}
+}
+
+func TestAlignBindWithProxyModeRestoresGateway(t *testing.T) {
+	t.Setenv("GFC_PROXY_MODE", "gateway")
+	prev := ifaceExists
+	ifaceExists = func(name string) bool { return name == transBridgeIface }
+	t.Cleanup(func() { ifaceExists = prev })
+	dir := t.TempDir()
+	path := dir + "/sing-box.json"
+	doc := map[string]any{
+		"outbounds": []any{
+			map[string]any{"type": "direct", "tag": "direct"},
+			map[string]any{"type": "vless", "tag": "proxy"},
+			map[string]any{"type": "direct", "tag": "direct-local"},
+		},
+		"route": map[string]any{"default_interface": "br-trans", "final": "direct"},
+	}
+	if err := WriteConfig(path, doc); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := AlignBindWithProxyMode(path, &config.Config{ProxyMode: "gateway", WanIface: "eth0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("expected WAN bind restore")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(raw)
+	if strings.Contains(s, `"default_interface": "br-trans"`) || strings.Contains(s, `"default_interface":"br-trans"`) {
+		t.Fatalf("gateway must not keep br-trans: %s", raw)
+	}
+	if !strings.Contains(s, `"bind_interface": "eth0"`) && !strings.Contains(s, `"bind_interface":"eth0"`) {
+		t.Fatalf("want WAN bind_interface: %s", raw)
+	}
+	if strings.Count(s, `"bind_interface"`) != 2 {
+		t.Fatalf("bind only on direct+vless, got: %s", raw)
 	}
 }

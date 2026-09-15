@@ -4,10 +4,11 @@
 **权威本文：** 透明入向、学习、ARP、搭车、偷流、DNS VIP、跨模式 DNS 劫持开关。  
 **权威 nft 骨架：** [`NFT_ARCHITECTURE.md`](NFT_ARCHITECTURE.md)（inet 表/链/hook/默认 mark **不变**；偷流层 `netdev gfc_trans` 见 §9.4）  
 **权威 DNS：** [`UNBOUND_ARCHITECTURE.md`](UNBOUND_ARCHITECTURE.md)（LAN/客户递归仍为 unbound；禁止 MosDNS / sing-box DNS inbound）  
-**权威 sing-box：** [`SINGBOX_ARCHITECTURE.md`](SINGBOX_ARCHITECTURE.md)（kernel-split **不随** `proxy_mode` 改 `auto_route` / `route.final`）  
+**权威 sing-box：** [`SINGBOX_ARCHITECTURE.md`](SINGBOX_ARCHITECTURE.md)（kernel-split **不随** `proxy_mode` 改 `auto_route` / `route.final`。透明省略 VLESS/`direct` `bind_interface`；`route.default_interface` 仅透明且 `br-trans` 存在时为该桥，网关/旁路仍为 WAN，禁止全局写死 `br-trans`）  
 **旁路对照：** [`BYPASS_MODE.md`](BYPASS_MODE.md)（旁路 = 客户改网关且 GFC 有 WAN IP；透明 ≠ 旁路）  
 **策略模型：** [`USER_POLICY_ROUTING.md`](USER_POLICY_ROUTING.md)（网关 / 旁路 / 透明同一 `policies[]`，只变入向）  
-**会话交接（开发入口）：** [`SESSION_HANDOFF_2026-09-09_TRANSPARENT_MODE.md`](SESSION_HANDOFF_2026-09-09_TRANSPARENT_MODE.md)  
+**会话交接（下一步入口）：** [`SESSION_HANDOFF_2026-09-15_TRANSPARENT_LAB.md`](SESSION_HANDOFF_2026-09-15_TRANSPARENT_LAB.md)  
+**一期实现批准：** [`SESSION_HANDOFF_2026-09-09_TRANSPARENT_MODE.md`](SESSION_HANDOFF_2026-09-09_TRANSPARENT_MODE.md)  
 **规格讨论交接：** [`SESSION_HANDOFF_2026-08-31_TRANSPARENT_MODE.md`](SESSION_HANDOFF_2026-08-31_TRANSPARENT_MODE.md)
 
 若实现与本文冲突，报 **bug**，不得用实现倒逼改本文。inet 表/链/hook/默认 mark 仍禁止擅自改名；偷流层仅允许交接已点名的 `netdev gfc_trans`。sing-box 生成器禁止改 `auto_route` / `route.final`。
@@ -224,7 +225,7 @@
 
 - 源 IP = 主 CE（SNAT 或 bind 在 dummy /32）；本机 **禁止** 对 CE 发 ARP。  
 - 邻居：GW IP → PE MAC 写死在 isp 口。  
-- POP 等基础设施仍在 `bypass_ip`，避免 VLESS 再被偷进 TUN。`output_mangle_route` 对目的 `@bypass_ip` **必须清掉** `0x2023`（在 `meta mark != 0 return` 之前）。仅清 skb mark 不够：透明 VLESS 省略 `bind_interface` 时，套接字 `SO_MARK=0x2023` 在 nft 之前查 FIB，必须另有 `ip rule pref 90 to <bypass_ip> lookup main`（及 table `2022` 的 `/32` 搭车路由），否则 `:8443` 进 `gfctun`。FIB 走 `br-trans` 之后，本机帧在桥上 `xmit`：必须在 **`eg_trans`（device br-trans）** 记 hitch。目的 **不是 CE** 的才改成 CPE 源 MAC + PE 目的 MAC（VLESS 出 isp）；目的 **是 CE** 的是 DNS/trampoline 回客户，必须改成 PE 源 MAC + CPE 目的 MAC（出 cpe）。禁止把回给 CE 的包改成 PE 目的 MAC（下联 DNS 会超时）。`eg_isp` 仅对 `ether saddr != CPE MAC` 记 hitch。电缆 DNS inet DNAT 必须覆盖 **iif cpe**（MAC-punt 后查询常从 cpe 奴口上栈）。`inet nat postrouting` 对 **udp/tcp sport 53 必须 `return`，再** 做 hitch `snat to CE`；否则应答源变成 CE、目的也是 CE，下联当 martian 丢掉。hitch 回程命中 `hitch_reply` 后只负责 punt；原本机源地址由同一 conntrack 的 reverse-SNAT 自动恢复。**禁止**再按 `daddr=CE` 添加手工 prerouting DNAT：它会与 reverse-SNAT 竞争，并可能改写不属于本机的客户入站流量。
+- POP 等基础设施仍在 `bypass_ip`，避免 VLESS 再被偷进 TUN。`output_mangle_route` 对目的 `@bypass_ip` **必须清掉** `0x2023`（在 `meta mark != 0 return` 之前）。仅清 skb mark 不够：透明 VLESS 省略 `bind_interface` 时，套接字 `SO_MARK=0x2023` 在 nft 之前查 FIB，必须另有 `ip rule pref 90 to <bypass_ip> lookup main`（及 table `2022` 的 `/32` 搭车路由），否则 `:8443` 进 `gfctun`。FIB 走 `br-trans` 之后，本机帧在桥上 `xmit`：必须在 **`eg_trans`（device br-trans）** 记 hitch。目的 **不是 CE** 的才改成 CPE 源 MAC + PE 目的 MAC（VLESS 出 isp）；目的 **是 CE** 的是 DNS/trampoline 回客户，必须改成 PE 源 MAC + CPE 目的 MAC（出 cpe）。禁止把回给 CE 的包改成 PE 目的 MAC（下联 DNS 会超时）。`eg_isp` 仅对 `ether saddr != CPE MAC` 记 hitch。电缆 DNS inet DNAT 必须覆盖 **iif cpe**（MAC-punt 后查询常从 cpe 奴口上栈）。`inet nat postrouting` 对 **udp/tcp sport 53 必须 `return`，再** 做 hitch `snat to CE`；否则应答源变成 CE、目的也是 CE，下联当 martian 丢掉。CE `/32` 在 `br-trans` 必须 `src <dns_vip>`；trampoline（`snat to ct original ip daddr`）在 original daddr 已是 CE 时必须跳过。hitch 回程命中 `hitch_reply` 后只负责 punt；原本机源地址由同一 conntrack 的 reverse-SNAT 自动恢复。**禁止**再按 `daddr=CE` 添加手工 prerouting DNAT：它会与 reverse-SNAT 竞争，并可能改写不属于本机的客户入站流量。
 - 私网 CE：上游设备继续 NAT/路由；GFC 不另要公网地址。  
 - 在 OUTPUT/SNAT 后写入 hitch 回程五元组（超时跟随连接）。
 
@@ -247,8 +248,10 @@ GFC 本机 OUTPUT → SNAT CE + TX 改 MAC → isp
 ```
 
 - **不改** 默认 mark、hook 优先级、`route.final`、`auto_route`。  
+- Client sing-box：透明省略 `bind_interface`；`route.default_interface` **仅**在透明且 `br-trans` 存在时为该桥；网关/旁路仍为 WAN。切模式必须对齐残留 JSON（`AlignBindWithProxyMode`）。禁止全局写死 `br-trans`，禁止绑 `gfctun` / isp 从口 / `gfc-ce`。详见 [`SINGBOX_ARCHITECTURE.md`](SINGBOX_ARCHITECTURE.md)。  
 - 偷流所用 **bridge / netdev 表名、链名** 实现前 **不得擅自写入生成器**；须先差异表，用户确认后 **先登记 `NFT_ARCHITECTURE.md` 再写代码**。  
-- 禁止发明与 `nat` / `gfc_dns_hijack` / `gfc` 冲突的 inet 表替换骨架。
+- 禁止发明与 `nat` / `gfc_dns_hijack` / `gfc` 冲突的 inet 表替换骨架。  
+- OEM 必须含 `kmod-veth`。无模块时的 MAC-punt + `tc skbedit` 是回退，不是产品默认偷流 RX。
 
 ---
 
@@ -276,6 +279,8 @@ GFC 本机 OUTPUT → SNAT CE + TX 改 MAC → isp
 - `access-control: 0.0.0.0/0 allow`  
 - MosDNS / sing-box DNS inbound 替代 unbound  
 - 因透明改 kernel-split `auto_route` / `route.final`  
+- 把 `route.default_interface` 全局写死为 `br-trans`（网关/旁路必须仍是 WAN）  
+- 切离透明后不恢复 WAN `bind_interface` / WAN `default_interface`  
 - `bridge-nf-call-iptables=1` 作为偷流捷径  
 - 用源端口段代替 hitch 五元组  
 - 关劫持时关掉 unbound  
@@ -314,6 +319,7 @@ nft list table inet gfc_dns_hijack   # 网关/旁路开关可见；透明另有 
 
 | 日期 | 说明 |
 |------|------|
+| 2026-09-15 | 实验室闭环：CPE DNS（VIP + 劫持 53）；CE `/32` `src` DNS VIP；trampoline 跳过 original daddr=CE；无 veth 时 MAC-punt + `tc skbedit`。sing-box 透明 `default_interface=br-trans`（口存在时），切模式 Align JSON。OEM 必须含 `kmod-veth`。 |
 | 2026-09-15 | hitch 回程仅 punt；由 conntrack 自动 reverse-SNAT，删除手工 daddr-CE DNAT |
 | 2026-09-14 | hitch SNAT 不得覆盖 sport 53 |
 | 2026-09-11 | punt 口：`gfc-ce`/`gfc-ce-fwd` veth（`nft fwd` 必须进 RX）；`gfc-dns` 仍 dummy |

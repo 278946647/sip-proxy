@@ -2,10 +2,12 @@
 
 > 写给**无本对话上下文**的新会话：**读规格并直接开发**。  
 > 本文件 = 用户对透明一期实现的 **「确认修改」**（含偷流层表名）。  
+> **2026-09-15 实验室闭环与下一步：** [`SESSION_HANDOFF_2026-09-15_TRANSPARENT_LAB.md`](SESSION_HANDOFF_2026-09-15_TRANSPARENT_LAB.md)（新会话入口）  
 > **产品唯一真相：** [`docs/TRANSPARENT_MODE.md`](TRANSPARENT_MODE.md)  
 > 规格讨论交接（勿当开发入口）：[`SESSION_HANDOFF_2026-08-31_TRANSPARENT_MODE.md`](SESSION_HANDOFF_2026-08-31_TRANSPARENT_MODE.md)  
 > Cursor：`.cursor/rules/transparent-mode.mdc`  
-> nft / unbound / sing-box：inet 骨架不变；本批只加已点名的 `netdev gfc_trans`，**禁止**改 `auto_route` / `route.final` / unbound `forward-zone` 语义。
+> nft / unbound / sing-box：inet 骨架不变；本批只加已点名的 `netdev gfc_trans`，**禁止**改 `auto_route` / `route.final` / unbound `forward-zone` 语义。  
+> 09-15 已批准：Client 透明 `route.default_interface=br-trans`（口存在时）；切模式 Align JSON；OEM 必须含 `kmod-veth`。这不改变 kernel-split TUN / `final`。
 
 ---
 
@@ -13,9 +15,9 @@
 
 | 面 | 状态 |
 |----|------|
-| 规格 | **冻结** → `TRANSPARENT_MODE.md` |
-| 开发授权 | **已授权**（2026-09-09） |
-| 代码 | **一期已合入**。2026-09-14：`sport 53 return` 先于 hitch SNAT；回程 DNAT `ct original ip saddr` |
+| 规格 | **冻结** → `TRANSPARENT_MODE.md`；实验室增量见 09-15 交接 |
+| 开发授权 | **已授权**（2026-09-09）；09-15 另批 `singbox.go` `default_interface` / Align |
+| 代码 | **一期已合入**。2026-09-15：无 veth 时 CPE DNS 实验室通过；JSON 口对齐待刷 OEM + runtime |
 | 产品号 / `PKG_RELEASE` | **禁止**因试编升号（§1.5） |
 | 正式发版 | 交付时再定级 Dataplane-Arch / Major |
 

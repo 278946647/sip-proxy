@@ -30,6 +30,16 @@ const hy2ProxyTag = "proxy-hy2"
 const liveModeStandard = "standard"
 const liveModeAllHy2 = "live_all_hy2"
 const liveModeCatalog = "live_catalog"
+const transBridgeIface = "br-trans"
+
+// ifaceExists is swapped in tests (Windows CI has no br-trans).
+var ifaceExists = func(name string) bool {
+	if strings.TrimSpace(name) == "" {
+		return false
+	}
+	_, err := net.InterfaceByName(name)
+	return err == nil
+}
 
 type Renderer struct {
 	cfg *config.Config
@@ -245,7 +255,7 @@ func (r *Renderer) RenderActive(payload map[string]any, ruleSets []map[string]an
 
 	route := map[string]any{
 		"auto_detect_interface": false,
-		"default_interface":     wan,
+		"default_interface":     r.resolveRouteIface(),
 		"final":                 finalOutbound,
 	}
 	if len(routeRules) > 0 {
@@ -279,10 +289,27 @@ func (r *Renderer) RenderActive(payload map[string]any, ruleSets []map[string]an
 }
 
 func (r *Renderer) resolveWanIface() string {
-	if w := strings.TrimSpace(r.cfg.ResolvedWanIface()); w != "" {
-		return w
+	return wanIfaceFromConfig(r.cfg)
+}
+
+func (r *Renderer) resolveRouteIface() string {
+	return routeIfaceForMode(r.cfg)
+}
+
+func wanIfaceFromConfig(cfg *config.Config) string {
+	if cfg != nil {
+		if w := strings.TrimSpace(cfg.ResolvedWanIface()); w != "" {
+			return w
+		}
 	}
 	return detectDefaultInterface()
+}
+
+func routeIfaceForMode(cfg *config.Config) string {
+	if proxymode.LiveMode(cfg) == proxymode.ModeTransparent && ifaceExists(transBridgeIface) {
+		return transBridgeIface
+	}
+	return wanIfaceFromConfig(cfg)
 }
 
 func detectDefaultInterface() string {
@@ -724,12 +751,10 @@ func WriteConfig(path string, data map[string]any) error {
 	return nil
 }
 
-// AlignBindWithProxyMode strips SO_BINDTODEVICE on transparent leftover JSON
-// (mode switch / OEM persist does not re-render sing-box). Gateway/bypass unchanged.
+// AlignBindWithProxyMode rewrites leftover JSON after a mode switch:
+// transparent omits bind_interface and sets route.default_interface=br-trans
+// when that bridge exists; gateway/bypass restore WAN bind + WAN default_interface.
 func AlignBindWithProxyMode(path string, cfg *config.Config) (bool, error) {
-	if proxymode.LiveMode(cfg) != proxymode.ModeTransparent {
-		return false, nil
-	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -741,6 +766,9 @@ func AlignBindWithProxyMode(path string, cfg *config.Config) (bool, error) {
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		return false, err
 	}
+	trans := proxymode.LiveMode(cfg) == proxymode.ModeTransparent
+	wan := wanIfaceFromConfig(cfg)
+	routeIface := routeIfaceForMode(cfg)
 	changed := false
 	outs, _ := doc["outbounds"].([]any)
 	for _, item := range outs {
@@ -753,8 +781,31 @@ func AlignBindWithProxyMode(path string, cfg *config.Config) (bool, error) {
 		if t != "vless" && t != "hysteria2" && !(t == "direct" && tag == "direct") {
 			continue
 		}
-		if _, ok := ob["bind_interface"]; ok {
-			delete(ob, "bind_interface")
+		if trans {
+			if _, ok := ob["bind_interface"]; ok {
+				delete(ob, "bind_interface")
+				changed = true
+			}
+			continue
+		}
+		if wan == "" {
+			continue
+		}
+		cur, _ := ob["bind_interface"].(string)
+		if cur != wan {
+			ob["bind_interface"] = wan
+			changed = true
+		}
+	}
+	if routeIface != "" {
+		route, _ := doc["route"].(map[string]any)
+		if route == nil {
+			route = map[string]any{}
+			doc["route"] = route
+		}
+		cur, _ := route["default_interface"].(string)
+		if cur != routeIface {
+			route["default_interface"] = routeIface
 			changed = true
 		}
 	}
