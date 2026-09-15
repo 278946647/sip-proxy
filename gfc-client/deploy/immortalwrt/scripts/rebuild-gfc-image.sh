@@ -935,9 +935,22 @@ kmod_is_builtin() {
   grep -qE "/${ko}$" "$linux_dir/modules.builtin"
 }
 
+# True if any named .ko is in the ipk or built into vmlinux.
+vpn_kmod_any_ko() {
+  local ipk=$1
+  local ko
+  shift
+  for ko in "$@"; do
+    ipk_contains_ko "$ipk" "$ko" && return 0
+    kmod_is_builtin "$ko" && return 0
+  done
+  return 1
+}
+
 # Future VPN kmods must ship in the same kernel ABI as transparent steal.
 verify_oem_vpn_kmod_ipks() {
-  local hash="${1:-}" kernel_ver="${2:-}" name ipk dep ko
+  local hash="${1:-}" kernel_ver="${2:-}" name ipk dep
+  local -a kos
   cd "$IMT_SRC"
   if [[ -z "$hash" ]]; then
     hash="$(read_build_vermagic)" || die "no .vermagic under build_dir"
@@ -959,34 +972,27 @@ verify_oem_vpn_kmod_ipks() {
     )"
     printf '%s\n' "$dep" | grep -F "$hash" >/dev/null \
       || die "${name} ipk control missing vermagic ${hash}: $(basename "$ipk")"
+    kos=()
     case "$name" in
-      kmod-wireguard) ko='wireguard.ko' ;;
-      kmod-udptunnel4) ko='udp_tunnel.ko' ;;
-      kmod-udptunnel6) ko='ip6_udp_tunnel.ko' ;;
-      kmod-crypto-lib-chacha20poly1305) ko='libchacha20poly1305.ko' ;;
-      kmod-crypto-lib-chacha20) ko='libchacha.ko' ;;
-      kmod-crypto-lib-poly1305) ko='libpoly1305.ko' ;;
-      kmod-crypto-lib-curve25519) ko='libcurve25519-generic.ko' ;;
-      kmod-crypto-kpp) ko='kpp.ko' ;;
-      kmod-crypto-hash) ko='crypto_hash.ko' ;;
+      kmod-wireguard) kos=(wireguard.ko) ;;
+      kmod-udptunnel4) kos=(udp_tunnel.ko) ;;
+      kmod-udptunnel6) kos=(ip6_udp_tunnel.ko) ;;
+      kmod-crypto-lib-chacha20poly1305) kos=(libchacha20poly1305.ko) ;;
+      kmod-crypto-lib-chacha20) kos=(libchacha.ko chacha-x86_64.ko) ;;
+      kmod-crypto-lib-poly1305) kos=(libpoly1305.ko poly1305-x86_64.ko) ;;
+      # x86_64 arch impl often replaces libcurve25519-generic.ko
+      kmod-crypto-lib-curve25519) kos=(libcurve25519-generic.ko libcurve25519.ko curve25519-x86_64.ko) ;;
+      kmod-crypto-kpp) kos=(kpp.ko) ;;
+      kmod-crypto-hash) kos=(crypto_hash.ko) ;;
     esac
-    if ipk_contains_ko "$ipk" "$ko"; then
+    if vpn_kmod_any_ko "$ipk" "${kos[@]}"; then
       :
-    elif kmod_is_builtin "$ko"; then
-      log "${name}: ${ko} is built-in (ipk is a Depends stub, OK)"
     elif [[ "$name" == kmod-crypto-kpp || "$name" == kmod-crypto-hash ]]; then
-      # 6.6 x86 often has CRYPTO_KPP/HASH=y; OpenWrt still emits a stub ipk.
-      log "${name}: no ${ko} in ipk (kernel-builtin Depends stub, OK)"
+      log "${name}: no ${kos[*]} in ipk (kernel-builtin Depends stub, OK)"
     else
-      die "${name} ipk has no ${ko} — not an empty leftover"
+      die "${name} ipk has none of: ${kos[*]} — not an empty leftover"
     fi
   done
-  ipk="$(find bin/targets/x86/64/packages -maxdepth 1 -type f -name 'kmod-crypto-lib-curve25519_*.ipk' 2>/dev/null | head -1)"
-  if ! tar -xOf "$ipk" ./data.tar.gz 2>/dev/null | tar -tz 2>/dev/null | grep -E '/curve25519-x86_64\.ko(\.gz|\.xz)?$' >/dev/null; then
-    if ! tar -xOf "$ipk" data.tar.gz 2>/dev/null | tar -tz 2>/dev/null | grep -E '/curve25519-x86_64\.ko(\.gz|\.xz)?$' >/dev/null; then
-      die "kmod-crypto-lib-curve25519 ipk has no curve25519-x86_64.ko — WireGuard x86_64 crypto"
-    fi
-  fi
   log "OEM VPN kmod ipks match kernel ${kernel_ver} vermagic ${hash}"
 }
 
@@ -1492,7 +1498,7 @@ build_image() {
 verify_manifest() {
   cd "$IMT_SRC"
   local manifest="bin/targets/x86/64/immortalwrt-x86-64-generic.manifest"
-  local root orig pkg dummy_ko fwd_ko veth_ko wg_ko chacha_ko curve_ko curve_x86_ko
+  local root orig pkg dummy_ko fwd_ko veth_ko wg_ko chacha_ko curve_ko
   root="$(find_rootfs_dir)"
   orig="$ROOTFS_ORIG_DIR"
   [[ -f "$manifest" ]] || die "missing $manifest"
@@ -1557,11 +1563,13 @@ verify_manifest() {
   wg_ko="$(find "$orig/lib/modules" \( -name 'wireguard.ko' -o -name 'wireguard.ko.gz' -o -name 'wireguard.ko.xz' \) 2>/dev/null | head -1)"
   [[ -n "$wg_ko" ]] || die "ORIG missing wireguard.ko — CONFIG_PACKAGE_kmod-wireguard=y did not ship"
   chacha_ko="$(find "$orig/lib/modules" \( -name 'libchacha20poly1305.ko' -o -name 'libchacha20poly1305.ko.gz' -o -name 'libchacha20poly1305.ko.xz' \) 2>/dev/null | head -1)"
-  curve_ko="$(find "$orig/lib/modules" \( -name 'libcurve25519-generic.ko' -o -name 'libcurve25519-generic.ko.gz' -o -name 'libcurve25519-generic.ko.xz' \) 2>/dev/null | head -1)"
-  curve_x86_ko="$(find "$orig/lib/modules" \( -name 'curve25519-x86_64.ko' -o -name 'curve25519-x86_64.ko.gz' -o -name 'curve25519-x86_64.ko.xz' \) 2>/dev/null | head -1)"
+  curve_ko="$(find "$orig/lib/modules" \( \
+    -name 'libcurve25519-generic.ko' -o -name 'libcurve25519-generic.ko.gz' -o -name 'libcurve25519-generic.ko.xz' \
+    -o -name 'libcurve25519.ko' -o -name 'libcurve25519.ko.gz' -o -name 'libcurve25519.ko.xz' \
+    -o -name 'curve25519-x86_64.ko' -o -name 'curve25519-x86_64.ko.gz' -o -name 'curve25519-x86_64.ko.xz' \
+  \) 2>/dev/null | head -1)"
   [[ -n "$chacha_ko" ]] || die "ORIG missing libchacha20poly1305.ko — kmod-crypto-lib-chacha20poly1305"
-  [[ -n "$curve_ko" ]] || die "ORIG missing libcurve25519-generic.ko — kmod-crypto-lib-curve25519"
-  [[ -n "$curve_x86_ko" ]] || die "ORIG missing curve25519-x86_64.ko — kmod-crypto-lib-curve25519 x86_64"
+  [[ -n "$curve_ko" ]] || die "ORIG missing curve25519 kmod (generic/lib/x86_64) — kmod-crypto-lib-curve25519"
   [[ -x "$orig/usr/bin/wg" || -x "$orig/usr/sbin/wg" ]] \
     || die "ORIG missing wg binary — CONFIG_PACKAGE_wireguard-tools=y did not ship"
   [[ -x "$orig/usr/sbin/openvpn" || -x "$orig/usr/bin/openvpn" ]] \

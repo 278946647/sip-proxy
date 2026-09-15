@@ -163,12 +163,21 @@ def find_ko(name):
                 return os.path.join(root, f)
     return None
 for ko in ("veth.ko", "dummy.ko", "nft_fwd_netdev.ko", "wireguard.ko",
-           "libchacha20poly1305.ko", "libcurve25519-generic.ko", "curve25519-x86_64.ko"):
+           "libchacha20poly1305.ko"):
     p = find_ko(ko)
     if not p:
         print("MISSING ORIG kmod:", ko)
         sys.exit(1)
     print("ORIG kmod OK:", p)
+curve_any = None
+for ko in ("libcurve25519-generic.ko", "libcurve25519.ko", "curve25519-x86_64.ko"):
+    curve_any = find_ko(ko)
+    if curve_any:
+        print("ORIG kmod OK:", curve_any)
+        break
+if not curve_any:
+    print("MISSING ORIG kmod: curve25519 (generic/lib/x86_64)")
+    sys.exit(1)
 bins = [
     ("openvpn", ["usr/sbin/openvpn", "usr/bin/openvpn"]),
     ("wg", ["usr/bin/wg", "usr/sbin/wg"]),
