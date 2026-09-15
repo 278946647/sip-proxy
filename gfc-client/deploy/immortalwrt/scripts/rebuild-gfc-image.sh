@@ -913,6 +913,28 @@ verify_trans_kmod_ipks() {
   log "transparent kmod ipks match kernel ${kernel_ver} vermagic ${hash}"
 }
 
+# ipkg data.tar may be listed with or without leading ./
+ipk_contains_ko() {
+  local ipk=$1 ko=$2
+  tar -xOf "$ipk" ./data.tar.gz 2>/dev/null | tar -tz 2>/dev/null | grep -qE "/${ko}(\.gz|\.xz)?$" && return 0
+  tar -xOf "$ipk" data.tar.gz 2>/dev/null | tar -tz 2>/dev/null | grep -qE "/${ko}(\.gz|\.xz)?$" && return 0
+  return 1
+}
+
+# CRYPTO_KPP / CRYPTO_HASH are often CONFIG=y on x86 6.6, so kmod-crypto-kpp
+# still builds an ipk (opkg Depends stub) with no kpp.ko.
+kmod_is_builtin() {
+  local ko=$1
+  local vermagic_file linux_dir
+  vermagic_file="$(
+    find "$IMT_SRC/build_dir" -path '*/linux-x86_64/linux-*/.vermagic' 2>/dev/null | head -1
+  )"
+  [[ -n "$vermagic_file" && -f "$vermagic_file" ]] || return 1
+  linux_dir="$(dirname "$vermagic_file")"
+  [[ -f "$linux_dir/modules.builtin" ]] || return 1
+  grep -qE "/${ko}$" "$linux_dir/modules.builtin"
+}
+
 # Future VPN kmods must ship in the same kernel ABI as transparent steal.
 verify_oem_vpn_kmod_ipks() {
   local hash="${1:-}" kernel_ver="${2:-}" name ipk dep ko
@@ -948,10 +970,15 @@ verify_oem_vpn_kmod_ipks() {
       kmod-crypto-kpp) ko='kpp.ko' ;;
       kmod-crypto-hash) ko='crypto_hash.ko' ;;
     esac
-    if ! tar -xOf "$ipk" ./data.tar.gz 2>/dev/null | tar -tz 2>/dev/null | grep -E "/${ko}(\.gz|\.xz)?$" >/dev/null; then
-      if ! tar -xOf "$ipk" data.tar.gz 2>/dev/null | tar -tz 2>/dev/null | grep -E "/${ko}(\.gz|\.xz)?$" >/dev/null; then
-        die "${name} ipk has no ${ko} — not an empty leftover"
-      fi
+    if ipk_contains_ko "$ipk" "$ko"; then
+      :
+    elif kmod_is_builtin "$ko"; then
+      log "${name}: ${ko} is built-in (ipk is a Depends stub, OK)"
+    elif [[ "$name" == kmod-crypto-kpp || "$name" == kmod-crypto-hash ]]; then
+      # 6.6 x86 often has CRYPTO_KPP/HASH=y; OpenWrt still emits a stub ipk.
+      log "${name}: no ${ko} in ipk (kernel-builtin Depends stub, OK)"
+    else
+      die "${name} ipk has no ${ko} — not an empty leftover"
     fi
   done
   ipk="$(find bin/targets/x86/64/packages -maxdepth 1 -type f -name 'kmod-crypto-lib-curve25519_*.ipk' 2>/dev/null | head -1)"
