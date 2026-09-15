@@ -337,41 +337,8 @@ EOF
 	fi
 	rm -f "$err"
 	if [ "$proxy_mode" = "transparent" ]; then
-		apply_trans_hitch_dnat || true
 		apply_trans_dns_snat || true
 	fi
-}
-
-# Hitch returns dest=CE after SNAT; CE is not in table local, so without DNAT
-# they are forwarded to the real CPE. Never fail the SNAT table.
-apply_trans_hitch_dnat() {
-	local ce err iif isp cpe
-	ce="$(load_trans_ce)"
-	is_hitch_ce "$ce" || return 0
-	isp="$(load_trans_isp)"
-	ip link show gfc-ce >/dev/null 2>&1 || ip link show br-trans >/dev/null 2>&1 || return 0
-	err="$(mktemp)" || return 0
-	nft add chain inet nat prerouting '{ type nat hook prerouting priority dstnat; policy accept; }' 2>/dev/null || true
-	nft flush chain inet nat prerouting 2>/dev/null || true
-	# MAC-punt local receive is often iif=isp (bridge slave), not br-trans.
-	# Never DNAT iif gfctun — tun replies to the real CPE must keep dest=CE.
-	# ct original first (VLESS may bind gfctun 172.19.0.1). Always also add
-	# hardcoded hitch bind: MAC-punt replies can look NEW and miss ct original,
-	# which forwarded 223.5.5.5 answers to the real CE and timed out box DNS.
-	cpe="$(load_trans_cpe)"
-	for iif in gfc-ce br-trans $isp $cpe; do
-		[ -n "$iif" ] || continue
-		ip link show "$iif" >/dev/null 2>&1 || continue
-		: >"$err"
-		nft add rule inet nat prerouting iifname "$iif" meta nfproto ipv4 ip daddr "$ce" dnat ip to ct original ip saddr 2>"$err" || \
-			nft add rule inet nat prerouting iifname "$iif" meta nfproto ipv4 ip daddr "$ce" dnat ip to ct original saddr 2>"$err" || true
-		if nft add rule inet nat prerouting iifname "$iif" meta nfproto ipv4 ip daddr "$ce" dnat ip to 172.31.253.1 2>"$err"; then
-			continue
-		fi
-		echo "WARN: hitch return DNAT iif $iif: $(tr '\n' ' ' <"$err")" >&2
-	done
-	rm -f "$err"
-	return 0
 }
 
 # DNS replies must keep the resolver the client asked (NFT §9.4). Insert at

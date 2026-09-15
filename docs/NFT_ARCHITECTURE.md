@@ -509,19 +509,14 @@ add rule netdev gfc_trans eg_cpe ether saddr <cpe_hw_mac> ether saddr set <pe_ma
 inet delta (existing chains; extra **match** rows only):
 
 ```nft
-# nat — management mini-gateway + DNS trampoline SNAT (never bare oif isp masquerade)
-# Hitch returns: CE /32 is removed from table local so tun replies to the real CPE
-# are not swallowed. veth RX on gfc-ce hits this DNAT (checksum updated here).
-add chain inet nat prerouting { type nat hook prerouting priority dstnat; policy accept; }
-# Hitch returns dest=CE. Try ct original saddr first (VLESS may bind gfctun
-# 172.19.0.1). Always keep hardcoded hitch bind after it: MAC-punt UDP replies
-# can miss conntrack and must still land on 172.31.253.1 (unbound outgoing-iface).
-add rule inet nat prerouting iifname "gfc-ce" ip daddr <ce_ip> dnat ip to ct original ip saddr
-add rule inet nat prerouting iifname "gfc-ce" ip daddr <ce_ip> dnat ip to 172.31.253.1
-add rule inet nat prerouting iifname "br-trans" ip daddr <ce_ip> dnat ip to ct original ip saddr
-add rule inet nat prerouting iifname "br-trans" ip daddr <ce_ip> dnat ip to 172.31.253.1
-add rule inet nat prerouting iifname "<isp_port>" ip daddr <ce_ip> dnat ip to ct original ip saddr
-add rule inet nat prerouting iifname "<isp_port>" ip daddr <ce_ip> dnat ip to 172.31.253.1
+# nat — hitch SNAT + DNS trampoline SNAT (never bare oif isp masquerade)
+# Hitch egress is tracked before SNAT to CE. in_isp only punts a reply whose
+# reverse five-tuple is in hitch_reply; conntrack then automatically reverses
+# the SNAT and restores its original local destination (for example
+# 172.31.253.1). Do not add a manual prerouting DNAT for daddr CE: it competes
+# with reverse-SNAT and can rewrite a legitimate customer packet or corrupt the
+# established mapping. CE /32 remains absent from table local so unmatched
+# upstream traffic continues to the real CPE.
 # DNS server replies (sport 53) must return BEFORE hitch SNAT. Otherwise
 # oif isp/br-trans snat-to-CE overwrites conntrack un-DNAT / trampoline and
 # emits src=CE dst=CE (client drops; looks like DNS timeout).
@@ -759,7 +754,7 @@ bridge link
 ip -4 addr show dev gfc-ce
 ip -4 addr show dev gfc-dns
 nft list chain inet nat postrouting   # sport 53 return before hitch snat to CE
-nft list chain inet nat prerouting    # hitch DNAT ct original ip saddr
+nft list chain inet nat prerouting    # no manual hitch daddr-CE DNAT
 sysctl net.bridge.bridge-nf-call-iptables   # expect 0
 ip rule | grep 0x2023
 

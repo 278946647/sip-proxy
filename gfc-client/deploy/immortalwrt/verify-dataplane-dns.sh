@@ -260,13 +260,10 @@ if [ "$PROXY_MODE" = "transparent" ]; then
 		fail "transparent postrouting must return on sport 53 before hitch SNAT to CE"
 	fi
 	nat_pre="$(nft list chain inet nat prerouting 2>/dev/null || true)"
-	if echo "$nat_pre" | grep -q '172.31.253.1'; then
-		ok "transparent hitch return DNAT has hitch-bind fallback"
+	if echo "$nat_pre" | grep -qE 'ip daddr [^ ]+ dnat ip to (ct original|172\.31\.253\.1)'; then
+		fail "transparent hitch return must use conntrack reverse-SNAT, not manual daddr-CE DNAT"
 	else
-		fail "transparent hitch return DNAT missing 172.31.253.1 fallback (box domestic DNS will time out)"
-	fi
-	if echo "$nat_pre" | grep -q 'ct original'; then
-		ok "transparent hitch return DNAT also restores ct original saddr"
+		ok "transparent hitch return has no competing manual DNAT"
 	fi
 fi
 
