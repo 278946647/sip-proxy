@@ -12,6 +12,7 @@ BASE_TREE_PACKAGES=(
   nftables-json nftables-nojson
   tc-tiny kmod-sched-core kmod-ifb
   kmod-tcp-bbr kmod-sched
+  kmod-wireguard kmod-udptunnel4 kmod-udptunnel6 wireguard-tools
   # r16 baseline (base tree; not via default-settings)
   dropbear uhttpd rpcd odhcpd-ipv6only
   # resize2fs is a separate OpenWrt package (not e2fsprogs);
@@ -30,6 +31,8 @@ FEED_PACKAGES=(
   curl wget-ssl tcpdump iftop bmon
   # GNU parted lives in packages feed (not package/utils/parted)
   parted
+  # OpenVPN lives in packages feed (variants: openssl / mbedtls / wolfssl)
+  openvpn-openssl
 )
 
 die() { echo "ERROR: $*" >&2; exit 1; }
@@ -54,6 +57,8 @@ resolve_package_candidates() {
     partx) printf '%s\n' partx-utils ;;
     # OpenWrt ships odhcpd-ipv6only; init script remains /etc/init.d/odhcpd.
     odhcpd) printf '%s\n' odhcpd-ipv6only odhcpd ;;
+    # ImmortalWrt/OpenWrt OpenVPN is a crypto-variant package, not "openvpn".
+    openvpn) printf '%s\n' openvpn-openssl openvpn-mbedtls openvpn-wolfssl openvpn ;;
     *) printf '%s\n' "$name" ;;
   esac
 }

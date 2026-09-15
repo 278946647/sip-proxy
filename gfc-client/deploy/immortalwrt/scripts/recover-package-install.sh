@@ -41,6 +41,11 @@ REQUIRED_IPKS=(
   kmod-nft-netdev
   kmod-dummy
   kmod-veth
+  kmod-wireguard
+  kmod-udptunnel4
+  kmod-udptunnel6
+  wireguard-tools
+  openvpn-openssl
   nftables-json
   curl
   wget-ssl
@@ -136,6 +141,17 @@ compile_missing_gfc_packages() {
     local parted_tgt=package/feeds/packages/parted
     [[ -d package/feeds/packages/utils/parted ]] && parted_tgt=package/feeds/packages/utils/parted
     make "${parted_tgt}/compile" -j"$JOBS" V=s || die "parted compile failed"
+  fi
+  if ! have_ipk wireguard-tools; then
+    local wg_tgt=package/network/utils/wireguard-tools
+    [[ -d package/feeds/packages/wireguard-tools ]] && wg_tgt=package/feeds/packages/wireguard-tools
+    [[ -d package/feeds/packages/net/wireguard-tools ]] && wg_tgt=package/feeds/packages/net/wireguard-tools
+    make "${wg_tgt}/compile" -j"$JOBS" V=s || die "wireguard-tools compile failed"
+  fi
+  if ! have_ipk openvpn-openssl; then
+    local openvpn_tgt=package/feeds/packages/openvpn
+    [[ -d package/feeds/packages/net/openvpn ]] && openvpn_tgt=package/feeds/packages/net/openvpn
+    make "${openvpn_tgt}/compile" -j"$JOBS" V=s || die "openvpn-openssl compile failed"
   fi
   # Remaining feed/base packages: one package/compile pass only if still missing
   # and user opted in — otherwise print what is still missing.

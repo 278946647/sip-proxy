@@ -18,7 +18,7 @@
 | 实验室（旧 OEM，无 `veth.ko`） | **CPE DNS / Web / hitch TCP / 盒子 unbound 已通过** |
 | 规范 | **已对齐**（见 §2）；无整体架构冲突 |
 | Client sing-box JSON | **已改生成器**：透明 `default_interface=br-trans`；切走恢复 WAN |
-| OEM `kmod-veth` | **选包与 ORIG 门禁已有**；测试盘是旧镜像，**尚未重编刷入** |
+| OEM `kmod-veth` | **选包 + ORIG 门禁已有**；本批另预装 **WireGuard / OpenVPN**（不 enable）；测试盘是旧镜像，**尚未重编刷入** |
 | 产品 `vX.Y.Z` / `PKG_RELEASE` | **未升**（§1.5） |
 | Git | `milestone/transparent-lab-20260915` = 无 veth 的 DNS 闭环；本交接 HEAD 另打研发 tag |
 
@@ -30,7 +30,7 @@
 
 ```
 严格按 docs/TRANSPARENT_MODE.md 与 docs/SESSION_HANDOFF_2026-09-15_TRANSPARENT_LAB.md。
-本消息不是新开透明规格。下一步：gfcbuild 构建机试编 OEM（必须 kmod-veth 进 manifest+ORIG），再打 runtime 装到 gfc-test，验收 veth 路径与 sing-box JSON。
+本消息不是新开透明规格。下一步：gfcbuild@192.168.0.185 构建机试编 OEM（必须 kmod-veth 进 manifest+ORIG；并预装 WireGuard/OpenVPN 用户态，不 enable）。
 禁止改 auto_route / route.final / unbound forward-zone / inet 表链 hook mark。
 试编不升产品号。不要从 192.168.1.222 /root/sip-proxy 打 OEM。
 ```
@@ -82,8 +82,8 @@
 | `gfc-client/internal/render/singbox/singbox.go` | `resolveRouteIface` + `AlignBindWithProxyMode` |
 | `gfc-client/internal/orchestrator/orchestrator.go` | 重渲染后 Align |
 | `gfc-client/deploy/immortalwrt/gfc-routing.sh` | 无 veth DNS 交付（已在 `milestone/transparent-lab-20260915`） |
-| `gfc-client/deploy/immortalwrt/config/gfc-packages.config` | `CONFIG_PACKAGE_kmod-veth=y`（早已选中） |
-| `rebuild-gfc-image.sh` | ORIG 缺 `veth.ko` **构建失败** |
+| `gfc-client/deploy/immortalwrt/config/gfc-packages.config` | `CONFIG_PACKAGE_kmod-veth=y`（早已选中）；**2026-09-15** 另选 `kmod-wireguard` + `wireguard-tools` + `openvpn-openssl`（预装，非数据面） |
+| `rebuild-gfc-image.sh` | ORIG 缺 `veth.ko` **构建失败**；缺 `wireguard.ko` / `openvpn` **构建失败** |
 
 **未提交、勿当规范：** `docs/draft/*`
 
@@ -91,9 +91,10 @@
 
 ## 5. 新会话下一步（按顺序）
 
-1. **OEM（gfcbuild @ `/opt/gfc`，不是 `192.168.1.222`）**  
-   `git pull` 到本交接 HEAD → `rebuild-gfc-image.sh`（**不要** `GFC_SKIP_KERNEL_REFRESH=1`，**不要** `GFC_PUBLISH_RELEASE=1`，**不要** bump `PKG_RELEASE`）。  
-   验收：`*.manifest` 含 `kmod-veth`；ORIG 有 `veth.ko`。
+1. **OEM（gfcbuild @ `192.168.0.185` `/opt/gfc`，不是 `192.168.1.222`）**  
+   `cd /opt/gfc/sip-proxy && git pull` 到含本交接的 HEAD → `export GFC_REPO=/opt/gfc/sip-proxy/gfc-client` → `rebuild-gfc-image.sh`（**不要** `GFC_SKIP_KERNEL_REFRESH=1`，**不要** `GFC_PUBLISH_RELEASE=1`，**不要** bump `PKG_RELEASE`）。  
+   操作与验收命令全文：[`gfc-client/deploy/immortalwrt/BUILD-FIRMWARE.md`](../gfc-client/deploy/immortalwrt/BUILD-FIRMWARE.md) §3–§4。  
+   验收：`*.manifest` 含 `kmod-veth`、`kmod-wireguard`、`wireguard-tools`、`openvpn-openssl` 以及 r16 基线；ORIG 有 `veth.ko`、`wireguard.ko`、`/usr/sbin/openvpn`、`/usr/bin/wg`。
 2. **刷测试盘**（`*ext4*combined*efi*.img.gz`）。
 3. **runtime**：在已同步本提交的仓库打 `pack-runtime.sh`，装到 `gfc-test`。禁止用构建机上停在旧 hash 的 `/root/sip-proxy` 打包。
 4. **验收 veth 主路径**  
@@ -131,4 +132,4 @@ ip -d link show gfc-ce | head
 
 ## 7. 用户口令
 
-> 严格按 `docs/TRANSPARENT_MODE.md` 与 `docs/SESSION_HANDOFF_2026-09-15_TRANSPARENT_LAB.md`。只改点名文件。OEM 必须含 `kmod-veth`。透明 sing-box `default_interface` 仅 `br-trans`（口存在时），网关/旁路 WAN。试编不升号。
+> 严格按 `docs/TRANSPARENT_MODE.md` 与 `docs/SESSION_HANDOFF_2026-09-15_TRANSPARENT_LAB.md`。只改点名文件。OEM 必须含 `kmod-veth`。透明 sing-box `default_interface` 仅 `br-trans`（口存在时），网关/旁路 WAN。WireGuard/OpenVPN 仅预装，不 enable、不改数据面。试编不升号。

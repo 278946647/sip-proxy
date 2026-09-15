@@ -2,8 +2,8 @@
 
 > **状态 / 卡点 / 踩坑：** [`FIRMWARE-BUILD-HANDOFF.md`](FIRMWARE-BUILD-HANDOFF.md)  
 > **Cursor 规则：** [`.cursor/rules/gfc-firmware-build.mdc`](../../../.cursor/rules/gfc-firmware-build.mdc)  
-> **包版本（源码）：** `gfc-client` **`1.1.0-r20`**（以 `package/Makefile` 的 `PKG_RELEASE` 与构建机 manifest 为准）  
-> **最后更新：** 2026-07-13
+> **包版本（源码）：** `gfc-client` 以 `package/Makefile` 的 `PKG_VERSION`-`rPKG_RELEASE` 与构建机 manifest 为准（当前 **2.1.0-r1**；**试编不升号**）  
+> **最后更新：** 2026-09-15（OEM 强制 `kmod-veth`；预装 WireGuard / OpenVPN 用户态，非当前数据面）
 
 本手册面向**构建机操作人员**：按目录、命令、模块、验收步骤操作即可产出可刷盘镜像。
 
@@ -52,57 +52,143 @@ export GOFLAGS=-buildvcs=false
 
 ## 3. 一键重建（推荐）
 
+构建机 **192.168.0.185**，用户 **`gfcbuild`**。仓库在 `/opt/gfc/sip-proxy`；ImmortalWrt 树在 `/opt/gfc/immortalwrt`。  
+**禁止**从 `192.168.1.222:/root/sip-proxy` 打 OEM。试编 **不要** `GFC_SKIP_KERNEL_REFRESH=1`、**不要** `GFC_PUBLISH_RELEASE=1`、**不要** bump `PKG_RELEASE`。
+
 ```bash
-cd /opt/gfc/sip-proxy && git pull
+# 在能 ssh 到构建机的机器上（或本机就是 185）：
+# ssh gfcbuild@192.168.0.185
+
+cd /opt/gfc/sip-proxy
+git pull
 # 若曾用 root 编过：
 # sudo chown -R gfcbuild:gfcbuild /opt/gfc/sip-proxy /opt/gfc/immortalwrt
 
-su - gfcbuild
 export PATH=/usr/local/go/bin:$PATH
 export IMT_SRC=/opt/gfc/immortalwrt
 export GFC_REPO=/opt/gfc/sip-proxy/gfc-client
 export GOFLAGS=-buildvcs=false
 
+# 必须从 sip-proxy 同步后的 gfc-client 打 OEM（GFC_REPO 指向 gfc-client）
 bash "$GFC_REPO/deploy/immortalwrt/scripts/rebuild-gfc-image.sh"
 ```
 
-脚本会：注册/校验 feed、合并 `gfc-packages.config`、校验 packageinfo、编包、装 rootfs、同步 ORIG、打镜像、查 manifest。
+脚本会：注册/校验 feed、合并 `gfc-packages.config`、校验 packageinfo、编包（含 **kmod-veth** / WireGuard / OpenVPN）、装 rootfs、同步 ORIG、打镜像、查 manifest。缺 `veth.ko` / `wireguard.ko` / `openvpn` 会 **构建失败**。
 
 ---
 
 ## 4. 构建成功验收（必须）
 
+在 **gfcbuild @ 192.168.0.185**、编完后立刻跑。`ORIG` 必须查 `root.orig-x86`（镜像从 ORIG 打包）。  
+**禁止：** 只看到 ipk 就宣布成功；只查 `root-x86` 不查 ORIG；试编成功就 bump 版本号。
+
 ```bash
-# 1) manifest 含 GFC（唯一进镜像成功标准）
-grep -i gfc "$IMT_SRC/bin/targets/x86/64/"*.manifest
-# 期望类似:
-#   gfc-client - 1.1.0-r13
-#   luci-app-gfc - ...
-
-# 2) 关键选包进镜像（r12：tc；r13：resize2fs/parted/partx-utils）
-grep -E 'tc-tiny|kmod-sched-core|kmod-ifb|libcap-bin|nftables-json|resize2fs|parted|partx-utils' \
-  "$IMT_SRC/bin/targets/x86/64/"*.manifest
-# ORIG 二进制（tc-tiny 本体在 libexec；/sbin/tc 为 ALTERNATIVES）
+export IMT_SRC=/opt/gfc/immortalwrt
+export GFC_REPO=/opt/gfc/sip-proxy/gfc-client
+MANIFEST="$IMT_SRC/bin/targets/x86/64/immortalwrt-x86-64-generic.manifest"
 ORIG="$IMT_SRC/build_dir/target-x86_64_musl/root.orig-x86"
-ls -la "$ORIG/sbin/tc" "$ORIG/usr/libexec/tc-tiny" 2>/dev/null || true
-ls -la "$ORIG/usr/sbin/resize2fs" "$ORIG/sbin/resize2fs" 2>/dev/null || true
 
-# 3) ORIG 首启/热插拔
+cd /opt/gfc/sip-proxy
+git rev-parse --short HEAD
+grep PKG_RELEASE "$GFC_REPO/deploy/immortalwrt/package/Makefile"
+# 试编期望仍为 PKG_RELEASE:=1（2.1.0-r1）；不得因本批升号
+
+# ---- 1) 本批新增：透明 veth + 未来 VPN ----
+echo "=== NEW: transparent veth + future VPN ==="
+grep -E '^(kmod-veth|kmod-dummy|kmod-nft-netdev|kmod-wireguard|kmod-udptunnel4|kmod-udptunnel6|wireguard-tools|openvpn-openssl) ' "$MANIFEST"
+find "$ORIG/lib/modules" \( -name 'veth.ko' -o -name 'veth.ko.gz' -o -name 'veth.ko.xz' \) | head -1
+find "$ORIG/lib/modules" \( -name 'dummy.ko' -o -name 'dummy.ko.gz' -o -name 'dummy.ko.xz' \) | head -1
+find "$ORIG/lib/modules" \( -name 'nft_fwd_netdev.ko' -o -name 'nft_fwd_netdev.ko.gz' -o -name 'nft_fwd_netdev.ko.xz' \) | head -1
+find "$ORIG/lib/modules" \( -name 'wireguard.ko' -o -name 'wireguard.ko.gz' -o -name 'wireguard.ko.xz' \) | head -1
+ls -la "$ORIG/usr/bin/wg" "$ORIG/usr/sbin/wg" 2>/dev/null || true
+ls -la "$ORIG/usr/sbin/openvpn" "$ORIG/usr/bin/openvpn" 2>/dev/null || true
+
+# ---- 2) r16 / 数据面必要包（此前基线，不得漏）----
+echo "=== BASELINE: r16 + dataplane ==="
+grep -E '^(gfc-client|luci-app-gfc|luci-base|luci-theme-bootstrap|luci-mod-admin-full) ' "$MANIFEST"
+grep -E '^(dropbear|openssh-client|openssh-keygen|autossh|uhttpd|rpcd|odhcpd) ' "$MANIFEST"
+grep -E '^(sing-box|unbound-daemon|unbound-checkconf|dnsmasq-full|nftables-json|kmod-tun|kmod-nft-core) ' "$MANIFEST"
+grep -E '^(tc-tiny|kmod-sched-core|kmod-ifb|kmod-tcp-bbr|kmod-sched|libcap-bin|ip-full) ' "$MANIFEST"
+grep -E '^(resize2fs|parted|partx-utils|losetup|curl|wget-ssl|tcpdump) ' "$MANIFEST"
+
+# ---- 3) ORIG 二进制 / firstboot（镜像真实内容）----
+echo "=== ORIG binaries ==="
+ls -la "$ORIG/sbin/tc" "$ORIG/usr/libexec/tc-tiny" 2>/dev/null || true
+ls -la "$ORIG/usr/sbin/dropbear" "$ORIG/usr/libexec/ssh-openssh" "$ORIG/usr/bin/ssh" 2>/dev/null || true
+test -x "$ORIG/usr/sbin/resize2fs" -o -x "$ORIG/sbin/resize2fs"
 test -f "$ORIG/etc/uci-defaults/95-gfc-rootpt-resize"
 test -f "$ORIG/etc/uci-defaults/96-gfc-rootfs-resize"
 test -f "$ORIG/etc/uci-defaults/99-gfc-firstboot"
-test -f "$ORIG/etc/uci-defaults/98-gfc-network-ports"
-test -f "$ORIG/etc/uci-defaults/97-gfc-oem-root-password"
-test -f "$ORIG/etc/hotplug.d/iface/99-gfc-dnsmasq"
 test -x "$ORIG/etc/init.d/gfc-lan-dhcp"
-# expand 工具（resize2fs 是独立包，不在 e2fsprogs 内）
-test -x "$ORIG/usr/sbin/resize2fs" -o -x "$ORIG/sbin/resize2fs"
+test -f "$ORIG/etc/rc.common"
 
-# 4) 最新镜像
-ls -lt "$IMT_SRC/bin/targets/x86/64/"*ext4*combined*efi*.img.gz | head -3
+# ---- 4) 一次扫完：缺任何一行即失败 ----
+python3 - <<'PY'
+import os, glob, sys
+imt = os.environ.get("IMT_SRC", "/opt/gfc/immortalwrt")
+manifest = os.path.join(imt, "bin/targets/x86/64/immortalwrt-x86-64-generic.manifest")
+orig = os.path.join(imt, "build_dir/target-x86_64_musl/root.orig-x86")
+need = [
+    "gfc-client", "luci-app-gfc", "luci-base", "luci-theme-bootstrap", "luci-mod-admin-full",
+    "dropbear", "openssh-client", "openssh-keygen", "autossh", "uhttpd", "rpcd",
+    "sing-box", "unbound-daemon", "unbound-checkconf", "dnsmasq-full", "nftables-json",
+    "kmod-tun", "kmod-nft-core", "kmod-nft-netdev", "kmod-dummy", "kmod-veth",
+    "tc-tiny", "kmod-sched-core", "kmod-ifb", "kmod-tcp-bbr", "kmod-sched",
+    "libcap", "libcap-bin", "ca-bundle", "ip-full",
+    "resize2fs", "parted", "partx-utils", "losetup",
+    "curl", "wget-ssl", "tcpdump", "iftop", "bmon",
+    "odhcpd-ipv6only",
+    "kmod-wireguard", "kmod-udptunnel4", "kmod-udptunnel6", "wireguard-tools", "openvpn-openssl",
+]
+text = open(manifest, encoding="utf-8", errors="replace").read().splitlines()
+have = set()
+for line in text:
+    pkg = line.split()[0] if line.strip() else ""
+    have.add(pkg)
+missing = [p for p in need if p not in have]
+if "odhcpd-ipv6only" in missing and any(x.startswith("odhcpd") for x in have):
+    missing = [p for p in missing if p != "odhcpd-ipv6only"]
+if missing:
+    print("MISSING from manifest:", " ".join(missing))
+    sys.exit(1)
+print("manifest OK:", len(need), "required names present")
+
+def find_ko(name):
+    for root, _, files in os.walk(os.path.join(orig, "lib/modules")):
+        for f in files:
+            if f == name or f.startswith(name + "."):
+                return os.path.join(root, f)
+    return None
+for ko in ("veth.ko", "dummy.ko", "nft_fwd_netdev.ko", "wireguard.ko"):
+    p = find_ko(ko)
+    if not p:
+        print("MISSING ORIG kmod:", ko)
+        sys.exit(1)
+    print("ORIG kmod OK:", p)
+bins = [
+    ("openvpn", ["usr/sbin/openvpn", "usr/bin/openvpn"]),
+    ("wg", ["usr/bin/wg", "usr/sbin/wg"]),
+    ("dropbear", ["usr/sbin/dropbear", "usr/bin/dropbear"]),
+]
+for label, rels in bins:
+    ok = any(os.access(os.path.join(orig, r), os.X_OK) for r in rels)
+    if not ok:
+        print("MISSING ORIG bin:", label)
+        sys.exit(1)
+    print("ORIG bin OK:", label)
+print("OEM package check passed")
+PY
+
+# ---- 5) 镜像产物 ----
+ls -lt "$IMT_SRC/bin/targets/x86/64/"*ext4*combined*efi*.img.gz | head -5
+ls -lt "$IMT_SRC/bin/targets/x86/64/"gfc-build-*.img.gz | head -3
+cd "$IMT_SRC/bin/targets/x86/64"
+# 必须在本目录跑 -c（相对路径）；文件名随 git sha 变化
+ls gfc-build-*.img.gz.sha256
+sha256sum -c gfc-build-*.img.gz.sha256
 ```
 
-**禁止：** 只看到 ipk 就宣布成功；只查 `root-x86` 不查 `root.orig-x86`；只 `command -v tc` 不查 `/usr/libexec/tc-tiny`；只选 `e2fsprogs` 期望有 `resize2fs`。
+期望：python 打印 `OEM package check passed`；manifest 同时有 **kmod-veth** 与 **openvpn-openssl** / **wireguard-tools**；ORIG 有 `veth.ko` + `wireguard.ko` + `openvpn`。
 
 ---
 
@@ -148,6 +234,9 @@ ls -lt "$IMT_SRC/bin/targets/x86/64/"*ext4*combined*efi*.img.gz | head -3
 | `unbound-daemon` + `unbound-checkconf` | LAN DNS（`:53`；dnsmasq 仅 DHCP） |
 | `dnsmasq-full` | DHCP only（`port=0`、`force=1`） |
 | `nftables-json` + `kmod-nft-core` + `kmod-tun` | nft + TUN |
+| `kmod-nft-netdev` + `kmod-dummy` + **`kmod-veth`** | 透明偷流：netdev fwd + DNS VIP + **veth RX**（无模块则 MAC-punt 回退；产品主路径必须有 `veth.ko`） |
+| `kmod-wireguard` + `kmod-udptunnel4/6` + `wireguard-tools` | **预装**未来隧道；**不**作为当前数据面、**不** enable |
+| `openvpn-openssl` | **预装**未来隧道（OpenSSL 变体）；**不** enable；无 `luci-app-openvpn` |
 | `libcap-bin` | sing-box 非 root 能力（setcap） |
 | `ip-full` | 策略路由等 |
 | `tc-tiny` + `kmod-sched-core` + `kmod-ifb` | HTB 带宽限速（**无** `kmod-sched-htb`）；二进制在 `/usr/libexec/tc-tiny`，`/sbin/tc` 为 ALTERNATIVES |

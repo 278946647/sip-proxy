@@ -29,6 +29,13 @@ kmod-ifb
 kmod-tcp-bbr
 kmod-sched
 #
+# future-vpn (userspace + kmod only; not GFC dataplane)
+kmod-wireguard
+kmod-udptunnel4
+kmod-udptunnel6
+wireguard-tools
+openvpn-openssl
+#
 # remote-ops / SSH (r16 baseline)
 autossh
 dropbear

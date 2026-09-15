@@ -172,7 +172,8 @@ merge_gfc_config() {
   for pkg in tc-tiny kmod-sched-core kmod-ifb resize2fs parted partx-utils losetup \
     kmod-tcp-bbr kmod-sched luci-theme-bootstrap luci-mod-admin-full \
     dropbear openssh-client openssh-keygen uhttpd rpcd odhcpd-ipv6only \
-    kmod-tun kmod-nft-core kmod-nft-netdev kmod-dummy kmod-veth nftables-json; do
+    kmod-tun kmod-nft-core kmod-nft-netdev kmod-dummy kmod-veth nftables-json \
+    kmod-wireguard kmod-udptunnel4 kmod-udptunnel6 wireguard-tools openvpn-openssl; do
     grep -q "^CONFIG_PACKAGE_${pkg}=y$" "$merged" \
       || die "merge skipped required CONFIG_PACKAGE_${pkg}=y (Kconfig missing? feeds install parted/luci/openssh?)"
   done
@@ -250,7 +251,8 @@ verify_dotconfig() {
   grep -q '^CONFIG_PACKAGE_luci-app-gfc=y$' .config || die ".config missing CONFIG_PACKAGE_luci-app-gfc=y"
   for pkg in tc-tiny kmod-sched-core kmod-ifb kmod-tcp-bbr kmod-sched resize2fs parted partx-utils losetup \
     luci-theme-bootstrap luci-mod-admin-full dropbear openssh-client openssh-keygen uhttpd rpcd odhcpd-ipv6only \
-    kmod-tun kmod-nft-core kmod-nft-netdev kmod-dummy kmod-veth nftables-json; do
+    kmod-tun kmod-nft-core kmod-nft-netdev kmod-dummy kmod-veth nftables-json \
+    kmod-wireguard kmod-udptunnel4 kmod-udptunnel6 wireguard-tools openvpn-openssl; do
     grep -q "^CONFIG_PACKAGE_${pkg}=y$" .config || die ".config missing CONFIG_PACKAGE_${pkg}=y"
     # Must use if/then: under set -e, "grep -q && die" returns 1 when absent and aborts the script.
     if grep -qE "^# CONFIG_PACKAGE_${pkg} is not set$" .config; then
@@ -433,6 +435,7 @@ build_packages() {
   find bin -name 'losetup_*.ipk' -print | grep -q . \
     || die "losetup ipk not produced — use CONFIG_PACKAGE_losetup=y"
   compile_r16_service_baseline
+  compile_oem_vpn_packages
 }
 
 # r16-necessary services newly pinned in gfc-packages.config — must be compiled
@@ -493,6 +496,61 @@ compile_r16_service_baseline() {
     || find bin -name 'odhcpd_*.ipk' -print | grep -q . \
     || die "odhcpd(-ipv6only) ipk not produced"
   log "r16 service baseline ipks present"
+}
+
+# Future tunnel diversity — compile explicitly (incremental build skips new =y).
+# Not GFC dataplane: do not enable openvpn/wg; do not change nft / sing-box.
+compile_oem_vpn_packages() {
+  local openvpn_tgt="" wg_tgt="" cand
+  cd "$IMT_SRC"
+  log "compile kmod-wireguard / wireguard-tools / openvpn-openssl (OEM future VPN; not dataplane)"
+
+  make package/kernel/linux/compile -j"$JOBS" V=s 2>/dev/null || true
+  find bin -name 'kmod-wireguard_*.ipk' -print | grep -q . \
+    || die "kmod-wireguard ipk not produced — check CONFIG_PACKAGE_kmod-wireguard=y"
+  find bin -name 'kmod-udptunnel4_*.ipk' -print | grep -q . \
+    || die "kmod-udptunnel4 ipk not produced — WireGuard IPv4 UDP tunnel dep"
+  find bin -name 'kmod-udptunnel6_*.ipk' -print | grep -q . \
+    || die "kmod-udptunnel6 ipk not produced — WireGuard IPv6 UDP tunnel dep"
+
+  for cand in package/network/utils/wireguard-tools \
+    package/feeds/packages/wireguard-tools \
+    package/feeds/packages/net/wireguard-tools; do
+    [[ -d "$cand" ]] && wg_tgt=$cand && break
+  done
+  if [[ -z "$wg_tgt" ]]; then
+    log "wireguard-tools path missing — feeds install -f wireguard-tools"
+    ./scripts/feeds install -f wireguard-tools \
+      || die "feeds install wireguard-tools failed"
+    for cand in package/network/utils/wireguard-tools \
+      package/feeds/packages/wireguard-tools \
+      package/feeds/packages/net/wireguard-tools; do
+      [[ -d "$cand" ]] && wg_tgt=$cand && break
+    done
+  fi
+  [[ -n "$wg_tgt" ]] || die "wireguard-tools still missing after feeds install"
+  make "${wg_tgt}/compile" -j"$JOBS" V=s \
+    || die "wireguard-tools compile failed (target=${wg_tgt})"
+  find bin -name 'wireguard-tools_*.ipk' -print | grep -q . \
+    || die "wireguard-tools ipk not produced — check CONFIG_PACKAGE_wireguard-tools=y"
+
+  for cand in package/feeds/packages/openvpn package/feeds/packages/net/openvpn; do
+    [[ -d "$cand" ]] && openvpn_tgt=$cand && break
+  done
+  if [[ -z "$openvpn_tgt" ]]; then
+    log "openvpn feed path missing — feeds install -f openvpn-openssl"
+    ./scripts/feeds install -f openvpn-openssl \
+      || die "feeds install openvpn-openssl failed (packages feed required)"
+    for cand in package/feeds/packages/openvpn package/feeds/packages/net/openvpn; do
+      [[ -d "$cand" ]] && openvpn_tgt=$cand && break
+    done
+  fi
+  [[ -n "$openvpn_tgt" ]] || die "openvpn still missing under package/feeds/packages after feeds install"
+  make "${openvpn_tgt}/compile" -j"$JOBS" V=s \
+    || die "openvpn compile failed (target=${openvpn_tgt})"
+  find bin -name 'openvpn-openssl_*.ipk' -print | grep -q . \
+    || die "openvpn-openssl ipk not produced — check CONFIG_PACKAGE_openvpn-openssl=y (not Package: openvpn)"
+  log "OEM VPN ipks present (openvpn/wg not enabled as GFC services)"
 }
 
 ensure_gfc_client_pkginfo() {
@@ -670,6 +728,7 @@ prepare_package_install_abi() {
     log "GFC_SKIP_KERNEL_REFRESH=1 — only verify existing kernel ipk"
     verify_kernel_ipk_for_install "$hash" "$kernel_ver"
     verify_trans_kmod_ipks "$hash" "$kernel_ver"
+    verify_oem_vpn_kmod_ipks "$hash" "$kernel_ver"
     return 0
   fi
 
@@ -709,6 +768,7 @@ prepare_package_install_abi() {
     || die "package/kernel/linux/compile failed"
   verify_kernel_ipk_for_install "$hash" "$kernel_ver"
   verify_trans_kmod_ipks "$hash" "$kernel_ver"
+  verify_oem_vpn_kmod_ipks "$hash" "$kernel_ver"
 
   # Always ensure base-files ipk exists and contains /etc/rc.common.
   ensure_base_files_ipk
@@ -775,6 +835,7 @@ verify_required_gfc_ipks() {
     sing-box unbound-daemon unbound-checkconf dnsmasq-full
     tc-tiny kmod-sched-core kmod-sched kmod-ifb kmod-tcp-bbr kmod-tun kmod-nft-core
     kmod-nft-netdev kmod-dummy kmod-veth
+    kmod-wireguard kmod-udptunnel4 kmod-udptunnel6 wireguard-tools openvpn-openssl
     nftables-json curl wget-ssl tcpdump iftop bmon autossh dropbear
     openssh-client openssh-keygen uhttpd rpcd odhcpd-ipv6only
     libcap libcap-bin ca-bundle ip-full resize2fs parted partx-utils losetup
@@ -830,6 +891,42 @@ verify_trans_kmod_ipks() {
     fi
   done
   log "transparent kmod ipks match kernel ${kernel_ver} vermagic ${hash}"
+}
+
+# Future VPN kmods must ship in the same kernel ABI as transparent steal.
+verify_oem_vpn_kmod_ipks() {
+  local hash="${1:-}" kernel_ver="${2:-}" name ipk dep ko
+  cd "$IMT_SRC"
+  if [[ -z "$hash" ]]; then
+    hash="$(read_build_vermagic)" || die "no .vermagic under build_dir"
+  fi
+  if [[ -z "$kernel_ver" ]]; then
+    kernel_ver="$(read_build_kernel_ver)" || die "cannot parse kernel version from build_dir"
+  fi
+  for name in kmod-wireguard kmod-udptunnel4 kmod-udptunnel6; do
+    grep -q "^CONFIG_PACKAGE_${name}=y$" .config \
+      || die ".config missing CONFIG_PACKAGE_${name}=y (OEM future VPN)"
+    ipk="$(find bin/targets/x86/64/packages -maxdepth 1 -type f -name "${name}_*.ipk" 2>/dev/null | head -1)"
+    [[ -n "$ipk" ]] || die "missing ${name}_*.ipk in targets/x86/64/packages — WireGuard kmod not built"
+    dep="$(
+      tar -xOf "$ipk" ./control.tar.gz 2>/dev/null | tar -xzO ./control 2>/dev/null \
+        || tar -xOf "$ipk" control.tar.gz 2>/dev/null | tar -xzO control 2>/dev/null \
+        || true
+    )"
+    printf '%s\n' "$dep" | grep -F "$hash" >/dev/null \
+      || die "${name} ipk control missing vermagic ${hash}: $(basename "$ipk")"
+    case "$name" in
+      kmod-wireguard) ko='wireguard.ko' ;;
+      kmod-udptunnel4) ko='udp_tunnel.ko' ;;
+      kmod-udptunnel6) ko='ip6_udp_tunnel.ko' ;;
+    esac
+    if ! tar -xOf "$ipk" ./data.tar.gz 2>/dev/null | tar -tz 2>/dev/null | grep -E "/${ko}(\.gz|\.xz)?$" >/dev/null; then
+      if ! tar -xOf "$ipk" data.tar.gz 2>/dev/null | tar -tz 2>/dev/null | grep -E "/${ko}(\.gz|\.xz)?$" >/dev/null; then
+        die "${name} ipk has no ${ko} — not an empty leftover"
+      fi
+    fi
+  done
+  log "OEM VPN kmod ipks match kernel ${kernel_ver} vermagic ${hash}"
 }
 
 # r16 必要 init.d must exist in ORIG (see config/gfc-initd-baseline.txt).
@@ -1334,7 +1431,7 @@ build_image() {
 verify_manifest() {
   cd "$IMT_SRC"
   local manifest="bin/targets/x86/64/immortalwrt-x86-64-generic.manifest"
-  local root orig pkg dummy_ko fwd_ko
+  local root orig pkg dummy_ko fwd_ko veth_ko wg_ko
   root="$(find_rootfs_dir)"
   orig="$ROOTFS_ORIG_DIR"
   [[ -f "$manifest" ]] || die "missing $manifest"
@@ -1390,6 +1487,19 @@ verify_manifest() {
   [[ -n "$veth_ko" ]] || die "ORIG missing veth.ko — ip link add type veth will fail"
   [[ -n "$fwd_ko" ]] || die "ORIG missing nft_fwd_netdev.ko — netdev gfc_trans cannot load"
   log "ORIG trans kmods: $dummy_ko $veth_ko $fwd_ko"
+  for pkg in kmod-wireguard kmod-udptunnel4 kmod-udptunnel6 wireguard-tools openvpn-openssl; do
+    grep -qE "^${pkg}( |$)" "$manifest" \
+      || die "manifest missing ${pkg} (OEM future VPN — check CONFIG_PACKAGE_${pkg}=y)"
+  done
+  wg_ko="$(find "$orig/lib/modules" \( -name 'wireguard.ko' -o -name 'wireguard.ko.gz' -o -name 'wireguard.ko.xz' \) 2>/dev/null | head -1)"
+  [[ -n "$wg_ko" ]] || die "ORIG missing wireguard.ko — CONFIG_PACKAGE_kmod-wireguard=y did not ship"
+  [[ -x "$orig/usr/bin/wg" || -x "$orig/usr/sbin/wg" ]] \
+    || die "ORIG missing wg binary — CONFIG_PACKAGE_wireguard-tools=y did not ship"
+  [[ -x "$orig/usr/sbin/openvpn" || -x "$orig/usr/bin/openvpn" ]] \
+    || die "ORIG missing openvpn binary — CONFIG_PACKAGE_openvpn-openssl=y did not ship"
+  log "ORIG VPN: $wg_ko wg=$(ls "$orig/usr/bin/wg" "$orig/usr/sbin/wg" 2>/dev/null | head -1) openvpn=$(ls "$orig/usr/sbin/openvpn" "$orig/usr/bin/openvpn" 2>/dev/null | head -1)"
+  log "manifest VPN lines:"
+  grep -E '^(kmod-wireguard|kmod-udptunnel4|kmod-udptunnel6|wireguard-tools|openvpn-openssl) ' "$manifest" || true
   if ! grep -qE '^odhcpd(-ipv6only)?( |$)' "$manifest"; then
     die "manifest missing odhcpd / odhcpd-ipv6only"
   fi

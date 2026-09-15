@@ -22,4 +22,5 @@ gfc-lan-dhcp
 #   gfc-reverse-ssh — agent writes it when platform opens reverse tunnel
 #   firewall — fw4 disabled / not installed
 #   unbound — stock script may exist but must stay disabled (gfc-unbound owns DNS)
+#   openvpn — OEM may ship openvpn-openssl for future tunnels; must stay disabled
 #   autocore gpio_switch led lm-sensors packet_steering sysfsutils — ImmortalWrt cosmetics

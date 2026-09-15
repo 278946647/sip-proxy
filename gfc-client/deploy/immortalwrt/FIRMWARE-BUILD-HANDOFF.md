@@ -1,10 +1,11 @@
 # GFC x86 固件构建 — 会话交接（FIRMWARE BUILD HANDOFF）
 
 > 写给**完全没有本对话上下文**的新会话。  
-> 最后更新：**2026-07-21**（**r23**：r16 服务基线、dropbear/openssh、ORIG/rc.d、VGA；验证 **`437d990`**）  
-> **本批详述：** [`docs/SESSION_HANDOFF_2026-07_FIRMWARE_BUILD_FIXES.md`](../../../docs/SESSION_HANDOFF_2026-07_FIRMWARE_BUILD_FIXES.md)  
+> 最后更新：**2026-09-15**（OEM 强制 `kmod-veth` + 预装 WireGuard/OpenVPN；试编不升号）  
+> **本批 OEM 入口：** [`docs/SESSION_HANDOFF_2026-09-15_TRANSPARENT_LAB.md`](../../../docs/SESSION_HANDOFF_2026-09-15_TRANSPARENT_LAB.md)  
+> **r16 构建修复（历史）：** [`docs/SESSION_HANDOFF_2026-07_FIRMWARE_BUILD_FIXES.md`](../../../docs/SESSION_HANDOFF_2026-07_FIRMWARE_BUILD_FIXES.md)  
 > 仓库：`sip-proxy` / `gfc-client/deploy/immortalwrt/`  
-> 构建机：`/opt/gfc/{sip-proxy,immortalwrt}`（Ubuntu 22.04，用户 `gfcbuild`）  
+> 构建机：`192.168.0.185` `/opt/gfc/{sip-proxy,immortalwrt}`（Ubuntu，用户 `gfcbuild`）  
 > Cursor 规则：[`gfc-firmware-build.mdc`](../../../.cursor/rules/gfc-firmware-build.mdc)（**alwaysApply**）、[`gfc-platform-ota-lifecycle.mdc`](../../../.cursor/rules/gfc-platform-ota-lifecycle.mdc)  
 > 平台/OTA 交接：[`docs/SESSION_HANDOFF_2026-07_OTA_LIFECYCLE.md`](../../../docs/SESSION_HANDOFF_2026-07_OTA_LIFECYCLE.md)
 

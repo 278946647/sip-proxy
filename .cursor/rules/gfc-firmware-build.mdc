@@ -113,6 +113,7 @@ Feed setup：**v4** — `feeds update -i gfc` + `feeds install -f`（禁止 plai
 | Web/LuCI | uhttpd, rpcd |
 | LAN | dnsmasq-full, odhcpd-ipv6only |
 | 数据面 | sing-box, unbound-daemon, nftables-json, kmod-tun, kmod-nft-core, kmod-nft-netdev, kmod-dummy, **kmod-veth**, …（见 config 全文） |
+| 未来隧道（进镜像，非当前数据面） | **kmod-wireguard**, kmod-udptunnel4/6, **wireguard-tools**, **openvpn-openssl**（不 enable；禁止改 nft / sing-box） |
 
 **不强制：** autocore, gpio_switch, led, lm-sensors, packet_steering, sysfsutils, firewall4。
 
