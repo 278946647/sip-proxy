@@ -38,6 +38,14 @@ load_proxy_mode() {
 }
 
 PROXY_MODE="$(load_proxy_mode)"
+TRANS_STATE=""
+TRANS_ISP=""
+TRANS_CPE=""
+if [ "$PROXY_MODE" = "transparent" ] && command -v jsonfilter >/dev/null 2>&1; then
+	TRANS_STATE="$(jsonfilter -i /etc/gfc-client/transparent-learned.json -e '@.state' 2>/dev/null || true)"
+	TRANS_ISP="$(jsonfilter -i /etc/gfc-client/transparent-ports.json -e '@.isp_port' 2>/dev/null || true)"
+	TRANS_CPE="$(jsonfilter -i /etc/gfc-client/transparent-ports.json -e '@.cpe_port' 2>/dev/null || true)"
+fi
 
 echo "==> verify dataplane (LAN gateway $LAN_ADDR mode=$PROXY_MODE)"
 
@@ -151,7 +159,7 @@ if [ "$PROXY_MODE" = "bypass" ]; then
 		fail "bypass DNS hijack missing local dest return (WAN IP as DNS would redirect)"
 	fi
 	if [ -f /etc/unbound/conf.d/gfc-bypass-acl.conf ] && grep -q 'access-control:' /etc/unbound/conf.d/gfc-bypass-acl.conf; then
-		if grep -q '0.0.0.0/0' /etc/unbound/conf.d/gfc-bypass-acl.conf; then
+		if grep -qE '^[[:space:]]*access-control:[[:space:]]*0\.0\.0\.0/0[[:space:]]+allow' /etc/unbound/conf.d/gfc-bypass-acl.conf; then
 			fail "unbound bypass ACL must not allow 0.0.0.0/0"
 		else
 			ok "unbound gfc-bypass-acl.conf"
@@ -189,6 +197,26 @@ if [ "$PROXY_MODE" = "transparent" ]; then
 	else
 		fail "transparent missing br-trans"
 	fi
+	netifd_bad=""
+	for section in $(uci -q show network 2>/dev/null | sed -n 's/^network\.\([^=]*\)=interface$/\1/p'); do
+		dev="$(uci -q get "network.${section}.device" 2>/dev/null || true)"
+		[ "$dev" = "$TRANS_ISP" ] || [ "$dev" = "$TRANS_CPE" ] || continue
+		auto="$(uci -q get "network.${section}.auto" 2>/dev/null || true)"
+		[ "$auto" = "0" ] || netifd_bad="$netifd_bad $section($dev)"
+	done
+	if [ -n "$netifd_bad" ]; then
+		fail "transparent ports still owned by autostart netifd interfaces:$netifd_bad"
+	else
+		ok "transparent isp/cpe released from netifd autostart"
+	fi
+	for port in "$TRANS_ISP" "$TRANS_CPE"; do
+		[ -n "$port" ] || continue
+		if ps w 2>/dev/null | grep -E "(udhcpc|odhcp6c).*([[:space:]]|=)${port}([[:space:]]|$)" | grep -v grep >/dev/null; then
+			fail "netifd DHCP client still running on transparent port $port"
+		else
+			ok "no netifd DHCP client on transparent port $port"
+		fi
+	done
 	if ip -4 addr show dev gfc-dns 2>/dev/null | grep -q 'inet '; then
 		ok "gfc-dns dummy has VIP"
 	else
@@ -209,15 +237,19 @@ if [ "$PROXY_MODE" = "transparent" ]; then
 	else
 		fail "transparent missing inet gfc (steal classification)"
 	fi
-	if ip -4 rule list 2>/dev/null | grep -q '0x2023'; then
-		ok "policy rule fwmark 0x2023"
+	if [ "$TRANS_STATE" = "dual" ]; then
+		if ip -4 rule list 2>/dev/null | grep -q '0x2023'; then
+			ok "policy rule fwmark 0x2023"
+		else
+			fail "transparent dual missing fwmark 0x2023 policy rule"
+		fi
+		if ip -4 rule list 2>/dev/null | grep -qE '^[[:space:]]*90:'; then
+			ok "bypass dest ip rule pref 90"
+		else
+			fail "transparent dual missing pref 90 to bypass_ip lookup main (VLESS else loops to gfctun)"
+		fi
 	else
-		fail "transparent missing fwmark 0x2023 policy rule"
-	fi
-	if ip -4 rule list 2>/dev/null | grep -qE '^[[:space:]]*90:'; then
-		ok "bypass dest ip rule pref 90"
-	else
-		fail "transparent missing pref 90 to bypass_ip lookup main (VLESS else loops to gfctun)"
+		ok "transparent state=$TRANS_STATE; TUN policy may stay deferred until dual"
 	fi
 	out_rt="$(nft list chain inet gfc output_mangle_route 2>/dev/null || true)"
 	if echo "$out_rt" | grep -q 'daddr @bypass_ip' && echo "$out_rt" | grep 'daddr @bypass_ip' | grep -q 'mark set 0'; then
@@ -227,15 +259,15 @@ if [ "$PROXY_MODE" = "transparent" ]; then
 	fi
 	brnf="$(sysctl -n net.bridge.bridge-nf-call-iptables 2>/dev/null || echo 0)"
 	[ "$brnf" = "0" ] && ok "bridge-nf-call-iptables=0" || fail "bridge-nf-call-iptables=$brnf (must be 0)"
-	if grep -q '0.0.0.0/0' /etc/unbound/conf.d/gfc-bypass-acl.conf 2>/dev/null; then
+	if grep -qE '^[[:space:]]*access-control:[[:space:]]*0\.0\.0\.0/0[[:space:]]+allow' /etc/unbound/conf.d/gfc-bypass-acl.conf 2>/dev/null; then
 		fail "unbound ACL must not allow 0.0.0.0/0"
 	else
 		ok "unbound extra ACL has no 0.0.0.0/0"
 	fi
-	if nft list table inet gfc_dns_hijack 2>/dev/null | grep -q 'redirect to'; then
-		if nft list table inet gfc_dns_hijack 2>/dev/null | grep -q 'gfc-ce'; then
-			fail "transparent cable DNS must not use naked redirect on gfc-ce"
-		fi
+	if nft list table inet gfc_dns_hijack 2>/dev/null | grep 'iifname "gfc-ce"' | grep -q 'redirect to'; then
+		fail "transparent cable DNS must not use naked redirect on gfc-ce"
+	else
+		ok "transparent gfc-ce DNS uses trampoline, not naked redirect"
 	fi
 	if nft list table inet gfc_dns_hijack 2>/dev/null | grep -q 'gfc-ce'; then
 		ok "transparent DNS trampoline iif gfc-ce"
@@ -254,7 +286,9 @@ if [ "$PROXY_MODE" = "transparent" ]; then
 		fail "transparent DNS trampoline missing iif br-trans"
 	fi
 	nat_post="$(nft list chain inet nat postrouting 2>/dev/null || true)"
-	if echo "$nat_post" | grep -qE 'udp sport 53.*return|sport 53 return'; then
+	if [ "$TRANS_STATE" != "dual" ]; then
+		ok "transparent state=$TRANS_STATE; hitch SNAT checks deferred until dual"
+	elif echo "$nat_post" | grep -qE 'udp sport 53.*return|sport 53 return'; then
 		ok "transparent DNS replies skip hitch SNAT (sport 53 return)"
 	else
 		fail "transparent postrouting must return on sport 53 before hitch SNAT to CE"

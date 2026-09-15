@@ -188,6 +188,55 @@ func TestSwitchTimeoutRollback(t *testing.T) {
 	}
 }
 
+func TestSwitchRollbackRestoresModeWhenWANApplyFails(t *testing.T) {
+	cfg := testCfg(t)
+	if err := writeJSON(wanPath(cfg), map[string]any{"mode": "dhcp", "interface": "eth0"}); err != nil {
+		t.Fatal(err)
+	}
+	c := NewController(cfg, func(body map[string]any) (map[string]any, error) {
+		return nil, os.ErrInvalid
+	}, func() string { return cfg.LanCIDR })
+	var modes []string
+	c.SetDataplaneApply(func(mode string) error {
+		modes = append(modes, mode)
+		cfg.ProxyMode = mode
+		return nil
+	})
+
+	st, err := c.Apply(SwitchRequest{
+		Mode:     ModeTransparent,
+		IspPort:  "eth0",
+		CpePort:  "eth1",
+		LANIface: "br-lan",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Pending == nil {
+		t.Fatal("expected pending")
+	}
+	if _, err := c.Rollback(); err == nil {
+		t.Fatal("expected incomplete rollback error")
+	}
+	if cfg.ProxyMode != ModeGateway {
+		t.Fatalf("mode must roll back despite WAN failure, got %s", cfg.ProxyMode)
+	}
+	if len(modes) != 2 || modes[0] != ModeTransparent || modes[1] != ModeGateway {
+		t.Fatalf("dataplane rollback modes=%v", modes)
+	}
+	ports := transparent.LoadPorts(cfg)
+	if ports.ISP != "" || ports.CPE != "" {
+		t.Fatalf("ports not restored: %+v", ports)
+	}
+	pending, err := LoadPending(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pending == nil {
+		t.Fatal("failed rollback must remain pending for retry")
+	}
+}
+
 func TestSwitchGatewayRestoresDHCPFromBypass(t *testing.T) {
 	cfg := testCfg(t)
 	if err := SaveCommitted(cfg, ModeBypass); err != nil {

@@ -90,9 +90,13 @@ func applyARP(role Role, srcMAC string, payload []byte, st *Learned) {
 			st.GWIP = tpa.String()
 		}
 	case RoleISP:
-		st.PEMAC = srcMAC
-		if onLinkGW(st.CEIP, spaStr) {
+		// Learn the PE MAC only from the gateway's own ARP. Transit IPv4
+		// and ARP from other ISP-side hosts must not rotate the L2 next hop.
+		if st.GWIP == "" && onLinkGW(st.CEIP, spaStr) {
 			st.GWIP = spaStr
+			st.PEMAC = srcMAC
+		} else if spaStr == st.GWIP {
+			st.PEMAC = srcMAC
 		}
 	}
 }
@@ -122,8 +126,8 @@ func applyIPv4(role Role, srcMAC string, payload []byte, st *Learned) {
 			applyDHCP(payload[ihl:], st)
 		}
 	case RoleISP:
-		st.PEMAC = srcMAC
-		// IPv4 src on isp is transit (VPN/CDN). GW comes from ARP/DHCP only.
+		// IPv4 on ISP is transit traffic. PE MAC / GW IP come from ARP;
+		// accepting this source MAC would let any upstream host replace PE.
 	}
 }
 
@@ -184,7 +188,9 @@ func dhcpOptionIP(opts []byte, code byte) string {
 
 func recomputeState(st *Learned) {
 	hasCPE := st.CPEMAC != "" || st.CEIP != ""
-	hasISP := st.PEMAC != "" || st.GWIP != ""
+	// GWIP may be learned from a CPE ARP request or DHCP option before any
+	// ISP frame is observed. Only PEMAC proves that the ISP side is present.
+	hasISP := st.PEMAC != ""
 	switch {
 	case hasCPE && hasISP:
 		st.State = StateDual

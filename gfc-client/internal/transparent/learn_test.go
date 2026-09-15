@@ -65,9 +65,9 @@ func TestSkipLinkLocalCE(t *testing.T) {
 }
 
 func TestISPTransitIPv4DoesNotBecomeGW(t *testing.T) {
-	st := &Learned{}
+	st := &Learned{PEMAC: "02:00:00:00:00:00"}
 	cpeMAC := []byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x01}
-	peMAC := []byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x02}
+	transitMAC := []byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x99}
 	ce := net.IPv4(192, 168, 88, 193).To4()
 	gw := net.IPv4(192, 168, 88, 1).To4()
 	vpn := net.IPv4(116, 63, 224, 146).To4()
@@ -76,7 +76,7 @@ func TestISPTransitIPv4DoesNotBecomeGW(t *testing.T) {
 		t.Fatalf("after cpe arp: %+v", st)
 	}
 	frame := make([]byte, 14+20)
-	copy(frame[6:12], peMAC)
+	copy(frame[6:12], transitMAC)
 	binary.BigEndian.PutUint16(frame[12:14], etherIPv4)
 	frame[14] = 0x45
 	copy(frame[26:30], vpn)
@@ -85,8 +85,21 @@ func TestISPTransitIPv4DoesNotBecomeGW(t *testing.T) {
 	if st.GWIP != "192.168.88.1" {
 		t.Fatalf("transit IPv4 must not become GW, got %+v", st)
 	}
-	if st.PEMAC != "02:00:00:00:00:02" {
-		t.Fatalf("pe mac %+v", st)
+	if st.PEMAC != "02:00:00:00:00:00" {
+		t.Fatalf("transit IPv4 replaced PE MAC: %+v", st)
+	}
+}
+
+func TestISPNonGatewayARPDoesNotReplacePEMAC(t *testing.T) {
+	st := &Learned{GWIP: "192.168.88.1", PEMAC: "02:00:00:00:00:02"}
+	hostMAC := []byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x99}
+	host := net.IPv4(192, 168, 88, 200).To4()
+	target := net.IPv4(192, 168, 88, 199).To4()
+
+	ApplyFrame(RoleISP, arpFrame(hostMAC, host, target, arpOpRequest), st)
+
+	if st.GWIP != "192.168.88.1" || st.PEMAC != "02:00:00:00:00:02" {
+		t.Fatalf("non-gateway ARP replaced PE identity: %+v", st)
 	}
 }
 

@@ -150,7 +150,7 @@ Changing hook priority is prohibited without user approval and an update to this
 | Table | Family | Purpose |
 |-------|--------|---------|
 | `nat` | `inet` | SNAT / masquerade. Gateway: all `oif WAN`. Bypass: **only** `ip saddr <lan_subnet>` (management mini-gateway). Transparent: management `oif isp` `ip saddr <lan_subnet>` SNAT to learned CE; DNS reply `snat to ct original daddr`. |
-| `gfc_dns_hijack` | `inet` | DNS redirect to local `:53`. Gateway: `iif LAN`. Bypass: `iif LAN` plus `iif WAN` + `saddr @customer_hosts` (with local-dest skip). Transparent: **no** naked `redirect` on the cable; trampoline `dnat ip to` DNS VIP on `iif gfc-ce` / `br-trans` / isp / **cpe** (MAC-punt RX is often the slave). |
+| `gfc_dns_hijack` | `inet` | DNS redirect to local `:53`. Gateway: `iif LAN`. Bypass: `iif LAN` plus `iif WAN` + `saddr @customer_hosts` (with local-dest skip). Transparent: **no** naked `redirect` on the cable; trampoline `dnat ip to` DNS VIP on `iif gfc-ce` / **`br-trans`** / isp / **cpe** (MAC-punt RX when veth is missing). |
 | `gfc` | `inet` | Classification, forward sync, output routing |
 | `gfc_trans` | `netdev` | **Transparent only.** Steal + TX MAC on isp/cpe. Not an inet table; do not merge into `gfc`. |
 
@@ -435,7 +435,7 @@ Non-nft companions (mandatory with these rules):
 
 - `br-trans`: slaves `<isp_port>` + `<cpe_port>` only; **no** IP; **never** enslave `<lan_iface>` / `br-lan`
 - Veth pair `gfc-ce` / `gfc-ce-fwd` when `kmod-veth` loads: `fwd to gfc-ce-fwd` appears as RX on `gfc-ce`. Learned CE `/32` on `gfc-ce` (`noprefixroute`; dest-CE on-link via br-trans so tun replies are not swallowed by `local`)
-- If veth cannot be created: keep dummy `gfc-ce` for hitch-bind; steal by `ether daddr set <br-trans MAC> accept` so the bridge delivers locally (`iif br-trans`). inet classify/DNAT/DNS trampoline match **both** `gfc-ce` and `br-trans`.
+- If veth cannot be created: keep dummy `gfc-ce` for hitch-bind. **CPE steal** and **hitch replies** use `ether daddr set <br-trans MAC> accept`. That rewrite does **not** clear `PACKET_OTHERHOST` (set in `eth_type_trans` before netdev); `ip_rcv` drops and `br-trans` `rx_otherhost` climbs. Companion: `tc qdisc ingress` on `<cpe_port>` with `u32 dport 53` → `skbedit ptype host` (tc runs **before** nft netdev). **Do not** `nft fwd` onto ifb: `nft_fwd_netdev` does not set `skb->redirected` / `skb_iif`, and `ifb_xmit` then `kfree_skb`. Do **not** rewrite dest to a macvlan MAC: this SKU has no `bridge` applet, so that address is not a local FDB entry.
 - Dummy `gfc-dns`: DNS VIP `/32` (default `172.31.253.53`)
 - Hitch bind address on `gfc-ce`: `172.31.253.1/32` (reserved pool; not fake-ip `198.18.0.0/15`)
 - `net.bridge.bridge-nf-call-iptables=0` (and ip6/arp if the module is loaded)
@@ -456,7 +456,8 @@ add set netdev gfc_trans no_steal_dst { type ipv4_addr; flags interval; }
 add set netdev gfc_trans dns_exclude { type ipv4_addr; flags interval; }
 
 # in_isp: hitch 5-tuple → ether daddr = gfc-ce MAC → fwd gfc-ce-fwd (veth RX).
-# Fallback without veth: ether daddr set <br-trans MAC> accept (local on bridge).
+# Fallback without veth: ether daddr set <br-trans MAC> accept (bridge MAC is
+# local FDB; br-trans PROMISC). Do not nft-fwd ifb (ifb_xmit drops).
 # Dest IP stays CE; inet DNAT on iif gfc-ce / br-trans updates L4 csum.
 # CE /32 is not in table local (tun replies must reach the real CPE).
 add chain netdev gfc_trans in_isp { type filter hook ingress device "<isp_port>" priority -500; policy accept; }
@@ -531,6 +532,9 @@ add rule inet nat postrouting oifname "br-trans" udp sport 53 snat to ct origina
 add rule inet nat postrouting oifname "br-trans" tcp sport 53 snat to ct original ip daddr
 add rule inet nat postrouting oifname "<isp_port>" udp sport 53 snat to ct original ip daddr
 add rule inet nat postrouting oifname "<isp_port>" tcp sport 53 snat to ct original ip daddr
+# CE /32 on br-trans must use src <dns_vip> so unbound replies from the VIP
+# and match the DNAT reverse. Kernel otherwise picks management LAN, trampoline
+# treats that as a new flow (original daddr = CE) and emits src=CE dst=CE.
 
 # gfc_dns_hijack — LAN mini-gateway redirect kept when dns_hijack=on (same as gateway LAN).
 # Cable DNS: dnat to VIP (source stays CE). Forbidden: redirect that exposes the box address.
@@ -553,7 +557,7 @@ add rule inet gfc_dns_hijack prerouting iifname "<cpe_port>" tcp dport 53 ip dad
 add rule inet gfc_dns_hijack prerouting iifname "<cpe_port>" udp dport 53 dnat ip to <dns_vip>
 add rule inet gfc_dns_hijack prerouting iifname "<cpe_port>" tcp dport 53 dnat ip to <dns_vip>
 
-# inet gfc — stolen packets look like LAN mini-gateway (iif gfc-ce)
+# inet gfc — stolen packets look like LAN mini-gateway (iif gfc-ce / br-trans)
 add rule inet gfc prerouting_mangle_ct iifname "gfctun" return
 add rule inet gfc prerouting_mangle_ct fib daddr type { local, broadcast, multicast } return
 add rule inet gfc prerouting_mangle_ct iifname "<lan_iface>" ct mark set 0x00002023 accept

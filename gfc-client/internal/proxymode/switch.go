@@ -336,14 +336,22 @@ func (c *Controller) rollbackLocked(reason string) error {
 		return nil
 	}
 	c.stopTimerLocked()
-	_ = c.restoreFiles(pending)
+	var problems []string
+	if err := c.restoreFiles(pending); err != nil {
+		problems = append(problems, fmt.Sprintf("恢复配置文件: %v", err))
+	}
 	if pending.WANBefore != nil && c.applyWAN != nil {
 		if _, err := c.applyWAN(pending.WANBefore); err != nil {
-			return fmt.Errorf("回滚 WAN 失败 (%s): %w", reason, err)
+			problems = append(problems, fmt.Sprintf("恢复 WAN: %v", err))
 		}
 	}
 	if err := c.applyModeLocked(pending.FromMode); err != nil {
-		return fmt.Errorf("回滚数据面失败 (%s): %w", reason, err)
+		problems = append(problems, fmt.Sprintf("恢复数据面: %v", err))
+	}
+	if len(problems) > 0 {
+		// Keep pending for a later retry, but never let one failed rollback
+		// step prevent the mode from being restored.
+		return fmt.Errorf("回滚未完整 (%s): %s", reason, strings.Join(problems, "; "))
 	}
 	return ClearPending(c.cfg)
 }

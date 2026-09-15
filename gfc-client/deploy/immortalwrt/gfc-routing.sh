@@ -5,7 +5,51 @@ ACTION="${1:-start}"
 ENV_FILE="${GFC_ENV_FILE:-/etc/gfc-client/gfc.env}"
 [ -f "$ENV_FILE" ] && . "$ENV_FILE"
 
+acquire_action_lock() {
+	case "$ACTION" in
+		status) return 0 ;;
+	esac
+	local lock_file="${GFC_ROUTING_LOCK_FILE:-/var/run/gfc-routing.lock}"
+	mkdir -p "$(dirname "$lock_file")"
+	if command -v flock >/dev/null 2>&1; then
+		exec 9>"$lock_file"
+		local flock_tries=0
+		while ! flock -n 9; do
+			flock_tries=$((flock_tries + 1))
+			if [ "$flock_tries" -ge "${GFC_ROUTING_LOCK_WAIT:-30}" ]; then
+				echo "ERROR: timed out waiting for gfc-routing lock ($ACTION)" >&2
+				exit 1
+			fi
+			sleep 1
+		done
+		return 0
+	fi
+
+	# Minimal fallback for images without flock. The PID check reclaims a lock
+	# left by an interrupted apply; EXIT releases a normally held lock.
+	ROUTING_LOCK_DIR="${lock_file}.d"
+	local tries=0 holder=""
+	while ! mkdir "$ROUTING_LOCK_DIR" 2>/dev/null; do
+		holder="$(cat "$ROUTING_LOCK_DIR/pid" 2>/dev/null || true)"
+		if [ -z "$holder" ] || ! kill -0 "$holder" 2>/dev/null; then
+			rm -rf "$ROUTING_LOCK_DIR"
+			continue
+		fi
+		tries=$((tries + 1))
+		if [ "$tries" -ge "${GFC_ROUTING_LOCK_WAIT:-30}" ]; then
+			echo "ERROR: timed out waiting for gfc-routing lock ($ACTION, pid=$holder)" >&2
+			exit 1
+		fi
+		sleep 1
+	done
+	echo "$$" >"$ROUTING_LOCK_DIR/pid"
+	trap 'rm -rf "$ROUTING_LOCK_DIR"' EXIT
+	trap 'exit 130' HUP INT TERM
+}
+
 TUN_IFACE="${GFC_TUN_INTERFACE:-gfctun}"
+PUNT_IFB="${GFC_PUNT_IFB:-gfc-punt}"
+PUNT_MACVLAN="${GFC_PUNT_MACVLAN:-gfc-rx}"
 WAN_IFACE="${GFC_WAN_IFACE:-eth0}"
 MARK="${GFC_POLICY_MARK:-0x2023}"
 TABLE="${GFC_POLICY_TABLE:-2022}"
@@ -345,14 +389,22 @@ EOF
 # head, before sport-53 return + hitch SNAT. The return in apply_wan_nat is
 # the stop so hitch SNAT cannot overwrite. Never fail the table.
 apply_trans_dns_snat() {
-	local cpe proto oif err
+	local cpe proto oif err ce
 	cpe="$(load_trans_cpe)"
+	ce="$(load_trans_ce)"
 	[ -n "$cpe" ] || return 0
 	err="$(mktemp)" || return 0
 	for proto in udp tcp; do
 		for oif in "$cpe" br-trans "$(load_trans_isp)"; do
 			ip link show "$oif" >/dev/null 2>&1 || continue
 			: >"$err"
+			# Skip when original daddr is already CE: that is a new
+			# flow (unbound replied from the wrong src), not a DNAT reverse.
+			if is_hitch_ce "$ce"; then
+				if nft insert rule inet nat postrouting meta nfproto ipv4 oifname "$oif" "$proto" sport 53 ct original ip daddr != "$ce" snat ip to ct original ip daddr 2>"$err"; then
+					continue
+				fi
+			fi
 			if nft insert rule inet nat postrouting meta nfproto ipv4 oifname "$oif" "$proto" sport 53 snat ip to ct original ip daddr 2>"$err"; then
 				continue
 			fi
@@ -433,9 +485,8 @@ apply_dns_hijack() {
 		fi
 		set_block="$exclude_set"
 		trans_rules=""
-		cpe_if="$(load_trans_cpe)"
-		# MAC-punt local RX is often iif=cpe (query) or iif=isp (hitch). Include both slaves.
-		for iif in gfc-ce br-trans "$(load_trans_isp)" "$cpe_if"; do
+		# Stolen DNS RX: veth gfc-ce, macvlan gfc-rx, bridge, or remaining slave iif.
+		for iif in $(load_trans_steal_iifs); do
 			[ -n "$iif" ] || continue
 			trans_rules="$trans_rules
     iifname \"$iif\" udp dport 53 ip daddr $vip return
@@ -444,7 +495,7 @@ apply_dns_hijack() {
     iifname \"$iif\" tcp dport 53 ip daddr @dns_exclude return"
 		done
 		if [ "$hijack" = "on" ]; then
-			for iif in gfc-ce br-trans "$(load_trans_isp)" "$cpe_if"; do
+			for iif in $(load_trans_steal_iifs); do
 				[ -n "$iif" ] || continue
 				trans_rules="$trans_rules
     iifname \"$iif\" udp dport 53 dnat ip to $vip
@@ -452,6 +503,7 @@ apply_dns_hijack() {
 			done
 		fi
 	fi
+	nft delete table inet gfc_dns_hijack 2>/dev/null || true
 	nft -f - <<EOF
 table inet gfc_dns_hijack {$set_block
   chain prerouting {
@@ -594,23 +646,49 @@ wan_if_is_trans_port() {
 	[ "$wan" = "$isp" ] || [ "$wan" = "$cpe" ]
 }
 
-# Stop netifd from putting an IP on isp/cpe while they are br-trans slaves.
+# Stop every netifd interface bound to isp/cpe while they are br-trans slaves.
+# Persist the previous autostart value in UCI so leave-trans can restore it
+# after a reboot as well as within the current process lifetime.
 release_wan_from_netifd() {
-	wan_if_is_trans_port || return 0
-	ifdown wan 2>/dev/null || true
-	if command -v uci >/dev/null 2>&1; then
-		uci -q set network.wan.auto='0'
-		uci -q commit network
-	fi
+	command -v uci >/dev/null 2>&1 || return 0
+	local isp cpe section dev marker old changed=0
+	isp="$(load_trans_isp)"
+	cpe="$(load_trans_cpe)"
+	[ -n "$isp" ] || [ -n "$cpe" ] || return 0
+	for section in $(uci -q show network 2>/dev/null | sed -n 's/^network\.\([^=]*\)=interface$/\1/p'); do
+		dev="$(uci -q get "network.${section}.device" 2>/dev/null || true)"
+		[ "$dev" = "$isp" ] || [ "$dev" = "$cpe" ] || continue
+		marker="$(uci -q get "network.${section}.gfc_trans_auto_before" 2>/dev/null || true)"
+		if [ -z "$marker" ]; then
+			old="$(uci -q get "network.${section}.auto" 2>/dev/null || true)"
+			[ -n "$old" ] || old="__unset__"
+			# Migrate network.wan.auto=0 written by the pre-marker implementation.
+			[ "$section" = "wan" ] && [ "$old" = "0" ] && old="__unset__"
+			uci -q set "network.${section}.gfc_trans_auto_before=${old}"
+		fi
+		ifdown "$section" 2>/dev/null || true
+		uci -q set "network.${section}.auto=0"
+		changed=1
+	done
+	[ "$changed" = "0" ] || uci -q commit network
 }
 
 restore_wan_uci_auto() {
 	command -v uci >/dev/null 2>&1 || return 0
-	local changed=0
-	if [ "$(uci -q get network.wan.auto 2>/dev/null || true)" = "0" ]; then
-		uci -q delete network.wan.auto
+	local section marker changed=0 restart=""
+	for section in $(uci -q show network 2>/dev/null | sed -n 's/^network\.\([^=]*\)=interface$/\1/p'); do
+		marker="$(uci -q get "network.${section}.gfc_trans_auto_before" 2>/dev/null || true)"
+		[ -n "$marker" ] || continue
+		if [ "$marker" = "__unset__" ]; then
+			uci -q delete "network.${section}.auto"
+			restart="$restart $section"
+		else
+			uci -q set "network.${section}.auto=${marker}"
+			[ "$marker" = "0" ] || restart="$restart $section"
+		fi
+		uci -q delete "network.${section}.gfc_trans_auto_before"
 		changed=1
-	fi
+	done
 	if [ "$(uci -q get network.wan.disabled 2>/dev/null || true)" = "1" ]; then
 		uci -q delete network.wan.disabled
 		changed=1
@@ -620,6 +698,9 @@ restore_wan_uci_auto() {
 	if [ "$changed" = "1" ]; then
 		uci -q commit network || true
 	fi
+	for section in $restart; do
+		ifup "$section" 2>/dev/null || true
+	done
 	return 0
 }
 
@@ -659,6 +740,7 @@ teardown_trans_bridge() {
 		ip link set "$isp" promisc off 2>/dev/null || true
 	fi
 	if [ -n "$cpe" ]; then
+		tc qdisc del dev "$cpe" ingress 2>/dev/null || true
 		ip link set "$cpe" nomaster 2>/dev/null || true
 		ip link set "$cpe" promisc off 2>/dev/null || true
 	fi
@@ -666,6 +748,8 @@ teardown_trans_bridge() {
 	del_trans_dev gfc-ce
 	del_trans_dev gfc-ce-fwd
 	del_trans_dev gfc-dns
+	del_trans_dev "$PUNT_MACVLAN"
+	del_trans_dev "$PUNT_IFB"
 	restore_gateway_sysctl
 	restore_wan_uci_auto
 }
@@ -680,6 +764,43 @@ del_trans_dev() {
 	else
 		ip link del "$d" 2>/dev/null || true
 	fi
+}
+
+# dest-MAC rewrite in nft does not clear PACKET_OTHERHOST (set in eth_type_trans
+# before netdev). ip_rcv then drops; br-trans rx_otherhost climbs. tc ingress
+# runs before nft; skbedit ptype host so stolen DNS can enter inet on br-trans.
+# veth fwd already produces HOST — do not install this qdisc on that path.
+clear_trans_tc_ingress() {
+	local cpe
+	cpe="$(load_trans_cpe)"
+	[ -n "$cpe" ] || return 0
+	tc qdisc del dev "$cpe" ingress 2>/dev/null || true
+}
+
+apply_trans_tc_dns_ptype() {
+	local cpe
+	cpe="$(load_trans_cpe)"
+	[ -n "$cpe" ] || return 1
+	ip link show "$cpe" >/dev/null 2>&1 || return 1
+	modprobe act_skbedit 2>/dev/null || true
+	modprobe cls_u32 2>/dev/null || true
+	modprobe sch_ingress 2>/dev/null || true
+	tc qdisc del dev "$cpe" ingress 2>/dev/null || true
+	if ! tc qdisc add dev "$cpe" handle ffff: ingress 2>/dev/null; then
+		echo "WARN: tc ingress on $cpe failed; DNS steal may drop OTHERHOST" >&2
+		return 1
+	fi
+	if ! tc filter add dev "$cpe" parent ffff: protocol ip prio 1 u32 \
+		match ip protocol 17 0xff match ip dport 53 0xffff \
+		action skbedit ptype host 2>/dev/null; then
+		echo "WARN: tc skbedit udp/53 on $cpe failed" >&2
+		return 1
+	fi
+	tc filter add dev "$cpe" parent ffff: protocol ip prio 2 u32 \
+		match ip protocol 6 0xff match ip dport 53 0xffff \
+		action skbedit ptype host 2>/dev/null || true
+	echo "transparent: tc $cpe ingress skbedit ptype host for :53"
+	return 0
 }
 
 # gfc-dns stays dummy (address holder only). gfc-ce cannot: nft `fwd` is
@@ -704,6 +825,85 @@ ensure_dummy() {
 	ip link set "$name" up 2>/dev/null || return 1
 	ip link set "$name" arp off 2>/dev/null || true
 	return 0
+}
+
+# macvlan on br-trans when kmod-veth is missing. CPE steal is MAC-punt + accept
+# (not nft fwd). macvlan_handle_frame sets pkt_type=HOST and skb->dev=gfc-rx.
+# nft fwd to ifb does not set skb->redirected; ifb_xmit then kfree_skb.
+# Name must fit IFNAMSIZ (gfc-macvlan-probe was 16 chars and failed).
+ensure_ce_macvlan() {
+	local name="$PUNT_MACVLAN" vip mac
+	[ -n "$name" ] || return 1
+	ip link show br-trans >/dev/null 2>&1 || return 1
+	modprobe macvlan 2>/dev/null || true
+	if ip link show "$name" >/dev/null 2>&1; then
+		if ip -d link show "$name" 2>/dev/null | grep -qw macvlan; then
+			:
+		else
+			echo "WARN: $name exists but is not macvlan; recreating" >&2
+			del_trans_dev "$name"
+		fi
+	fi
+	if ! ip link show "$name" >/dev/null 2>&1; then
+		if ! ip link add name "$name" link br-trans type macvlan mode bridge 2>/dev/null; then
+			echo "ERROR: ip link add macvlan $name on br-trans failed" >&2
+			return 1
+		fi
+		echo "transparent: $name type macvlan on br-trans (CPE steal RX; no veth)"
+	fi
+	ip link set "$name" up 2>/dev/null || return 1
+	ip link set "$name" arp off 2>/dev/null || true
+	mac="$(hw_mac "$name")"
+	if [ -n "$mac" ]; then
+		bridge fdb replace "$mac" dev br-trans local 2>/dev/null || \
+			bridge fdb add "$mac" dev br-trans local 2>/dev/null || true
+	fi
+	vip="$(load_dns_vip)"
+	if is_ipv4 "$vip"; then
+		ip addr replace "$vip/32" dev "$name" noprefixroute 2>/dev/null || true
+	fi
+	return 0
+}
+
+# inet DNAT/classify iifs for stolen frames (veth RX, macvlan RX, bridge, slaves).
+load_trans_steal_iifs() {
+	local iif seen=""
+	for iif in gfc-ce "$PUNT_MACVLAN" br-trans "$PUNT_IFB" "$(load_trans_isp)" "$(load_trans_cpe)"; do
+		[ -n "$iif" ] || continue
+		ip link show "$iif" >/dev/null 2>&1 || continue
+		case " $seen " in
+			*" $iif "*) continue ;;
+		esac
+		seen="$seen $iif"
+		echo "$iif"
+	done
+}
+
+# refresh-trans does not rebuild inet gfc. Append steal iif rows when missing.
+ensure_trans_steal_inet() {
+	local iif cn=""
+	nft list table inet gfc >/dev/null 2>&1 || return 0
+	for iif in "$PUNT_MACVLAN" "$PUNT_IFB"; do
+		[ -n "$iif" ] || continue
+		ip link show "$iif" >/dev/null 2>&1 || continue
+		if nft list chain inet gfc prerouting_mangle_ct 2>/dev/null | grep -q "iifname \"$iif\""; then
+			continue
+		fi
+		cn=""
+		if [ "$(load_routing_mode)" != "global" ]; then
+			cn="add rule inet gfc prerouting_mangle_route iifname \"$iif\" ip daddr @TO_CN return"
+		fi
+		nft -f - <<EOF
+add rule inet gfc prerouting_mangle_ct iifname "$iif" ct mark set $MARK accept
+add rule inet gfc prerouting_mangle_route iifname "$iif" ip daddr { 10.0.0.0/8, 127.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 } return
+add rule inet gfc prerouting_mangle_route iifname "$iif" ip daddr $LAN_CIDR return
+add rule inet gfc prerouting_mangle_route iifname "$iif" udp dport { 53, 67, 68, 123 } return
+add rule inet gfc prerouting_mangle_route iifname "$iif" ip daddr @bypass_ip return
+add rule inet gfc prerouting_mangle_route iifname "$iif" ip daddr @ext_const ct mark $MARK meta mark set ct mark return
+$cn
+add rule inet gfc prerouting_mangle_route iifname "$iif" ct mark $MARK meta mark set ct mark
+EOF
+	done
 }
 
 # Load veth.ko even if modules.dep is stale (common after OEM incremental).
@@ -794,7 +994,7 @@ apply_trans_sysctl() {
 	sysctl -w net.bridge.bridge-nf-call-iptables=0 >/dev/null 2>&1 || true
 	sysctl -w net.bridge.bridge-nf-call-ip6tables=0 >/dev/null 2>&1 || true
 	sysctl -w net.bridge.bridge-nf-call-arptables=0 >/dev/null 2>&1 || true
-	for dev in "$isp" "$cpe" br-trans gfc-ce gfc-ce-fwd gfc-dns; do
+	for dev in "$isp" "$cpe" br-trans gfc-ce gfc-ce-fwd gfc-dns "$PUNT_MACVLAN" "$PUNT_IFB"; do
 		[ -n "$dev" ] || continue
 		sysctl -w "net.ipv4.conf.${dev}.rp_filter=2" >/dev/null 2>&1 || true
 		sysctl -w "net.ipv4.conf.${dev}.arp_ignore=2" >/dev/null 2>&1 || true
@@ -822,9 +1022,14 @@ apply_trans_bridge() {
 	release_wan_from_netifd
 	modprobe dummy 2>/dev/null || true
 	modprobe veth 2>/dev/null || true
-	if ! ensure_ce_veth; then
-		echo "WARN: gfc-ce veth failed; dummy + br-trans MAC punt" >&2
+	modprobe macvlan 2>/dev/null || true
+	if ensure_ce_veth; then
+		del_trans_dev "$PUNT_IFB"
+		del_trans_dev "$PUNT_MACVLAN"
+	else
+		echo "WARN: gfc-ce veth failed; dummy + MAC-punt on br-trans" >&2
 		ensure_dummy gfc-ce || echo "WARN: gfc-ce missing; hitch bind IP cannot be mounted" >&2
+		del_trans_dev "$PUNT_IFB"
 	fi
 	ensure_dummy gfc-dns || echo "WARN: gfc-dns missing; DNS VIP not mounted" >&2
 	ip link show br-trans >/dev/null 2>&1 || ip link add name br-trans type bridge 2>/dev/null || true
@@ -839,7 +1044,9 @@ apply_trans_bridge() {
 	ip link set "$isp" promisc on 2>/dev/null || true
 	ip link set "$cpe" promisc on 2>/dev/null || true
 	ip link set br-trans up 2>/dev/null || true
+	ip link set br-trans promisc on 2>/dev/null || true
 	ip addr flush dev br-trans 2>/dev/null || true
+	del_trans_dev "$PUNT_MACVLAN"
 	echo "transparent bridge: br-trans slaves $isp + $cpe (lan=$LAN_IFACE excluded)"
 }
 
@@ -861,8 +1068,17 @@ apply_trans_addrs() {
 		# Hitch returns (iif gfc-ce dest=$ce) need inet nat DNAT to 172.31.253.1.
 		ip route del table local "$ce/32" 2>/dev/null || true
 		# Do not route via the enslaved cpe port — L3 must use br-trans.
+		# src must be DNS VIP so unbound replies match DNAT reverse
+		# (dest VIP). Otherwise kernel picks br-lan and postrouting
+		# trampoline SNATs src to CE (original daddr of the new flow).
 		if [ -n "$l3" ]; then
-			ip route replace "$ce/32" dev "$l3" 2>/dev/null || true
+			if is_ipv4 "$vip"; then
+				ip addr replace "$vip/32" dev "$l3" noprefixroute 2>/dev/null || true
+				ip route replace "$ce/32" dev "$l3" src "$vip" 2>/dev/null || \
+					ip route replace "$ce/32" dev "$l3" 2>/dev/null || true
+			else
+				ip route replace "$ce/32" dev "$l3" 2>/dev/null || true
+			fi
 			if [ -n "$cpe_mac" ]; then
 				ip neigh replace "$ce" lladdr "$cpe_mac" nud permanent dev "$l3" 2>/dev/null || true
 			fi
@@ -934,7 +1150,7 @@ apply_trans_netdev() {
 	local isp cpe vip hijack tun_up exclude no_steal ce gw
 	local isp_mac cpe_hw learned_cpe_mac pe_mac
 	local dns_vip_rules dns_steal tcp_steal mac_isp mac_cpe mac_trans hitch_upd hitch_local exclude_set
-	local tmp err punt_fwd punt_mac punt_end punt_mode
+	local tmp err punt_fwd punt_mac punt_end punt_mode hitch_end trans_mac
 	isp="$(load_trans_isp)"
 	cpe="$(load_trans_cpe)"
 	vip="$(load_dns_vip)"
@@ -951,11 +1167,23 @@ apply_trans_netdev() {
 	punt_end=""
 	punt_fwd=""
 	punt_mac=""
+	hitch_end=""
 	if ip link show gfc-ce >/dev/null 2>&1 && ip link show gfc-ce-fwd >/dev/null 2>&1 && ip -d link show gfc-ce 2>/dev/null | grep -qw veth; then
 		punt_mode="veth"
 		punt_fwd="gfc-ce-fwd"
 		punt_mac="$(hw_mac gfc-ce)"
 		punt_end="ether daddr set $punt_mac fwd to \"$punt_fwd\""
+		hitch_end="$punt_end"
+	elif [ -n "$(hw_mac br-trans)" ]; then
+		# No veth: MAC-punt to the bridge's own MAC (already local in FDB).
+		# nft fwd to ifb drops (no skb->redirected). macvlan dest is not local.
+		punt_mode="mac"
+		punt_fwd="br-trans"
+		punt_mac="$(hw_mac br-trans)"
+		punt_end="ether daddr set $punt_mac accept"
+		hitch_end="$punt_end"
+		ip link set br-trans promisc on 2>/dev/null || true
+		echo "transparent: steal MAC-punt $punt_mac on br-trans (no veth; iif br-trans)" >&2
 	else
 		punt_mode="mac"
 		ensure_dummy gfc-ce || true
@@ -966,8 +1194,10 @@ apply_trans_netdev() {
 		punt_fwd="br-trans"
 		punt_mac="$(hw_mac br-trans)"
 		punt_end="ether daddr set $punt_mac accept"
-		echo "transparent: punt fallback ether daddr set $punt_mac accept (no veth)" >&2
+		hitch_end="$punt_end"
+		echo "transparent: punt last-resort ether daddr set $punt_mac accept (no veth/macvlan; OTHERHOST drops DNS)" >&2
 	fi
+	[ -n "$hitch_end" ] || hitch_end="$punt_end"
 	if [ -z "$punt_mac" ] || [ -z "$punt_end" ]; then
 		echo "WARN: punt dest MAC empty (mode=$punt_mode); skip netdev gfc_trans (L2 fail-open)" >&2
 		return 1
@@ -1041,15 +1271,15 @@ apply_trans_netdev() {
 	# iif gfc-ce updates L4 checksums. ip daddr set is a last-resort dialect.
 	hitch_bind="172.31.253.1"
 	hitch_in_l4="
-    meta l4proto tcp meta l4proto . ip saddr . tcp sport . ip daddr . tcp dport @hitch_reply $punt_end
-    meta l4proto udp meta l4proto . ip saddr . udp sport . ip daddr . udp dport @hitch_reply $punt_end"
+    meta l4proto tcp meta l4proto . ip saddr . tcp sport . ip daddr . tcp dport @hitch_reply $hitch_end
+    meta l4proto udp meta l4proto . ip saddr . udp sport . ip daddr . udp dport @hitch_reply $hitch_end"
 	hitch_in_l4_set="
-    meta l4proto tcp meta l4proto . ip saddr . tcp sport . ip daddr . tcp dport @hitch_reply ip daddr set $hitch_bind $punt_end
-    meta l4proto udp meta l4proto . ip saddr . udp sport . ip daddr . udp dport @hitch_reply ip daddr set $hitch_bind $punt_end"
+    meta l4proto tcp meta l4proto . ip saddr . tcp sport . ip daddr . tcp dport @hitch_reply ip daddr set $hitch_bind $hitch_end
+    meta l4proto udp meta l4proto . ip saddr . udp sport . ip daddr . udp dport @hitch_reply ip daddr set $hitch_bind $hitch_end"
 	hitch_in_th="
-    meta l4proto { tcp, udp } meta l4proto . ip saddr . th sport . ip daddr . th dport @hitch_reply $punt_end"
+    meta l4proto { tcp, udp } meta l4proto . ip saddr . th sport . ip daddr . th dport @hitch_reply $hitch_end"
 	hitch_in_th_set="
-    meta l4proto { tcp, udp } meta l4proto . ip saddr . th sport . ip daddr . th dport @hitch_reply ip daddr set $hitch_bind $punt_end"
+    meta l4proto { tcp, udp } meta l4proto . ip saddr . th sport . ip daddr . th dport @hitch_reply ip daddr set $hitch_bind $hitch_end"
 	hitch_upd_l4=""
 	hitch_upd_th=""
 	hitch_local_l4=""
@@ -1169,6 +1399,11 @@ EOF
 		return 1
 	fi
 	fill_netdev_no_steal
+	if [ "$punt_mode" = "veth" ]; then
+		clear_trans_tc_ingress
+	else
+		apply_trans_tc_dns_ptype || echo "WARN: tc DNS ptype host failed (OTHERHOST drops steal)" >&2
+	fi
 	echo "transparent netdev gfc_trans: isp=$isp cpe=$cpe hijack=$hijack tun=$tun_up vip=$vip hitch=$hitch_used punt=$punt_mode fwd=$punt_fwd eg_trans=1"
 }
 
@@ -1206,18 +1441,29 @@ fill_netdev_no_steal() {
 
 refresh_trans() {
 	[ "$(load_proxy_mode)" = "transparent" ] || return 0
-	if ! ensure_ce_veth; then
-		echo "WARN: gfc-ce veth failed; dummy + br-trans MAC punt" >&2
+	if ensure_ce_veth; then
+		del_trans_dev "$PUNT_IFB"
+		del_trans_dev "$PUNT_MACVLAN"
+	else
+		echo "WARN: gfc-ce veth failed; dummy + MAC-punt on br-trans" >&2
 		ensure_dummy gfc-ce || echo "WARN: gfc-ce missing" >&2
+		del_trans_dev "$PUNT_IFB"
+		del_trans_dev "$PUNT_MACVLAN"
+		ip link set br-trans promisc on 2>/dev/null || true
 	fi
 	ensure_dummy gfc-dns || echo "WARN: gfc-dns missing" >&2
 	apply_trans_sysctl
 	apply_trans_addrs
 	# Learning often completes after start_rules; hitch SNAT must follow CE.
 	apply_wan_nat || echo "WARN: hitch NAT refresh failed" >&2
+	apply_dns_hijack || echo "WARN: DNS hijack refresh failed" >&2
+	ensure_trans_steal_inet || true
 	apply_trans_netdev || echo "WARN: netdev gfc_trans refresh failed (L2 fail-open)" >&2
 	write_bypass_unbound_acl
 	if ip link show "$TUN_IFACE" >/dev/null 2>&1; then
+		# start_rules may have exited on flock/TUN wait before this route existed.
+		ip -4 route replace default dev "$TUN_IFACE" table "$TABLE" || \
+			echo "WARN: policy table $TABLE default via $TUN_IFACE failed" >&2
 		apply_bypass_policy_host_routes
 		apply_bypass_fib_rules
 	fi
@@ -1368,46 +1614,31 @@ ${cn_wan_rule}
     fib daddr type { local, broadcast, multicast } return"
 		route_head="    iifname \"$TUN_IFACE\" return
     fib daddr type { local, broadcast, multicast } return"
-		ct_wan="    iifname \"gfc-ce\" ct mark set $MARK accept
-    iifname \"br-trans\" ct mark set $MARK accept"
-		if [ -n "$isp" ]; then
+		ct_wan=""
+		route_wan=""
+		cn_wan_rule=""
+		for iif in $(load_trans_steal_iifs); do
+			[ -n "$iif" ] || continue
 			ct_wan="$ct_wan
-    iifname \"$isp\" ct mark set $MARK accept"
-		fi
-		if [ "$routing_mode" != "global" ]; then
-			cn_wan_rule="    iifname \"gfc-ce\" ip daddr @TO_CN return
-    iifname \"br-trans\" ip daddr @TO_CN return"
-			if [ -n "$isp" ]; then
+    iifname \"$iif\" ct mark set $MARK accept"
+			if [ "$routing_mode" != "global" ]; then
 				cn_wan_rule="$cn_wan_rule
-    iifname \"$isp\" ip daddr @TO_CN return"
+    iifname \"$iif\" ip daddr @TO_CN return"
 			fi
-		fi
-		route_wan="    iifname \"gfc-ce\" ip daddr { 10.0.0.0/8, 127.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 } return
-    iifname \"gfc-ce\" ip daddr $LAN_CIDR return
-    iifname \"gfc-ce\" udp dport { 53, 67, 68, 123 } return
-    iifname \"gfc-ce\" ip daddr @bypass_ip return
-    iifname \"gfc-ce\" ip daddr @ext_const ct mark $MARK meta mark set ct mark return
-    iifname \"br-trans\" ip daddr { 10.0.0.0/8, 127.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 } return
-    iifname \"br-trans\" ip daddr $LAN_CIDR return
-    iifname \"br-trans\" udp dport { 53, 67, 68, 123 } return
-    iifname \"br-trans\" ip daddr @bypass_ip return
-    iifname \"br-trans\" ip daddr @ext_const ct mark $MARK meta mark set ct mark return"
-		if [ -n "$isp" ]; then
 			route_wan="$route_wan
-    iifname \"$isp\" ip daddr { 10.0.0.0/8, 127.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 } return
-    iifname \"$isp\" ip daddr $LAN_CIDR return
-    iifname \"$isp\" udp dport { 53, 67, 68, 123 } return
-    iifname \"$isp\" ip daddr @bypass_ip return
-    iifname \"$isp\" ip daddr @ext_const ct mark $MARK meta mark set ct mark return"
-		fi
+    iifname \"$iif\" ip daddr { 10.0.0.0/8, 127.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 } return
+    iifname \"$iif\" ip daddr $LAN_CIDR return
+    iifname \"$iif\" udp dport { 53, 67, 68, 123 } return
+    iifname \"$iif\" ip daddr @bypass_ip return
+    iifname \"$iif\" ip daddr @ext_const ct mark $MARK meta mark set ct mark return"
+		done
 		route_wan="$route_wan
-${cn_wan_rule}
-    iifname \"gfc-ce\" ct mark $MARK meta mark set ct mark
-    iifname \"br-trans\" ct mark $MARK meta mark set ct mark"
-		if [ -n "$isp" ]; then
+${cn_wan_rule}"
+		for iif in $(load_trans_steal_iifs); do
+			[ -n "$iif" ] || continue
 			route_wan="$route_wan
-    iifname \"$isp\" ct mark $MARK meta mark set ct mark"
-		fi
+    iifname \"$iif\" ct mark $MARK meta mark set ct mark"
+		done
 		ce="$(load_trans_ce)"
 		if is_hitch_ce "$ce"; then
 			forward_customer="    ct state new ip saddr $ce ct mark set meta mark"
@@ -1792,6 +2023,8 @@ start_rules() {
 	echo "gfc routing: scheme=$ROUTING_SCHEME proxy=$(load_proxy_mode) mode=$(load_routing_mode) lan=$LAN_IFACE wan=$WAN_IFACE cidr=$LAN_CIDR mark=$MARK table=$TABLE redirect=$REDIRECT_PORT ssh=$SSH_PORT priority=$NFT_PRIORITY output=$OUTPUT_POLICY mosdns_uid=$MOSDNS_UID singbox_uid=$SINGBOX_UID cn=$CN_LIST bypass=$BYPASS_AUDIT"
 }
 
+acquire_action_lock
+
 case "$ACTION" in
 	start) start_rules ;;
 	direct) start_direct ;;
@@ -1817,10 +2050,10 @@ case "$ACTION" in
 		if [ "$(load_proxy_mode)" = "transparent" ]; then
 			echo "trans_ports isp=$(load_trans_isp) cpe=$(load_trans_cpe)"
 			echo "trans_learned ce=$(load_trans_ce) gw=$(load_trans_gw) cpe_mac=$(load_trans_cpe_mac) pe_mac=$(load_trans_pe_mac)"
-			echo "gfc-ce=$(ip link show gfc-ce >/dev/null 2>&1 && echo yes || echo no) gfc-ce-fwd=$(ip link show gfc-ce-fwd >/dev/null 2>&1 && echo yes || echo no) gfc-dns=$(ip link show gfc-dns >/dev/null 2>&1 && echo yes || echo no)"
+			echo "gfc-ce=$(ip link show gfc-ce >/dev/null 2>&1 && echo yes || echo no) gfc-ce-fwd=$(ip link show gfc-ce-fwd >/dev/null 2>&1 && echo yes || echo no) gfc-dns=$(ip link show gfc-dns >/dev/null 2>&1 && echo yes || echo no) $PUNT_MACVLAN=$(ip link show "$PUNT_MACVLAN" >/dev/null 2>&1 && echo yes || echo no) $PUNT_IFB=$(ip link show "$PUNT_IFB" >/dev/null 2>&1 && echo yes || echo no)"
 			echo "gfc_trans=$(nft list table netdev gfc_trans >/dev/null 2>&1 && echo yes || echo no)"
 			echo "default=$(ip -4 route show default 2>/dev/null | head -1)"
-			echo "modules=$(lsmod 2>/dev/null | awk '/dummy|veth|nft_fwd|nft_netdev/ { printf \"%s \", $1 }')"
+			echo "modules=$(lsmod 2>/dev/null | awk '/dummy|veth|macvlan|ifb|nft_fwd|nft_netdev/ { printf \"%s \", $1 }')"
 			echo "veth_ko=$(find /lib/modules/$(uname -r) -name 'veth.ko*' 2>/dev/null | head -1)"
 		fi
 		;;
