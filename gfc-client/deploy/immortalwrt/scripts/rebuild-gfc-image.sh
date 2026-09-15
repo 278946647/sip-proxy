@@ -173,7 +173,10 @@ merge_gfc_config() {
     kmod-tcp-bbr kmod-sched luci-theme-bootstrap luci-mod-admin-full \
     dropbear openssh-client openssh-keygen uhttpd rpcd odhcpd-ipv6only \
     kmod-tun kmod-nft-core kmod-nft-netdev kmod-dummy kmod-veth nftables-json \
-    kmod-wireguard kmod-udptunnel4 kmod-udptunnel6 wireguard-tools openvpn-openssl; do
+    kmod-wireguard kmod-udptunnel4 kmod-udptunnel6 \
+    kmod-crypto-lib-chacha20poly1305 kmod-crypto-lib-chacha20 kmod-crypto-lib-poly1305 \
+    kmod-crypto-lib-curve25519 kmod-crypto-kpp kmod-crypto-hash \
+    wireguard-tools openvpn-openssl; do
     grep -q "^CONFIG_PACKAGE_${pkg}=y$" "$merged" \
       || die "merge skipped required CONFIG_PACKAGE_${pkg}=y (Kconfig missing? feeds install parted/luci/openssh?)"
   done
@@ -252,7 +255,10 @@ verify_dotconfig() {
   for pkg in tc-tiny kmod-sched-core kmod-ifb kmod-tcp-bbr kmod-sched resize2fs parted partx-utils losetup \
     luci-theme-bootstrap luci-mod-admin-full dropbear openssh-client openssh-keygen uhttpd rpcd odhcpd-ipv6only \
     kmod-tun kmod-nft-core kmod-nft-netdev kmod-dummy kmod-veth nftables-json \
-    kmod-wireguard kmod-udptunnel4 kmod-udptunnel6 wireguard-tools openvpn-openssl; do
+    kmod-wireguard kmod-udptunnel4 kmod-udptunnel6 \
+    kmod-crypto-lib-chacha20poly1305 kmod-crypto-lib-chacha20 kmod-crypto-lib-poly1305 \
+    kmod-crypto-lib-curve25519 kmod-crypto-kpp kmod-crypto-hash \
+    wireguard-tools openvpn-openssl; do
     grep -q "^CONFIG_PACKAGE_${pkg}=y$" .config || die ".config missing CONFIG_PACKAGE_${pkg}=y"
     # Must use if/then: under set -e, "grep -q && die" returns 1 when absent and aborts the script.
     if grep -qE "^# CONFIG_PACKAGE_${pkg} is not set$" .config; then
@@ -391,11 +397,16 @@ build_packages() {
   make_gfc_package "package/feeds/gfc/luci-app-gfc"
   find bin -name 'gfc-client*.ipk' -print | grep -q . || die "gfc-client ipk not produced"
   ensure_gfc_client_pkginfo
+  # Kernel kmods first: OpenWrt `make package/<pkg>/compile` rebuilds a dirty
+  # package/kernel/linux as a dep. If WireGuard crypto libs are missing, that
+  # failure was previously mis-attributed to iproute2/tc-tiny.
+  log "compile kernel kmods (veth / wireguard + crypto libs / sched)"
+  make package/kernel/linux/compile -j"$JOBS" V=s \
+    || die "package/kernel/linux compile failed (kmod-veth / kmod-wireguard / crypto libs)"
   # Bandwidth shaping: ensure tc-tiny (+ deps) are built before package/install.
   log "compile tc-tiny / kmod-sched-core / kmod-ifb (HTB shaping)"
   make package/network/utils/iproute2/compile -j"$JOBS" V=s \
     || die "iproute2 (tc-tiny) compile failed"
-  make package/kernel/linux/compile -j"$JOBS" V=s 2>/dev/null || true
   find bin -name 'tc-tiny_*.ipk' -print | grep -q . \
     || die "tc-tiny ipk not produced — check CONFIG_PACKAGE_tc-tiny=y and iproute2 build"
   # Root expand tools:
@@ -501,17 +512,23 @@ compile_r16_service_baseline() {
 # Future tunnel diversity — compile explicitly (incremental build skips new =y).
 # Not GFC dataplane: do not enable openvpn/wg; do not change nft / sing-box.
 compile_oem_vpn_packages() {
-  local openvpn_tgt="" wg_tgt="" cand
+  local openvpn_tgt="" wg_tgt="" cand crypto
   cd "$IMT_SRC"
   log "compile kmod-wireguard / wireguard-tools / openvpn-openssl (OEM future VPN; not dataplane)"
 
-  make package/kernel/linux/compile -j"$JOBS" V=s 2>/dev/null || true
+  make package/kernel/linux/compile -j"$JOBS" V=s \
+    || die "package/kernel/linux compile failed while packing WireGuard kmods"
   find bin -name 'kmod-wireguard_*.ipk' -print | grep -q . \
     || die "kmod-wireguard ipk not produced — check CONFIG_PACKAGE_kmod-wireguard=y"
   find bin -name 'kmod-udptunnel4_*.ipk' -print | grep -q . \
     || die "kmod-udptunnel4 ipk not produced — WireGuard IPv4 UDP tunnel dep"
   find bin -name 'kmod-udptunnel6_*.ipk' -print | grep -q . \
     || die "kmod-udptunnel6 ipk not produced — WireGuard IPv6 UDP tunnel dep"
+  for crypto in kmod-crypto-lib-chacha20poly1305 kmod-crypto-lib-chacha20 \
+    kmod-crypto-lib-poly1305 kmod-crypto-lib-curve25519 kmod-crypto-kpp kmod-crypto-hash; do
+    find bin -name "${crypto}_*.ipk" -print | grep -q . \
+      || die "${crypto} ipk not produced — WireGuard crypto dep (OEM does not run oldconfig)"
+  done
 
   for cand in package/network/utils/wireguard-tools \
     package/feeds/packages/wireguard-tools \
@@ -835,7 +852,10 @@ verify_required_gfc_ipks() {
     sing-box unbound-daemon unbound-checkconf dnsmasq-full
     tc-tiny kmod-sched-core kmod-sched kmod-ifb kmod-tcp-bbr kmod-tun kmod-nft-core
     kmod-nft-netdev kmod-dummy kmod-veth
-    kmod-wireguard kmod-udptunnel4 kmod-udptunnel6 wireguard-tools openvpn-openssl
+    kmod-wireguard kmod-udptunnel4 kmod-udptunnel6
+    kmod-crypto-lib-chacha20poly1305 kmod-crypto-lib-chacha20 kmod-crypto-lib-poly1305
+    kmod-crypto-lib-curve25519 kmod-crypto-kpp kmod-crypto-hash
+    wireguard-tools openvpn-openssl
     nftables-json curl wget-ssl tcpdump iftop bmon autossh dropbear
     openssh-client openssh-keygen uhttpd rpcd odhcpd-ipv6only
     libcap libcap-bin ca-bundle ip-full resize2fs parted partx-utils losetup
@@ -903,7 +923,9 @@ verify_oem_vpn_kmod_ipks() {
   if [[ -z "$kernel_ver" ]]; then
     kernel_ver="$(read_build_kernel_ver)" || die "cannot parse kernel version from build_dir"
   fi
-  for name in kmod-wireguard kmod-udptunnel4 kmod-udptunnel6; do
+  for name in kmod-wireguard kmod-udptunnel4 kmod-udptunnel6 \
+    kmod-crypto-lib-chacha20poly1305 kmod-crypto-lib-chacha20 kmod-crypto-lib-poly1305 \
+    kmod-crypto-lib-curve25519 kmod-crypto-kpp kmod-crypto-hash; do
     grep -q "^CONFIG_PACKAGE_${name}=y$" .config \
       || die ".config missing CONFIG_PACKAGE_${name}=y (OEM future VPN)"
     ipk="$(find bin/targets/x86/64/packages -maxdepth 1 -type f -name "${name}_*.ipk" 2>/dev/null | head -1)"
@@ -919,6 +941,12 @@ verify_oem_vpn_kmod_ipks() {
       kmod-wireguard) ko='wireguard.ko' ;;
       kmod-udptunnel4) ko='udp_tunnel.ko' ;;
       kmod-udptunnel6) ko='ip6_udp_tunnel.ko' ;;
+      kmod-crypto-lib-chacha20poly1305) ko='libchacha20poly1305.ko' ;;
+      kmod-crypto-lib-chacha20) ko='libchacha.ko' ;;
+      kmod-crypto-lib-poly1305) ko='libpoly1305.ko' ;;
+      kmod-crypto-lib-curve25519) ko='libcurve25519-generic.ko' ;;
+      kmod-crypto-kpp) ko='kpp.ko' ;;
+      kmod-crypto-hash) ko='crypto_hash.ko' ;;
     esac
     if ! tar -xOf "$ipk" ./data.tar.gz 2>/dev/null | tar -tz 2>/dev/null | grep -E "/${ko}(\.gz|\.xz)?$" >/dev/null; then
       if ! tar -xOf "$ipk" data.tar.gz 2>/dev/null | tar -tz 2>/dev/null | grep -E "/${ko}(\.gz|\.xz)?$" >/dev/null; then
@@ -926,6 +954,12 @@ verify_oem_vpn_kmod_ipks() {
       fi
     fi
   done
+  ipk="$(find bin/targets/x86/64/packages -maxdepth 1 -type f -name 'kmod-crypto-lib-curve25519_*.ipk' 2>/dev/null | head -1)"
+  if ! tar -xOf "$ipk" ./data.tar.gz 2>/dev/null | tar -tz 2>/dev/null | grep -E '/curve25519-x86_64\.ko(\.gz|\.xz)?$' >/dev/null; then
+    if ! tar -xOf "$ipk" data.tar.gz 2>/dev/null | tar -tz 2>/dev/null | grep -E '/curve25519-x86_64\.ko(\.gz|\.xz)?$' >/dev/null; then
+      die "kmod-crypto-lib-curve25519 ipk has no curve25519-x86_64.ko — WireGuard x86_64 crypto"
+    fi
+  fi
   log "OEM VPN kmod ipks match kernel ${kernel_ver} vermagic ${hash}"
 }
 
@@ -1431,7 +1465,7 @@ build_image() {
 verify_manifest() {
   cd "$IMT_SRC"
   local manifest="bin/targets/x86/64/immortalwrt-x86-64-generic.manifest"
-  local root orig pkg dummy_ko fwd_ko veth_ko wg_ko
+  local root orig pkg dummy_ko fwd_ko veth_ko wg_ko chacha_ko curve_ko curve_x86_ko
   root="$(find_rootfs_dir)"
   orig="$ROOTFS_ORIG_DIR"
   [[ -f "$manifest" ]] || die "missing $manifest"
@@ -1487,19 +1521,27 @@ verify_manifest() {
   [[ -n "$veth_ko" ]] || die "ORIG missing veth.ko — ip link add type veth will fail"
   [[ -n "$fwd_ko" ]] || die "ORIG missing nft_fwd_netdev.ko — netdev gfc_trans cannot load"
   log "ORIG trans kmods: $dummy_ko $veth_ko $fwd_ko"
-  for pkg in kmod-wireguard kmod-udptunnel4 kmod-udptunnel6 wireguard-tools openvpn-openssl; do
+  for pkg in kmod-wireguard kmod-udptunnel4 kmod-udptunnel6 \
+    kmod-crypto-lib-chacha20poly1305 kmod-crypto-lib-curve25519 \
+    wireguard-tools openvpn-openssl; do
     grep -qE "^${pkg}( |$)" "$manifest" \
       || die "manifest missing ${pkg} (OEM future VPN — check CONFIG_PACKAGE_${pkg}=y)"
   done
   wg_ko="$(find "$orig/lib/modules" \( -name 'wireguard.ko' -o -name 'wireguard.ko.gz' -o -name 'wireguard.ko.xz' \) 2>/dev/null | head -1)"
   [[ -n "$wg_ko" ]] || die "ORIG missing wireguard.ko — CONFIG_PACKAGE_kmod-wireguard=y did not ship"
+  chacha_ko="$(find "$orig/lib/modules" \( -name 'libchacha20poly1305.ko' -o -name 'libchacha20poly1305.ko.gz' -o -name 'libchacha20poly1305.ko.xz' \) 2>/dev/null | head -1)"
+  curve_ko="$(find "$orig/lib/modules" \( -name 'libcurve25519-generic.ko' -o -name 'libcurve25519-generic.ko.gz' -o -name 'libcurve25519-generic.ko.xz' \) 2>/dev/null | head -1)"
+  curve_x86_ko="$(find "$orig/lib/modules" \( -name 'curve25519-x86_64.ko' -o -name 'curve25519-x86_64.ko.gz' -o -name 'curve25519-x86_64.ko.xz' \) 2>/dev/null | head -1)"
+  [[ -n "$chacha_ko" ]] || die "ORIG missing libchacha20poly1305.ko — kmod-crypto-lib-chacha20poly1305"
+  [[ -n "$curve_ko" ]] || die "ORIG missing libcurve25519-generic.ko — kmod-crypto-lib-curve25519"
+  [[ -n "$curve_x86_ko" ]] || die "ORIG missing curve25519-x86_64.ko — kmod-crypto-lib-curve25519 x86_64"
   [[ -x "$orig/usr/bin/wg" || -x "$orig/usr/sbin/wg" ]] \
     || die "ORIG missing wg binary — CONFIG_PACKAGE_wireguard-tools=y did not ship"
   [[ -x "$orig/usr/sbin/openvpn" || -x "$orig/usr/bin/openvpn" ]] \
     || die "ORIG missing openvpn binary — CONFIG_PACKAGE_openvpn-openssl=y did not ship"
   log "ORIG VPN: $wg_ko wg=$(ls "$orig/usr/bin/wg" "$orig/usr/sbin/wg" 2>/dev/null | head -1) openvpn=$(ls "$orig/usr/sbin/openvpn" "$orig/usr/bin/openvpn" 2>/dev/null | head -1)"
   log "manifest VPN lines:"
-  grep -E '^(kmod-wireguard|kmod-udptunnel4|kmod-udptunnel6|wireguard-tools|openvpn-openssl) ' "$manifest" || true
+  grep -E '^(kmod-wireguard|kmod-udptunnel4|kmod-udptunnel6|kmod-crypto-lib-chacha20poly1305|kmod-crypto-lib-curve25519|wireguard-tools|openvpn-openssl) ' "$manifest" || true
   if ! grep -qE '^odhcpd(-ipv6only)?( |$)' "$manifest"; then
     die "manifest missing odhcpd / odhcpd-ipv6only"
   fi

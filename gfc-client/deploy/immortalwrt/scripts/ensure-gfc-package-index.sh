@@ -13,6 +13,8 @@ BASE_TREE_PACKAGES=(
   tc-tiny kmod-sched-core kmod-ifb
   kmod-tcp-bbr kmod-sched
   kmod-wireguard kmod-udptunnel4 kmod-udptunnel6 wireguard-tools
+  kmod-crypto-lib-chacha20poly1305 kmod-crypto-lib-chacha20 kmod-crypto-lib-poly1305
+  kmod-crypto-lib-curve25519 kmod-crypto-kpp kmod-crypto-hash
   # r16 baseline (base tree; not via default-settings)
   dropbear uhttpd rpcd odhcpd-ipv6only
   # resize2fs is a separate OpenWrt package (not e2fsprogs);

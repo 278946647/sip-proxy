@@ -44,6 +44,12 @@ REQUIRED_IPKS=(
   kmod-wireguard
   kmod-udptunnel4
   kmod-udptunnel6
+  kmod-crypto-lib-chacha20poly1305
+  kmod-crypto-lib-chacha20
+  kmod-crypto-lib-poly1305
+  kmod-crypto-lib-curve25519
+  kmod-crypto-kpp
+  kmod-crypto-hash
   wireguard-tools
   openvpn-openssl
   nftables-json

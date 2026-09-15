@@ -95,7 +95,7 @@ grep PKG_RELEASE "$GFC_REPO/deploy/immortalwrt/package/Makefile"
 
 # ---- 1) 本批新增：透明 veth + 未来 VPN ----
 echo "=== NEW: transparent veth + future VPN ==="
-grep -E '^(kmod-veth|kmod-dummy|kmod-nft-netdev|kmod-wireguard|kmod-udptunnel4|kmod-udptunnel6|wireguard-tools|openvpn-openssl) ' "$MANIFEST"
+grep -E '^(kmod-veth|kmod-dummy|kmod-nft-netdev|kmod-wireguard|kmod-udptunnel4|kmod-udptunnel6|kmod-crypto-lib-chacha20poly1305|kmod-crypto-lib-curve25519|wireguard-tools|openvpn-openssl) ' "$MANIFEST"
 find "$ORIG/lib/modules" \( -name 'veth.ko' -o -name 'veth.ko.gz' -o -name 'veth.ko.xz' \) | head -1
 find "$ORIG/lib/modules" \( -name 'dummy.ko' -o -name 'dummy.ko.gz' -o -name 'dummy.ko.xz' \) | head -1
 find "$ORIG/lib/modules" \( -name 'nft_fwd_netdev.ko' -o -name 'nft_fwd_netdev.ko.gz' -o -name 'nft_fwd_netdev.ko.xz' \) | head -1
@@ -138,7 +138,10 @@ need = [
     "resize2fs", "parted", "partx-utils", "losetup",
     "curl", "wget-ssl", "tcpdump", "iftop", "bmon",
     "odhcpd-ipv6only",
-    "kmod-wireguard", "kmod-udptunnel4", "kmod-udptunnel6", "wireguard-tools", "openvpn-openssl",
+    "kmod-wireguard", "kmod-udptunnel4", "kmod-udptunnel6",
+    "kmod-crypto-lib-chacha20poly1305", "kmod-crypto-lib-chacha20", "kmod-crypto-lib-poly1305",
+    "kmod-crypto-lib-curve25519", "kmod-crypto-kpp", "kmod-crypto-hash",
+    "wireguard-tools", "openvpn-openssl",
 ]
 text = open(manifest, encoding="utf-8", errors="replace").read().splitlines()
 have = set()
@@ -159,7 +162,8 @@ def find_ko(name):
             if f == name or f.startswith(name + "."):
                 return os.path.join(root, f)
     return None
-for ko in ("veth.ko", "dummy.ko", "nft_fwd_netdev.ko", "wireguard.ko"):
+for ko in ("veth.ko", "dummy.ko", "nft_fwd_netdev.ko", "wireguard.ko",
+           "libchacha20poly1305.ko", "libcurve25519-generic.ko", "curve25519-x86_64.ko"):
     p = find_ko(ko)
     if not p:
         print("MISSING ORIG kmod:", ko)
@@ -236,6 +240,7 @@ sha256sum -c gfc-build-*.img.gz.sha256
 | `nftables-json` + `kmod-nft-core` + `kmod-tun` | nft + TUN |
 | `kmod-nft-netdev` + `kmod-dummy` + **`kmod-veth`** | 透明偷流：netdev fwd + DNS VIP + **veth RX**（无模块则 MAC-punt 回退；产品主路径必须有 `veth.ko`） |
 | `kmod-wireguard` + `kmod-udptunnel4/6` + `wireguard-tools` | **预装**未来隧道；**不**作为当前数据面、**不** enable |
+| `kmod-crypto-lib-chacha20poly1305` + `kmod-crypto-lib-curve25519`（及 chacha20/poly1305/kpp/hash） | WireGuard 加密库；OEM **禁止 oldconfig**，必须显式 `=y`，否则 ipkg-build 报缺 `libchacha20poly1305.ko` / `curve25519-x86_64.ko` |
 | `openvpn-openssl` | **预装**未来隧道（OpenSSL 变体）；**不** enable；无 `luci-app-openvpn` |
 | `libcap-bin` | sing-box 非 root 能力（setcap） |
 | `ip-full` | 策略路由等 |
