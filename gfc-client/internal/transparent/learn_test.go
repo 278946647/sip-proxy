@@ -103,6 +103,19 @@ func TestISPNonGatewayARPDoesNotReplacePEMAC(t *testing.T) {
 	}
 }
 
+func TestISPGatewayARPDoesNotRotateExistingPEMAC(t *testing.T) {
+	st := &Learned{GWIP: "192.168.88.1", PEMAC: "00:a5:27:e0:28:18"}
+	other := []byte{0x70, 0x70, 0xfc, 0x07, 0xc2, 0x3e}
+	gw := net.IPv4(192, 168, 88, 1).To4()
+	ce := net.IPv4(192, 168, 88, 191).To4()
+
+	ApplyFrame(RoleISP, arpFrame(other, gw, ce, arpOpReply), st)
+
+	if st.PEMAC != "00:a5:27:e0:28:18" {
+		t.Fatalf("gateway ARP rotated PE MAC: %+v", st)
+	}
+}
+
 func TestFieldCPEUnicastICMPToGWLearnsDual(t *testing.T) {
 	// Field: eth1 00:e2:69:1b:31:60 192.168.88.193 → 192.168.88.1 (PE 00:a5:27:e0:28:18).
 	st := &Learned{State: StateISPOnly, PEMAC: "00:a5:27:e0:28:18", GWIP: "192.168.88.1"}

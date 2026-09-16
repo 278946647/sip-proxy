@@ -4,10 +4,11 @@
 **权威本文：** 透明入向、学习、ARP、搭车、偷流、DNS VIP、跨模式 DNS 劫持开关。  
 **权威 nft 骨架：** [`NFT_ARCHITECTURE.md`](NFT_ARCHITECTURE.md)（inet 表/链/hook/默认 mark **不变**；偷流层 `netdev gfc_trans` 见 §9.4）  
 **权威 DNS：** [`UNBOUND_ARCHITECTURE.md`](UNBOUND_ARCHITECTURE.md)（LAN/客户递归仍为 unbound；禁止 MosDNS / sing-box DNS inbound）  
-**权威 sing-box：** [`SINGBOX_ARCHITECTURE.md`](SINGBOX_ARCHITECTURE.md)（kernel-split **不随** `proxy_mode` 改 `auto_route` / `route.final`。透明省略 VLESS/`direct` `bind_interface`；`route.default_interface` 仅透明且 `br-trans` 存在时为该桥，网关/旁路仍为 WAN，禁止全局写死 `br-trans`）  
+**权威 sing-box：** [`SINGBOX_ARCHITECTURE.md`](SINGBOX_ARCHITECTURE.md)（kernel-split **不随** `proxy_mode` 改 `auto_route` / `route.final`。透明省略 VLESS/`direct` `bind_interface`。`route.default_interface`：仅透明且 **无 veth**、`br-trans` 存在时为该桥（MAC-punt）；**`gfc-ce`/`gfc-ce-fwd` 存在则省略**（hitch RX 在 `gfc-ce`，禁止 `SO_BINDTODEVICE br-trans`）。网关/旁路仍为 WAN，禁止全局写死 `br-trans`。SINGBOX 正文若仍写「透明一律 br-trans」，以本文与 09-16 交接为准，待确认后改 SINGBOX）  
 **旁路对照：** [`BYPASS_MODE.md`](BYPASS_MODE.md)（旁路 = 客户改网关且 GFC 有 WAN IP；透明 ≠ 旁路）  
 **策略模型：** [`USER_POLICY_ROUTING.md`](USER_POLICY_ROUTING.md)（网关 / 旁路 / 透明同一 `policies[]`，只变入向）  
-**会话交接（下一步入口）：** [`SESSION_HANDOFF_2026-09-15_TRANSPARENT_LAB.md`](SESSION_HANDOFF_2026-09-15_TRANSPARENT_LAB.md)  
+**会话交接（下一步入口）：** [`SESSION_HANDOFF_2026-09-16_TRANSPARENT_VETH_RUNTIME.md`](SESSION_HANDOFF_2026-09-16_TRANSPARENT_VETH_RUNTIME.md)（veth runtime 里程碑；下一会话 = cpe 直挂交换机多 PC。全量测试排在该功能之后）  
+**上一实验室闭环：** [`SESSION_HANDOFF_2026-09-15_TRANSPARENT_LAB.md`](SESSION_HANDOFF_2026-09-15_TRANSPARENT_LAB.md)  
 **一期实现批准：** [`SESSION_HANDOFF_2026-09-09_TRANSPARENT_MODE.md`](SESSION_HANDOFF_2026-09-09_TRANSPARENT_MODE.md)  
 **规格讨论交接：** [`SESSION_HANDOFF_2026-08-31_TRANSPARENT_MODE.md`](SESSION_HANDOFF_2026-08-31_TRANSPARENT_MODE.md)
 
@@ -104,7 +105,8 @@
 - **禁止** 对疑似前缀做 ARP/ICMP 扫描。  
 - 学主机不学网段；不要把客户未使用的 /29 余址当成自己的。  
 - **CPE MAC** = cpe 口入向以太网源；**CE IP** = 该口上对非网关单播流量最多的源，或 ARP `tell` 的地址；**PE MAC / GW IP** = isp 口入向与对端 ARP。  
-- 搭车只用 **一个** 主 CE；cpe 口多主机时选正在 ARP 网关或流量最多者。  
+- **PE MAC 首次填入后冻结**：后续 isp 上声称同一 GW IP 的 ARP **不得**改写（实验室双假网关 / proxy-ARP）。真上联换 MAC（VRRP）不自动跟上，须邻居 FAILED 后再学或 Web 重学；禁止改回 last-writer。  
+- 搭车只用 **一个** 主 CE；cpe 口多主机时选正在 ARP 网关或流量最多者。**一期已验证 SKU = 下联一台路由型 CE**（交换机可在 CE 后面）。**`cpe` 口直挂交换机、多台 PC** 尚未交付（回程仍一个 CPE MAC + CPE last-writer）；见 09-16 交接。  
 - **永不** 借用 GW/PE 地址。  
 - CE DHCP 换址则热更新；过期地址停止搭车。  
 - 公网 /30 与私网 `10.x` 互联同一套学习。
@@ -248,7 +250,7 @@ GFC 本机 OUTPUT → SNAT CE + TX 改 MAC → isp
 ```
 
 - **不改** 默认 mark、hook 优先级、`route.final`、`auto_route`。  
-- Client sing-box：透明省略 `bind_interface`；`route.default_interface` **仅**在透明且 `br-trans` 存在时为该桥；网关/旁路仍为 WAN。切模式必须对齐残留 JSON（`AlignBindWithProxyMode`）。禁止全局写死 `br-trans`，禁止绑 `gfctun` / isp 从口 / `gfc-ce`。详见 [`SINGBOX_ARCHITECTURE.md`](SINGBOX_ARCHITECTURE.md)。  
+- Client sing-box：透明省略 `bind_interface`。`route.default_interface`：**仅** MAC-punt（透明且 `br-trans` 存在、**无** `gfc-ce`/`gfc-ce-fwd`）为该桥；veth 产品路径 **省略**（禁止绑 `br-trans` / `gfctun` / isp 从口 / `gfc-ce`）。网关/旁路仍为 WAN。切模式必须对齐残留 JSON（`AlignBindWithProxyMode`）。禁止全局写死 `br-trans`。详见 [`SINGBOX_ARCHITECTURE.md`](SINGBOX_ARCHITECTURE.md) 与 09-16 交接。  
 - 偷流所用 **bridge / netdev 表名、链名** 实现前 **不得擅自写入生成器**；须先差异表，用户确认后 **先登记 `NFT_ARCHITECTURE.md` 再写代码**。  
 - 禁止发明与 `nat` / `gfc_dns_hijack` / `gfc` 冲突的 inet 表替换骨架。  
 - OEM 必须含 `kmod-veth`。无模块时的 MAC-punt + `tc skbedit` 是回退，不是产品默认偷流 RX。
@@ -319,7 +321,8 @@ nft list table inet gfc_dns_hijack   # 网关/旁路开关可见；透明另有 
 
 | 日期 | 说明 |
 |------|------|
-| 2026-09-15 | 实验室闭环：CPE DNS（VIP + 劫持 53）；CE `/32` `src` DNS VIP；trampoline 跳过 original daddr=CE；无 veth 时 MAC-punt + `tc skbedit`。sing-box 透明 `default_interface=br-trans`（口存在时），切模式 Align JSON。OEM 必须含 `kmod-veth`。 |
+| 2026-09-16 | veth runtime 里程碑：探测口 `gfc-vp0`/`gfc-vp1`；透明+veth 省略 `default_interface`；`LiveMode` 已确认 JSON 盖过 stale env；PE MAC freeze。SKU 仍是单路由型 CE。下一会话：cpe 直挂交换机多 PC。研发 tag `milestone/transparent-veth-runtime-20260916`，不升产品号。 |
+| 2026-09-15 | 实验室闭环：CPE DNS（VIP + 劫持 53）；CE `/32` `src` DNS VIP；trampoline 跳过 original daddr=CE；无 veth 时 MAC-punt + `tc skbedit`。sing-box 透明 MAC-punt 时 `default_interface=br-trans`，切模式 Align JSON。OEM 必须含 `kmod-veth`。 |
 | 2026-09-15 | hitch 回程仅 punt；由 conntrack 自动 reverse-SNAT，删除手工 daddr-CE DNAT |
 | 2026-09-14 | hitch SNAT 不得覆盖 sport 53 |
 | 2026-09-11 | punt 口：`gfc-ce`/`gfc-ce-fwd` veth（`nft fwd` 必须进 RX）；`gfc-dns` 仍 dummy |

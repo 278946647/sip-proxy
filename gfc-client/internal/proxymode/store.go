@@ -70,16 +70,30 @@ func CommittedMode(cfg *config.Config) string {
 	return NormalizeMode(cfg.ProxyMode)
 }
 
-// LiveMode matches gfc-routing.sh load_proxy_mode: env (pending switch) then
-// proxy-mode.json then cfg. Device Web is authoritative; payload is not.
+// LiveMode is the dataplane proxy_mode. Device Web is authoritative; payload is not.
+//
+// Order: unexpired pending (env written before confirm) → proxy-mode.json →
+// process env → cfg. Confirmed JSON must win over a stale agent env: init can
+// start as gateway, then Web writes gfc.env + proxy-mode.json without
+// overwriting a non-empty GFC_PROXY_MODE in the long-running process.
 func LiveMode(cfg *config.Config) string {
+	if cfg != nil {
+		if pending, err := LoadPending(cfg); err == nil && pending != nil && !PendingExpired(pending, time.Now().UTC()) {
+			if mode := NormalizeMode(pending.ToMode); mode == ModeGateway || mode == ModeBypass || mode == ModeTransparent {
+				return mode
+			}
+		}
+		if st, err := LoadCommitted(cfg); err == nil && strings.TrimSpace(st.Mode) != "" {
+			return NormalizeMode(st.Mode)
+		}
+	}
 	env := strings.ToLower(strings.TrimSpace(os.Getenv("GFC_PROXY_MODE")))
 	switch env {
 	case ModeGateway, ModeBypass, ModeTransparent:
 		return env
 	}
 	if cfg != nil {
-		return CommittedMode(cfg)
+		return NormalizeMode(cfg.ProxyMode)
 	}
 	return ModeGateway
 }

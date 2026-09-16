@@ -1,6 +1,8 @@
 # 会话交接：透明实验室闭环 · sing-box 口对齐 · OEM veth（2026-09-15）
 
-> 写给**无本对话上下文**的新会话：**先读本文再推进**。  
+> **已被** [`SESSION_HANDOFF_2026-09-16_TRANSPARENT_VETH_RUNTIME.md`](SESSION_HANDOFF_2026-09-16_TRANSPARENT_VETH_RUNTIME.md) **接棒**。veth 刷入后 JSON 探针以 09-16 为准（透明+veth **省略** `default_interface`，不再断言 `br-trans`）。本文保留无 veth MAC-punt 闭环与 OEM 构建入口。
+>
+> 写给**无本对话上下文**的新会话：**先读 09-16 再推进**。  
 > **产品唯一真相：** [`TRANSPARENT_MODE.md`](TRANSPARENT_MODE.md)  
 > **nft：** [`NFT_ARCHITECTURE.md`](NFT_ARCHITECTURE.md) §9.4  
 > **sing-box：** [`SINGBOX_ARCHITECTURE.md`](SINGBOX_ARCHITECTURE.md)  

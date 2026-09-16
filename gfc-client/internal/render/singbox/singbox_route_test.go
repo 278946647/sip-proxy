@@ -226,6 +226,45 @@ func TestAlignBindWithProxyModeStripsTransparent(t *testing.T) {
 	}
 }
 
+func TestAlignBindWithProxyModeOmitsDefaultIfaceWhenVeth(t *testing.T) {
+	t.Setenv("GFC_PROXY_MODE", "transparent")
+	prev := ifaceExists
+	ifaceExists = func(name string) bool {
+		return name == transBridgeIface || name == "gfc-ce" || name == transVethPeer
+	}
+	t.Cleanup(func() { ifaceExists = prev })
+	dir := t.TempDir()
+	path := dir + "/sing-box.json"
+	doc := map[string]any{
+		"outbounds": []any{
+			map[string]any{"type": "direct", "tag": "direct", "bind_interface": "eth0"},
+			map[string]any{"type": "vless", "tag": "proxy"},
+		},
+		"route": map[string]any{"default_interface": "br-trans", "final": "direct"},
+	}
+	if err := WriteConfig(path, doc); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := AlignBindWithProxyMode(path, &config.Config{ProxyMode: "transparent", WanIface: "eth0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("expected default_interface omit for veth hitch RX")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(raw)
+	if strings.Contains(s, "default_interface") {
+		t.Fatalf("veth must omit default_interface: %s", raw)
+	}
+	if strings.Contains(s, "bind_interface") {
+		t.Fatalf("bind leftover: %s", raw)
+	}
+}
+
 func TestAlignBindWithProxyModeRestoresGateway(t *testing.T) {
 	t.Setenv("GFC_PROXY_MODE", "gateway")
 	prev := ifaceExists

@@ -955,13 +955,19 @@ ensure_ce_veth() {
 		echo "ERROR: veth.ko not loaded (need kmod-veth in image)" >&2
 		return 1
 	fi
+	# Probe names must be ≤15 bytes (IFNAMSIZ including NUL).
+	# gfc-ce-fwd-probe is 16 and iproute2 rejects it, which used to
+	# sticky-fail this boot even though gfc-ce / gfc-ce-fwd are valid.
+	del_trans_dev gfc-vp0
+	del_trans_dev gfc-vp1
 	del_trans_dev gfc-ce-probe
 	del_trans_dev gfc-ce-fwd-probe
-	if ! try_veth_add gfc-ce-probe gfc-ce-fwd-probe; then
+	if ! try_veth_add gfc-vp0 gfc-vp1; then
 		touch /tmp/gfc-veth-missing 2>/dev/null || true
 		return 1
 	fi
-	del_trans_dev gfc-ce-probe
+	del_trans_dev gfc-vp0
+	del_trans_dev gfc-vp1
 	del_trans_dev gfc-ce
 	del_trans_dev gfc-ce-fwd
 	if ! try_veth_add gfc-ce gfc-ce-fwd; then

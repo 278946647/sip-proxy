@@ -199,7 +199,10 @@ func RenderExtraACL(hosts []string) string {
 func applyTransparentOutgoing(text string, cfg *config.Config) string {
 	const marker = "outgoing-interface:"
 	const line = "    outgoing-interface: 172.31.253.1"
-	if proxymode.LiveMode(cfg) != proxymode.ModeTransparent {
+	// Spec is dummy bind. On veth gfc-ce this SO_BINDTOs the pair and
+	// unbound cannot reach CN/DoT upstreams.
+	useHitch := proxymode.LiveMode(cfg) == proxymode.ModeTransparent && !transVethPresent()
+	if !useHitch {
 		if !strings.Contains(text, marker) {
 			return text
 		}
@@ -217,6 +220,12 @@ func applyTransparentOutgoing(text string, cfg *config.Config) string {
 		return text
 	}
 	return strings.Replace(text, "    prefer-ip4: yes", "    prefer-ip4: yes\n"+line, 1)
+}
+
+func transVethPresent() bool {
+	_, errCE := os.Stat("/sys/class/net/gfc-ce")
+	_, errFwd := os.Stat("/sys/class/net/gfc-ce-fwd")
+	return errCE == nil && errFwd == nil
 }
 
 func patchIntlForwardZone(text, intlServer string) string {

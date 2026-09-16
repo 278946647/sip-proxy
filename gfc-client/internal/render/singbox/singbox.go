@@ -31,6 +31,7 @@ const liveModeStandard = "standard"
 const liveModeAllHy2 = "live_all_hy2"
 const liveModeCatalog = "live_catalog"
 const transBridgeIface = "br-trans"
+const transVethPeer = "gfc-ce-fwd"
 
 // ifaceExists is swapped in tests (Windows CI has no br-trans).
 var ifaceExists = func(name string) bool {
@@ -255,8 +256,10 @@ func (r *Renderer) RenderActive(payload map[string]any, ruleSets []map[string]an
 
 	route := map[string]any{
 		"auto_detect_interface": false,
-		"default_interface":     r.resolveRouteIface(),
 		"final":                 finalOutbound,
+	}
+	if iface := r.resolveRouteIface(); iface != "" {
+		route["default_interface"] = iface
 	}
 	if len(routeRules) > 0 {
 		route["rules"] = routeRules
@@ -306,8 +309,15 @@ func wanIfaceFromConfig(cfg *config.Config) string {
 }
 
 func routeIfaceForMode(cfg *config.Config) string {
-	if proxymode.LiveMode(cfg) == proxymode.ModeTransparent && ifaceExists(transBridgeIface) {
-		return transBridgeIface
+	if proxymode.LiveMode(cfg) == proxymode.ModeTransparent {
+		// Veth hitch RX is gfc-ce. SO_BINDTODEVICE br-trans drops those
+		// replies (MAC-punt lab needed the bind; veth must not set it).
+		if ifaceExists("gfc-ce") && ifaceExists(transVethPeer) {
+			return ""
+		}
+		if ifaceExists(transBridgeIface) {
+			return transBridgeIface
+		}
 	}
 	return wanIfaceFromConfig(cfg)
 }
@@ -752,8 +762,10 @@ func WriteConfig(path string, data map[string]any) error {
 }
 
 // AlignBindWithProxyMode rewrites leftover JSON after a mode switch:
-// transparent omits bind_interface and sets route.default_interface=br-trans
-// when that bridge exists; gateway/bypass restore WAN bind + WAN default_interface.
+// transparent omits bind_interface; default_interface is br-trans only for
+// the MAC-punt fallback. When gfc-ce/gfc-ce-fwd veth exists, omit
+// default_interface so hitch RX on gfc-ce reaches the socket.
+// gateway/bypass restore WAN bind + WAN default_interface.
 func AlignBindWithProxyMode(path string, cfg *config.Config) (bool, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -807,6 +819,14 @@ func AlignBindWithProxyMode(path string, cfg *config.Config) (bool, error) {
 		if cur != routeIface {
 			route["default_interface"] = routeIface
 			changed = true
+		}
+	} else if trans {
+		route, _ := doc["route"].(map[string]any)
+		if route != nil {
+			if _, ok := route["default_interface"]; ok {
+				delete(route, "default_interface")
+				changed = true
+			}
 		}
 	}
 	if !changed {

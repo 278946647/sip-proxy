@@ -96,7 +96,12 @@ func applyARP(role Role, srcMAC string, payload []byte, st *Learned) {
 			st.GWIP = spaStr
 			st.PEMAC = srcMAC
 		} else if spaStr == st.GWIP {
-			st.PEMAC = srcMAC
+			// First ARP from the gateway fills PE. Later ARP claiming the
+			// same GW IP (proxy-ARP, extra ISP hosts) must not rotate the
+			// L2 next hop — that blackholes all WAN DNS and VLESS.
+			if st.PEMAC == "" {
+				st.PEMAC = srcMAC
+			}
 		}
 	}
 }

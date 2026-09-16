@@ -168,6 +168,12 @@ func (o *Orchestrator) applyPayload(p map[string]any, version string, restart, s
 	var msgs []string
 	_ = o.dnsLists.EnsureDefaults()
 	o.rules.EnsureLocal(true)
+	mode := proxymode.LiveMode(o.cfg)
+	o.cfg.ProxyMode = mode
+	_ = os.Setenv("GFC_PROXY_MODE", mode)
+	if p != nil {
+		p["proxyMode"] = mode
+	}
 
 	if err := o.unbound.Render(p); err != nil {
 		o.rollbackQuiet()
@@ -192,6 +198,10 @@ func (o *Orchestrator) applyPayload(p map[string]any, version string, restart, s
 	if err := singbox.CheckConfig(o.cfg.Paths.SingboxConfig); err != nil {
 		o.rollbackQuiet()
 		return false, "sing-box: " + err.Error()
+	}
+	if _, err := singbox.AlignBindWithProxyMode(o.cfg.Paths.SingboxConfig, o.cfg); err != nil {
+		o.rollbackQuiet()
+		return false, "sing-box bind align: " + err.Error()
 	}
 	msgs = append(msgs, "sing-box active ok")
 
