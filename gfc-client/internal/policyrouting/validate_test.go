@@ -224,6 +224,8 @@ func TestProbeTransparentIngress(t *testing.T) {
 		t.Fatalf("expected eligible dual: %+v", res)
 	}
 }
+
+func TestStoreRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &config.Config{Paths: config.Paths{Etc: dir}}
 	svc := NewService(cfg, func() Env {

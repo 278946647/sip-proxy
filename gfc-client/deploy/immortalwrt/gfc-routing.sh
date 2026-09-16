@@ -666,6 +666,17 @@ EOF
 	return 1
 }
 
+bridge_fdb_replace() {
+	# Some images ship ip-full without bridge(8); FDB then relies on L2 learning.
+	if ! command -v bridge >/dev/null 2>&1; then
+		[ -n "${GFC_BRIDGE_WARNED:-}" ] || \
+			echo "WARN: bridge(8) missing; static FDB skipped (L2 learning only)" >&2
+		GFC_BRIDGE_WARNED=1
+		return 1
+	fi
+	bridge fdb replace "$@" 2>/dev/null
+}
+
 hw_mac() {
 	local dev="$1"
 	[ -n "$dev" ] && [ -f "/sys/class/net/$dev/address" ] && cat "/sys/class/net/$dev/address" || true
@@ -889,7 +900,7 @@ ensure_ce_macvlan() {
 	ip link set "$name" arp off 2>/dev/null || true
 	mac="$(hw_mac "$name")"
 	if [ -n "$mac" ]; then
-		bridge fdb replace "$mac" dev br-trans local 2>/dev/null || \
+		bridge_fdb_replace "$mac" dev br-trans local || \
 			bridge fdb add "$mac" dev br-trans local 2>/dev/null || true
 	fi
 	vip="$(load_dns_vip)"
@@ -1124,7 +1135,7 @@ apply_trans_addrs() {
 			fi
 		fi
 		if [ -n "$cpe" ] && [ -n "$cpe_mac" ]; then
-			bridge fdb replace "$cpe_mac" dev "$cpe" master static 2>/dev/null || true
+			bridge_fdb_replace "$cpe_mac" dev "$cpe" master static || true
 		fi
 		if [ -n "$l3" ]; then
 			while read -r hip hmac; do
@@ -1137,7 +1148,7 @@ apply_trans_addrs() {
 					ip neigh replace "$hip" lladdr "$hmac" nud permanent dev "$l3" 2>/dev/null || true
 				fi
 				if [ -n "$cpe" ] && [ -n "$hmac" ]; then
-					bridge fdb replace "$hmac" dev "$cpe" master static 2>/dev/null || true
+					bridge_fdb_replace "$hmac" dev "$cpe" master static || true
 				fi
 			done <<EOF
 $(load_trans_host_lines)
@@ -1175,7 +1186,7 @@ EOF
 		if [ -n "$pe_mac" ]; then
 			ip neigh replace "$gw" lladdr "$pe_mac" nud permanent dev "$l3" 2>/dev/null || true
 			if [ -n "$isp" ]; then
-				bridge fdb replace "$pe_mac" dev "$isp" master static 2>/dev/null || true
+				bridge_fdb_replace "$pe_mac" dev "$isp" master static || true
 			fi
 		fi
 		# Learned hosts only — GW is not on a connected prefix. `onlink` is mandatory.
@@ -1403,7 +1414,7 @@ EOF
     flags dynamic,timeout
   }"
 			host_learn="
-    update @host_mac { ip saddr : ether saddr timeout 2m }"
+    update @host_mac { ip saddr timeout 2m : ether saddr }"
 			if [ -n "$pe_mac" ]; then
 				host_ret="
     ip daddr @host_mac ether saddr set $pe_mac ether daddr set ip daddr map @host_mac accept"
@@ -1497,6 +1508,9 @@ EOF
 	fill_netdev_no_steal
 	if [ "$host_map_used" = 1 ]; then
 		fill_netdev_host_mac
+	elif [ -n "$(load_trans_host_lines)" ]; then
+		# Silent fallback means replies to every non-primary host leave via PE.
+		echo "WARN: netdev host_mac unsupported ($last_err); cable hosts other than CE lose return path" >&2
 	fi
 	if [ "$punt_mode" = "veth" ]; then
 		clear_trans_tc_ingress
@@ -1543,7 +1557,7 @@ fill_netdev_host_mac() {
 	while read -r ip mac; do
 		is_ipv4 "$ip" || continue
 		[ -n "$mac" ] || continue
-		nft add element netdev gfc_trans host_mac { "$ip" : "$mac" timeout 2m } 2>/dev/null || true
+		nft add element netdev gfc_trans host_mac { "$ip" timeout 2m : "$mac" } 2>/dev/null || true
 	done <<EOF
 $(load_trans_host_lines)
 EOF

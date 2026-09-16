@@ -198,6 +198,8 @@ func TestPublicACLHostsSkipsRFC1918(t *testing.T) {
 		t.Fatalf("want only public host, got %v", got)
 	}
 }
+
+func TestTaggedAndIPv6Ignored(t *testing.T) {
 	st := &Learned{}
 	frame := make([]byte, 18)
 	copy(frame[6:12], []byte{1, 2, 3, 4, 5, 6})
@@ -237,6 +239,123 @@ func TestValidatePorts(t *testing.T) {
 	}
 	if err := ValidatePorts(Ports{ISP: "gfctun", CPE: "eth2"}, "br-lan"); err == nil {
 		t.Fatal("reserved")
+	}
+}
+
+func TestCPEPeerARPDoesNotBecomeGW(t *testing.T) {
+	st := &Learned{}
+	hostA := []byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x0a}
+	hostB := []byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x0b}
+	a := net.IPv4(192, 168, 88, 191).To4()
+	b := net.IPv4(192, 168, 88, 189).To4()
+	gw := net.IPv4(192, 168, 88, 1).To4()
+
+	ApplyFrame(RoleCPE, arpFrame(hostB, b, gw, arpOpRequest), st)
+	// A asks for its neighbour B: a peer, never the next hop.
+	ApplyFrame(RoleCPE, arpFrame(hostA, a, b, arpOpRequest), st)
+	if st.GWIP != "192.168.88.1" {
+		t.Fatalf("peer ARP hijacked GW: %+v", st)
+	}
+	if _, ok := st.Hosts["192.168.88.189"]; !ok {
+		t.Fatalf("peer must stay a cable host: %+v", st.Hosts)
+	}
+}
+
+func TestISPARPForCableHostConfirmsGW(t *testing.T) {
+	st := &Learned{}
+	host := []byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x0a}
+	peMAC := []byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x02}
+	otherMAC := []byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x77}
+	ce := net.IPv4(192, 168, 88, 191).To4()
+	gw := net.IPv4(192, 168, 88, 1).To4()
+	neighbour := net.IPv4(192, 168, 88, 200).To4()
+
+	ApplyFrame(RoleCPE, arpFrame(host, ce, gw, arpOpRequest), st)
+	// A chatty neighbour on a shared segment must not be crowned gateway.
+	ApplyFrame(RoleISP, arpFrame(otherMAC, neighbour, neighbour, arpOpRequest), st)
+	if st.GWIP != "192.168.88.1" {
+		t.Fatalf("shared-segment host became GW: %+v", st)
+	}
+	// The real next hop is the one ARPing for our side of the cable.
+	ApplyFrame(RoleISP, arpFrame(peMAC, gw, ce, arpOpRequest), st)
+	if st.GWIP != "192.168.88.1" || st.PEMAC != "02:00:00:00:00:02" {
+		t.Fatalf("gw/pe %+v", st)
+	}
+}
+
+func TestPEMACRelearnedAfterSegmentMove(t *testing.T) {
+	st := &Learned{}
+	hostMAC := []byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x0a}
+	oldPE := []byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x02}
+	newPE := []byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x03}
+	oldCE := net.IPv4(192, 168, 88, 191).To4()
+	oldGW := net.IPv4(192, 168, 88, 1).To4()
+	newCE := net.IPv4(192, 168, 33, 129).To4()
+	newGW := net.IPv4(192, 168, 33, 2).To4()
+
+	ApplyFrame(RoleCPE, arpFrame(hostMAC, oldCE, oldGW, arpOpRequest), st)
+	ApplyFrame(RoleISP, arpFrame(oldPE, oldGW, oldCE, arpOpRequest), st)
+	if st.PEMAC != "02:00:00:00:00:02" {
+		t.Fatalf("first PE not learned: %+v", st)
+	}
+	// Same GW: a twin claiming the next hop must not rotate the MAC.
+	ApplyFrame(RoleISP, arpFrame(newPE, oldGW, oldCE, arpOpRequest), st)
+	if st.PEMAC != "02:00:00:00:00:02" {
+		t.Fatalf("PE freeze broken within one GW: %+v", st)
+	}
+	// Cable moved to another segment: the old PE MAC is a black hole there.
+	ApplyFrame(RoleCPE, arpFrame(hostMAC, newCE, newGW, arpOpRequest), st)
+	ApplyFrame(RoleISP, arpFrame(newPE, newGW, newCE, arpOpRequest), st)
+	if st.GWIP != "192.168.33.2" || st.PEMAC != "02:00:00:00:00:03" {
+		t.Fatalf("PE not relearned after segment move: %+v", st)
+	}
+}
+
+func TestDeadCEDemotedAfterUnansweredISPARP(t *testing.T) {
+	st := &Learned{}
+	deadMAC := []byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x0a}
+	liveMAC := []byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x0b}
+	peMAC := []byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x02}
+	dead := net.IPv4(192, 168, 88, 191).To4()
+	live := net.IPv4(192, 168, 88, 189).To4()
+	gw := net.IPv4(192, 168, 88, 1).To4()
+
+	ApplyFrame(RoleCPE, arpFrame(deadMAC, dead, gw, arpOpRequest), st)
+	ApplyFrame(RoleCPE, arpFrame(liveMAC, live, gw, arpOpRequest), st)
+	if st.CEIP != "192.168.88.191" {
+		t.Fatalf("first host should hold the hitch slot: %+v", st)
+	}
+	for i := 0; i < CEArpMissLimit; i++ {
+		ApplyFrame(RoleISP, arpFrame(peMAC, gw, dead, arpOpRequest), st)
+	}
+	if st.CEIP != "192.168.88.189" {
+		t.Fatalf("dead CE not replaced: %+v", st)
+	}
+	if st.CPEMAC != "02:00:00:00:00:0b" {
+		t.Fatalf("primary MAC must follow the new CE: %+v", st)
+	}
+	if _, ok := st.Hosts["192.168.88.191"]; ok {
+		t.Fatal("dead host must not keep a return rule")
+	}
+}
+
+func TestLiveCEKeepsHitchWhenAnswering(t *testing.T) {
+	st := &Learned{}
+	ceMAC := []byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x0a}
+	peMAC := []byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x02}
+	ce := net.IPv4(192, 168, 88, 191).To4()
+	other := net.IPv4(192, 168, 88, 189).To4()
+	gw := net.IPv4(192, 168, 88, 1).To4()
+
+	ApplyFrame(RoleCPE, arpFrame(ceMAC, ce, gw, arpOpRequest), st)
+	ApplyFrame(RoleCPE, arpFrame([]byte{0x02, 0, 0, 0, 0, 0x0b}, other, gw, arpOpRequest), st)
+	for i := 0; i < CEArpMissLimit*2; i++ {
+		ApplyFrame(RoleISP, arpFrame(peMAC, gw, ce, arpOpRequest), st)
+		// The CE answers, so the miss counter must never reach the limit.
+		ApplyFrame(RoleCPE, arpFrame(ceMAC, ce, gw, arpOpReply), st)
+	}
+	if st.CEIP != "192.168.88.191" {
+		t.Fatalf("live CE was demoted: %+v", st)
 	}
 }
 

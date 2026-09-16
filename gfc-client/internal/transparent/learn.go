@@ -47,14 +47,17 @@ func ApplyFrame(role Role, frame []byte, st *Learned) {
 	case etherIPv4:
 		applyIPv4(role, srcMAC, payload, st)
 	}
-	if st.CEIP == "" && len(st.CECandidates) > 0 {
-		st.CEIP = topCandidate(st.CECandidates, st.GWIP)
+	now := time.Now().UTC()
+	demoteDeadCE(st, now)
+	if st.CEIP == "" && (len(st.CECandidates) > 0 || len(st.Hosts) > 0) {
+		st.CEIP = electCE(st, now)
 	}
 	if !usableHitchIP(st.CEIP) {
-		st.CEIP = topCandidate(st.CECandidates, st.GWIP)
+		st.CEIP = electCE(st, now)
 	}
 	if !onLinkGW(st.CEIP, st.GWIP) {
 		st.GWIP = ""
+		st.GWStrong = false
 	}
 	syncPrimaryMAC(st)
 	recomputeState(st)
@@ -87,16 +90,40 @@ func applyARP(role Role, srcMAC string, payload []byte, st *Learned) {
 				st.CECandidates[spaStr] += 5
 			}
 		}
-		// GW is the on-link next hop the CE is ARPing, not transit IPv4.
-		if op == arpOpRequest && tpa != nil && onLinkGW(st.CEIP, tpa.String()) {
-			st.GWIP = tpa.String()
+		if spaStr == st.CEIP {
+			st.CEMiss = 0
+		}
+		// GW is the on-link next hop the CE is ARPing. A target we already know
+		// as a cable host is a peer, never the gateway. Weak evidence only: it
+		// must not overwrite a next hop confirmed from the PE side.
+		if op == arpOpRequest && tpa != nil && !isKnownHost(st, tpa.String()) {
+			setGW(st, tpa.String(), false)
 		}
 	case RoleISP:
 		// Learn the PE MAC only from the gateway's own ARP. Transit IPv4
 		// and ARP from other ISP-side hosts must not rotate the L2 next hop.
-		if st.GWIP == "" && onLinkGW(st.CEIP, spaStr) {
-			st.GWIP = spaStr
-			st.PEMAC = srcMAC
+		if op == arpOpRequest && tpa != nil {
+			target := tpa.String()
+			if target == st.CEIP && st.CEIP != "" {
+				// The next hop cannot deliver to our hitch IP. Repeated misses
+				// are proof the hitched host is gone, not a timing guess.
+				st.CEMiss++
+			}
+			if (target == st.CEIP && st.CEIP != "") || isKnownHost(st, target) {
+				// Only the real next hop ARPs for hosts on our side of the
+				// cable. On a shared lab segment this is what keeps a random
+				// neighbour from being crowned gateway.
+				setGW(st, spaStr, true)
+				if st.PEMAC == "" && spaStr == st.GWIP {
+					st.PEMAC = srcMAC
+				}
+			}
+		}
+		if st.GWIP == "" && st.PEMAC == "" && !isKnownHost(st, spaStr) && onLinkGW(st.CEIP, spaStr) {
+			setGW(st, spaStr, false)
+			if st.GWIP == spaStr {
+				st.PEMAC = srcMAC
+			}
 		} else if spaStr == st.GWIP {
 			// First ARP from the gateway fills PE. Later ARP claiming the
 			// same GW IP (proxy-ARP, extra ISP hosts) must not rotate the
@@ -105,6 +132,41 @@ func applyARP(role Role, srcMAC string, payload []byte, st *Learned) {
 				st.PEMAC = srcMAC
 			}
 		}
+	}
+}
+
+func isKnownHost(st *Learned, ip string) bool {
+	if st == nil || len(st.Hosts) == 0 {
+		return false
+	}
+	_, ok := st.Hosts[strings.TrimSpace(ip)]
+	return ok
+}
+
+// setGW records the on-link next hop. Weak evidence (a CPE-side ARP target)
+// only fills an empty slot; PE-side evidence may always correct it.
+func setGW(st *Learned, gw string, strong bool) {
+	gw = strings.TrimSpace(gw)
+	if st == nil || !onLinkGW(st.CEIP, gw) {
+		return
+	}
+	if !strong && (st.GWStrong || strings.TrimSpace(st.GWIP) != "") {
+		return
+	}
+	if st.GWIP != "" && st.GWIP != gw {
+		// The freeze is scoped to one GW identity: it stops proxy-ARP and lab
+		// twins from rotating the next hop, but a cable moved to another
+		// segment must be able to learn the new PE instead of posting frames
+		// to a MAC that no longer exists there.
+		st.PEMAC = ""
+	}
+	st.GWIP = gw
+	st.GWStrong = strong
+	if strong {
+		// A confirmed next hop is not a customer; drop any stale host entry so
+		// it stops claiming a /32 route and a host_mac return rule.
+		delete(st.Hosts, gw)
+		delete(st.CECandidates, gw)
 	}
 }
 
@@ -128,6 +190,9 @@ func applyIPv4(role Role, srcMAC string, payload []byte, st *Learned) {
 		if usableHitchIP(srcStr) && srcStr != st.GWIP {
 			rememberHost(st, srcStr, srcMAC)
 			st.CECandidates[srcStr]++
+		}
+		if srcStr == st.CEIP {
+			st.CEMiss = 0
 		}
 		if proto == 17 {
 			applyDHCP(payload[ihl:], st)
@@ -221,6 +286,85 @@ func pruneHosts(st *Learned) {
 			delete(st.Hosts, ip)
 		}
 	}
+}
+
+func hostSeenAt(h HostEntry) (time.Time, bool) {
+	at := strings.TrimSpace(h.At)
+	if at == "" {
+		return time.Time{}, false
+	}
+	t, err := time.Parse(time.RFC3339, at)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return t.UTC(), true
+}
+
+func hostFresh(st *Learned, ip string, now time.Time) bool {
+	h, ok := st.Hosts[strings.TrimSpace(ip)]
+	if !ok {
+		return false
+	}
+	at, ok := hostSeenAt(h)
+	if !ok {
+		return false
+	}
+	return now.Sub(at) <= CEStaleAfter
+}
+
+// demoteDeadCE retires a hitch IP only on evidence, never on a timer guess:
+// the PE keeps ARPing for it and nothing answers, or the host went silent while
+// another cable host is demonstrably alive. A quiet cable changes nothing.
+func demoteDeadCE(st *Learned, now time.Time) {
+	ce := strings.TrimSpace(st.CEIP)
+	if ce == "" {
+		return
+	}
+	dead := st.CEMiss >= CEArpMissLimit
+	if !dead && !hostFresh(st, ce, now) {
+		for ip := range st.Hosts {
+			if ip != ce && hostFresh(st, ip, now) {
+				dead = true
+				break
+			}
+		}
+	}
+	if !dead {
+		return
+	}
+	delete(st.Hosts, ce)
+	delete(st.CECandidates, ce)
+	st.CEMiss = 0
+	st.CEIP = electCE(st, now)
+	if st.CEIP == "" {
+		// Nothing left to hitch: stop spoofing a MAC whose owner is gone.
+		st.CPEMAC = ""
+	}
+}
+
+// electCE prefers a cable host proven alive recently; weight breaks ties so a
+// host that ARPs the gateway still wins over a chatty peer.
+func electCE(st *Learned, now time.Time) string {
+	best := ""
+	bestScore := -1
+	var bestAt time.Time
+	for ip, h := range st.Hosts {
+		if ip == st.GWIP || h.MAC == "" || !usableHitchIP(ip) {
+			continue
+		}
+		at, ok := hostSeenAt(h)
+		if !ok || now.Sub(at) > CEStaleAfter {
+			continue
+		}
+		score := st.CECandidates[ip]
+		if score > bestScore || (score == bestScore && at.After(bestAt)) {
+			best, bestScore, bestAt = ip, score, at
+		}
+	}
+	if best != "" {
+		return best
+	}
+	return topCandidate(st.CECandidates, st.GWIP)
 }
 
 func syncPrimaryMAC(st *Learned) {

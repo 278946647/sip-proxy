@@ -50,6 +50,10 @@ type Learned struct {
 	UpdatedAt        string    `json:"updated_at,omitempty"`
 	Hosts            map[string]HostEntry `json:"hosts,omitempty"`
 	CECandidates     map[string]int `json:"-"`
+	// CEMiss counts ISP-side ARP requests for CEIP that the hitch host never
+	// answered. GWStrong marks a next hop confirmed from the PE side.
+	CEMiss           int  `json:"-"`
+	GWStrong         bool `json:"-"`
 }
 
 // HostEntry is one cable host learned on cpe (not the hitch primary fields).
@@ -76,6 +80,14 @@ func NormalizeState(raw string) string {
 }
 
 const HostTTL = 30 * time.Minute
+
+// CEStaleAfter is how long a hitch host may stay silent before a fresher cable
+// host may take the primary slot. CEArpMissLimit is the PE-side proof of death:
+// that many unanswered ARP requests for CEIP retire it immediately.
+const (
+	CEStaleAfter   = 5 * time.Minute
+	CEArpMissLimit = 5
+)
 
 func (l Learned) HostSig() string {
 	if len(l.Hosts) == 0 {

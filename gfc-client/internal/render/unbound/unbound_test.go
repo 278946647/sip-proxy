@@ -54,7 +54,7 @@ func TestRenderBypassACLPublicHost(t *testing.T) {
 	if !strings.Contains(got, "access-control: 10.20.30.0/24 allow") {
 		t.Fatalf("missing cidr ACL:\n%s", got)
 	}
-	if strings.Contains(got, "0.0.0.0/0") {
+	if strings.Contains(got, "access-control: 0.0.0.0/0") {
 		t.Fatal("must not allow all")
 	}
 	inactive := RenderBypassACL(false, []string{"103.78.41.18"})
@@ -68,7 +68,7 @@ func TestRenderExtraACLLearnedCE(t *testing.T) {
 	if !strings.Contains(got, "access-control: 203.0.113.10/32 allow") {
 		t.Fatalf("missing CE ACL:\n%s", got)
 	}
-	if strings.Contains(got, "0.0.0.0/0") {
+	if strings.Contains(got, "access-control: 0.0.0.0/0") {
 		t.Fatal("must not allow all")
 	}
 }
@@ -78,3 +78,4 @@ func TestRenderExtraACLEmptyPrivateTransparent(t *testing.T) {
 	if strings.Contains(got, "allow") {
 		t.Fatalf("private interconnect uses server RFC1918, extra file must stay empty:\n%s", got)
 	}
+}

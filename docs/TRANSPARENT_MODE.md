@@ -108,11 +108,25 @@
 - **主 CPE MAC** = **该主 CE IP** 的以太网源。禁止用「cpe 口最近一帧的源 MAC」覆盖（last-writer 会在交换机多 PC 下飘）。  
 - **电缆主机表** = 每个学到的客户 `IP → MAC`（timeout）；与主 CE 分开存。不得写入 inet `TO_CN` / `bypass_ip` / `ext` / `ext_const`。  
 - **PE MAC / GW IP** = isp 口入向与对端 ARP。  
-- **PE MAC 首次填入后冻结**：后续 isp 上声称同一 GW IP 的 ARP **不得**改写（实验室双假网关 / proxy-ARP）。真上联换 MAC（VRRP）不自动跟上，须邻居 FAILED 后再学或 Web 重学；禁止改回 last-writer。  
+- **GW IP 收敛（强/弱证据）**：**强证据** = isp 口上「为主 CE 或任一已学电缆主机」发起的 ARP request，其发送方即真下一跳；DHCP Option 3 同级。**弱证据** = cpe 口 ARP request 的 `tell` 目标，仅在 GW 为空时填入，且目标若已在电缆主机表中则 **一律拒绝**（那是同网段邻居，不是网关）。强证据可改写弱证据，弱证据永不改写强证据。共享网段（实验室 vSwitch、promisc）上任意邻居的 ARP **不得**当选网关。  
+- **PE MAC 冻结按 GW IP 收敛**：同一 GW IP 内首次填入后冻结，后续声称同一 GW IP 的 ARP **不得**改写（实验室双假网关 / proxy-ARP / VRRP 换 MAC 仍须邻居 FAILED 后再学或 Web 重学）；**GW IP 变更**（换网段、换上联）时清空 PE MAC 重新学习——否则盒子会一直把帧打向本网段不存在的 MAC 且无自愈路径。禁止在同一 GW IP 内改回 last-writer。  
+- **主 CE 存活性（禁止用沉默计时判死）**：链路安静 **不是** 客户下线的证据，不得因「多久没收到帧」就换 CE。只认两类证据：① isp 口连续 `CEArpMissLimit`（默认 5）次 `who-has <主 CE>` 无人应答——下一跳无法投递即为死亡证明，主 CE 任一帧出现即清零；② 主 CE 超过 `CEStaleAfter`（默认 5 分钟）未出现，而电缆主机表中 **另有** 主机在该窗口内活跃。判死后从主机表删除该 IP 并在活跃主机中改选（权重优先、时间次之），无活跃主机则主 CE 置空、停止搭车。两条都不成立时维持现状。  
 - 盒子出 isp 的 hitch **仍只用一个主 CE**（SNAT + TX `src MAC=主 CPE`）。`cpe` 口直挂 L2 交换机、多台 PC：不 punt 的帧仍 L2 一字不改；偷来的 DNS / 国际 TCP 回程 `dst MAC` 用主机表里该目的 IP 的 MAC，而不是全局主 CPE MAC。  
 - **永不** 借用 GW/PE 地址。  
 - CE DHCP 换址则热更新；过期地址停止搭车并从主机表删除。  
 - 公网 /30 与私网 `10.x` 互联同一套学习。
+
+### 4.1 主动探测（提案 · 未实现 · 待用户确认后方可写代码）
+
+纯被动学习有两个死角：客户全程不发包时学不到 CE；换网段后 PE MAC 缺失且上联不主动说话时学不回来。补救手段 **只允许** 一种：
+
+- **ARP Probe（RFC 5227 §2.1.1）**：`sender protocol address = 0.0.0.0`、`target hardware address = 0`、`target protocol address = 待探目标`。发送方 IP 为全零，收方 **不得** 因此建立/更新 ARP 缓存条目，故不声明任何地址、不污染任何缓存、不构成 ARP 抢占，与「已学到客户后禁止当 ARP 主人」不冲突。
+- **源 MAC 只用本口硬件 MAC**；**禁止** 用主 CPE MAC 或任何伪造 MAC 发探测（那是 isp 侧重复 MAC，会污染上联 MAC 表并触发端口安全）。
+- **触发条件（有因才发，禁止周期性扫描）**：① 主 CE 存活存疑（`CEArpMissLimit` 将达）时向 **cpe 口** 探主 CE；② GW IP 已知而 PE MAC 为空时向 **isp 口** 探 GW。
+- **频率上限**：2 秒一次、最多 3 次，随后退避到 30 秒；目标 **只能** 是主 CE 或 GW IP，禁止遍历前缀。
+- **仍然禁止**：自造 IP / 自造 MAC 上线、ICMP/TCP 扫段、对未学到的地址试探。
+
+无客户时的管理面上线，**不得** 用自造地址解决；如需该能力，走「运维显式配置的备用管理 IP（isp 网段空闲地址 + 掩码 + 网关，仅在未学到主 CE 时启用）」，唯一性由运维保证——另行立项，本节不含。
 
 ---
 
@@ -326,6 +340,7 @@ nft list table inet gfc_dns_hijack   # 网关/旁路开关可见；透明另有 
 
 | 日期 | 说明 |
 |------|------|
+| 2026-09-16 | 学习收敛：GW 强/弱证据（isp 为本侧主机 ARP = 强；cpe `tell` = 弱且不得选中已学主机）；PE 冻结按 GW IP 收敛，换网段清空重学；主 CE 存活性只认「PE 连续 ARP 无应答」或「自身过期且他机新鲜」，禁止沉默计时判死。新增 §4.1 ARP Probe 提案（未实现）。`host_mac` timeout 必须写 key 侧（nft 1.1.1 拒绝值侧 timeout）。 |
 | 2026-09-16 | cpe 直挂交换机多 PC：电缆主机表 IP→MAC；偷流回程按主机；搭车仍一个主 CE；停 CPE last-writer。私网 DNS ACL 用既有 RFC1918，禁止 `0.0.0.0/0`。试编不升号。 |
 | 2026-09-16 | veth runtime 里程碑：探测口 `gfc-vp0`/`gfc-vp1`；透明+veth 省略 `default_interface`；`LiveMode` 已确认 JSON 盖过 stale env；PE MAC freeze。研发 tag `milestone/transparent-veth-runtime-20260916`，不升产品号。 |
 | 2026-09-15 | 实验室闭环：CPE DNS（VIP + 劫持 53）；CE `/32` `src` DNS VIP；trampoline 跳过 original daddr=CE；无 veth 时 MAC-punt + `tc skbedit`。sing-box 透明 MAC-punt 时 `default_interface=br-trans`，切模式 Align JSON。OEM 必须含 `kmod-veth`。 |
