@@ -54,6 +54,16 @@ func LoadLearned(cfg *config.Config) Learned {
 	if !onLinkGW(l.CEIP, l.GWIP) {
 		l.GWIP = ""
 	}
+	if l.Hosts != nil {
+		for ip, h := range l.Hosts {
+			if !usableHitchIP(ip) || strings.TrimSpace(h.MAC) == "" || ip == l.GWIP {
+				delete(l.Hosts, ip)
+			}
+		}
+		if len(l.Hosts) == 0 {
+			l.Hosts = nil
+		}
+	}
 	return l
 }
 

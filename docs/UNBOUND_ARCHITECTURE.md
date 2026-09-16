@@ -124,7 +124,7 @@ RFC1918 ACLs cover the management LAN mini-gateway only. Bypass customer sources
 | Path | `/etc/unbound/conf.d/gfc-bypass-acl.conf` |
 | Include | Inside `server:` (ACL clauses only — never `forward-zone`) |
 | Bypass | One `access-control: <host-or-cidr> allow` per `customer-hosts.json` entry (`a.b.c.d` → `/32`) |
-| Transparent | One `access-control: <learned-CE>/32 allow` after CE is learned (same file; never `0.0.0.0/0`) |
+| Transparent | Learned **public** cable hosts `/32` (RFC1918 sources already allowed in `server:`). Never `0.0.0.0/0`. Private switch+PCs need no extra lines. |
 | Gateway / no extra sources | File exists but contains **no** `allow` lines (comments only) |
 | Forbidden | Auto-inserting the entire bypass WAN prefix; `0.0.0.0/0 allow` |
 

@@ -7,7 +7,7 @@
 **权威 sing-box：** [`SINGBOX_ARCHITECTURE.md`](SINGBOX_ARCHITECTURE.md)（kernel-split **不随** `proxy_mode` 改 `auto_route` / `route.final`。透明省略 VLESS/`direct` `bind_interface`。`route.default_interface`：仅透明且 **无 veth**、`br-trans` 存在时为该桥（MAC-punt）；**`gfc-ce`/`gfc-ce-fwd` 存在则省略**（hitch RX 在 `gfc-ce`，禁止 `SO_BINDTODEVICE br-trans`）。网关/旁路仍为 WAN，禁止全局写死 `br-trans`。SINGBOX 正文若仍写「透明一律 br-trans」，以本文与 09-16 交接为准，待确认后改 SINGBOX）  
 **旁路对照：** [`BYPASS_MODE.md`](BYPASS_MODE.md)（旁路 = 客户改网关且 GFC 有 WAN IP；透明 ≠ 旁路）  
 **策略模型：** [`USER_POLICY_ROUTING.md`](USER_POLICY_ROUTING.md)（网关 / 旁路 / 透明同一 `policies[]`，只变入向）  
-**会话交接（下一步入口）：** [`SESSION_HANDOFF_2026-09-16_TRANSPARENT_VETH_RUNTIME.md`](SESSION_HANDOFF_2026-09-16_TRANSPARENT_VETH_RUNTIME.md)（veth runtime 里程碑；下一会话 = cpe 直挂交换机多 PC。全量测试排在该功能之后）  
+**会话交接（下一步入口）：** [`SESSION_HANDOFF_2026-09-16_TRANSPARENT_VETH_RUNTIME.md`](SESSION_HANDOFF_2026-09-16_TRANSPARENT_VETH_RUNTIME.md)（veth runtime 里程碑；cpe 直挂交换机多 PC 规格已写入本文 §4–§7。全量测试排在该功能实验室验收之后）  
 **上一实验室闭环：** [`SESSION_HANDOFF_2026-09-15_TRANSPARENT_LAB.md`](SESSION_HANDOFF_2026-09-15_TRANSPARENT_LAB.md)  
 **一期实现批准：** [`SESSION_HANDOFF_2026-09-09_TRANSPARENT_MODE.md`](SESSION_HANDOFF_2026-09-09_TRANSPARENT_MODE.md)  
 **规格讨论交接：** [`SESSION_HANDOFF_2026-08-31_TRANSPARENT_MODE.md`](SESSION_HANDOFF_2026-08-31_TRANSPARENT_MODE.md)
@@ -97,18 +97,21 @@
 | `isp_only` | 仅 isp 有学习结果，且 **从未** 学到真实客户 | 允许纯被动学习；**不要求**先上隧道。禁止扫描猜 CE。若产品要 WAN-only 上平台：仅在此状态可临时答 CE ARP；一旦进入过「已学到客户」则永远禁止 |
 | `dual` | isp 与 cpe 均已学到 | 稳态：§5–§7 |
 
-**已学到真实客户** 的定义：`cpe_port` 链路上观察到 CPE MAC，或观察到 CE 的 ARP/IP 源。此后禁止再当该 CE 的 ARP 主人。
+**已学到真实客户** 的定义：`cpe_port` 链路上观察到任一客户 MAC，或观察到任一客户 IP 的 ARP/IPv4 源（主机表非空或已有主 CE）。此后禁止再当 **任何已学电缆主机** 的 ARP 主人（不只主 CE）。
 
 学习规则：
 
 - **只被动**：ARP、IPv4 头、若存在则 DHCP Option 1/3/`yiaddr`。  
 - **禁止** 对疑似前缀做 ARP/ICMP 扫描。  
 - 学主机不学网段；不要把客户未使用的 /29 余址当成自己的。  
-- **CPE MAC** = cpe 口入向以太网源；**CE IP** = 该口上对非网关单播流量最多的源，或 ARP `tell` 的地址；**PE MAC / GW IP** = isp 口入向与对端 ARP。  
+- **主 CE IP** = cpe 口上对非网关单播加权最高的源（正在 ARP 网关加分），或其 ARP `tell`；一旦可用则粘住，不随每帧重选。  
+- **主 CPE MAC** = **该主 CE IP** 的以太网源。禁止用「cpe 口最近一帧的源 MAC」覆盖（last-writer 会在交换机多 PC 下飘）。  
+- **电缆主机表** = 每个学到的客户 `IP → MAC`（timeout）；与主 CE 分开存。不得写入 inet `TO_CN` / `bypass_ip` / `ext` / `ext_const`。  
+- **PE MAC / GW IP** = isp 口入向与对端 ARP。  
 - **PE MAC 首次填入后冻结**：后续 isp 上声称同一 GW IP 的 ARP **不得**改写（实验室双假网关 / proxy-ARP）。真上联换 MAC（VRRP）不自动跟上，须邻居 FAILED 后再学或 Web 重学；禁止改回 last-writer。  
-- 搭车只用 **一个** 主 CE；cpe 口多主机时选正在 ARP 网关或流量最多者。**一期已验证 SKU = 下联一台路由型 CE**（交换机可在 CE 后面）。**`cpe` 口直挂交换机、多台 PC** 尚未交付（回程仍一个 CPE MAC + CPE last-writer）；见 09-16 交接。  
+- 盒子出 isp 的 hitch **仍只用一个主 CE**（SNAT + TX `src MAC=主 CPE`）。`cpe` 口直挂 L2 交换机、多台 PC：不 punt 的帧仍 L2 一字不改；偷来的 DNS / 国际 TCP 回程 `dst MAC` 用主机表里该目的 IP 的 MAC，而不是全局主 CPE MAC。  
 - **永不** 借用 GW/PE 地址。  
-- CE DHCP 换址则热更新；过期地址停止搭车。  
+- CE DHCP 换址则热更新；过期地址停止搭车并从主机表删除。  
 - 公网 /30 与私网 `10.x` 互联同一套学习。
 
 ---
@@ -117,19 +120,19 @@
 
 ### 5.1 ARP 主人
 
-| 阶段 | 谁答 CE 的 ARP |
+| 阶段 | 谁答已学电缆主机的 ARP |
 |------|----------------|
-| 从未学到客户的 `isp_only`（可选 WAN-only） | 盒子可临时答 |
-| 已学到客户之后（含 `dual`、CPE 口后掉线） | **只有客户**；盒子禁止答、禁止 GARP 抢占 CE |
+| 从未学到客户的 `isp_only`（可选 WAN-only） | 盒子可临时答主 CE |
+| 已学到客户之后（含 `dual`、CPE 口后掉线） | **只有客户**；盒子禁止答、禁止 GARP 抢占 **任一已学主机** |
 
-稳态：入站访问 CE（含对端 IPsec）L2 给 CPE。
+稳态：入站访问这些主机（含对端 IPsec）L2 给对应客户 MAC。非主 CE 的 `/32` 只做 on-link 路由与邻居，**不**配成本机地址。
 
 ### 5.2 MAC 伪装（仅 TX）
 
 | 方向 | 改写 |
 |------|------|
-| 本机出 isp（VLESS / 心跳 / unbound 国际上游） | `src MAC = CPE MAC`，`dst MAC = PE MAC`，`src IP = CE` |
-| DNS 应答 / 代理回程出 cpe | `src MAC = PE MAC`，`dst MAC = CPE MAC` |
+| 本机出 isp（VLESS / 心跳 / unbound 国际上游） | `src MAC = 主 CPE MAC`，`dst MAC = PE MAC`，`src IP = 主 CE` |
+| DNS 应答 / 代理回程出 cpe | `src MAC = PE MAC`，`dst MAC = 该目的 IP 在主机表中的 MAC`（netdev map `host_mac`）；表未命中时才回退主 CPE MAC |
 | 客户原有帧 | **一字不改** L2 转发 |
 
 禁止把 isp 口烧录/内核 MAC 设成 CPE MAC。
@@ -186,7 +189,7 @@
 | 挂载 | dummy，**不** 配在 isp/cpe 口；**不** 为 VIP 在互联上抢与 CE 冲突的 ARP |
 | 可达 | 靠客户默认路由把 VIP 发向电缆；GFC 在 cpe 入向按 `daddr=VIP dport=53` punt（即使 `dns_hijack=off`） |
 | 展示 | 设备 Web 明确展示「GFC DNS 地址」供客户填 Option 6 / WAN DNS |
-| ACL | unbound 允许来自学到的客户源（及管理 LAN）查询；禁止 `0.0.0.0/0 allow` |
+| ACL | 主 `server:` 已允许 RFC1918（`10/8` `172.16/12` `192.168/16`）及 `127/8`。私网互联上的多台 PC **不必** 在 extra 文件逐台列举，也 **禁止** `0.0.0.0/0 allow`（WAN/isp 上能打到 `:53` 的源会变成开放解析器）。公网互联：`gfc-bypass-acl.conf` 为每个学到的 **公网** 电缆主机写 `/32 allow`。 |
 
 网关 / 旁路 **不必** 另造 VIP：DNS 地址分别是 LAN IP / WAN IP。
 
@@ -209,7 +212,7 @@
 1. 非 untagged IPv4（除非 Web 声明了该业务 VLAN）→ L2  
 2. IPv6 / PPPoE / 非 IP → L2  
 3. ESP / AH / GRE / IPIP / L2TP / UDP 500 / 4500 → L2  
-4. 目的为本链路 CE/GW、RFC1918、`bypass_ip`、split 下 `TO_CN` → L2（**53 除外**，53 走 §6）  
+4. 目的为本链路 **任一已学主机**/GW、RFC1918、`bypass_ip`、split 下 `TO_CN` → L2（**53 除外**，53 走 §6）  
 5. UDP/TCP 53：按 §6（劫持 on、排除列表、VIP）  
 6. TCP 且目的国际（须代理）→ punt → `prerouting_mangle_ct` 等现有分类 → `0x2023` → `gfctun`  
 7. 其余 → L2  
@@ -225,7 +228,7 @@
 
 ### 7.3 本机出站搭车
 
-- 源 IP = 主 CE（SNAT 或 bind 在 dummy /32）；本机 **禁止** 对 CE 发 ARP。  
+- 源 IP = **主** CE（SNAT 或 bind 在 dummy /32）；本机 **禁止** 对已学电缆主机发 ARP。每个学到的客户 IP 在 `br-trans` 上有 on-link `/32`（**不**进 `local`、**不**把非主 CE 配成本机）。netdev `host_mac` 在 `in_cpe` 入向刷新；`eg_trans` 命中则 `src MAC=PE`、`dst MAC` 查表并 `accept`，禁止把「目的是另一台 PC」的回程当成互联网 hitch 打向 PE。  
 - 邻居：GW IP → PE MAC 写死在 isp 口。  
 - POP 等基础设施仍在 `bypass_ip`，避免 VLESS 再被偷进 TUN。`output_mangle_route` 对目的 `@bypass_ip` **必须清掉** `0x2023`（在 `meta mark != 0 return` 之前）。仅清 skb mark 不够：透明 VLESS 省略 `bind_interface` 时，套接字 `SO_MARK=0x2023` 在 nft 之前查 FIB，必须另有 `ip rule pref 90 to <bypass_ip> lookup main`（及 table `2022` 的 `/32` 搭车路由），否则 `:8443` 进 `gfctun`。FIB 走 `br-trans` 之后，本机帧在桥上 `xmit`：必须在 **`eg_trans`（device br-trans）** 记 hitch。目的 **不是 CE** 的才改成 CPE 源 MAC + PE 目的 MAC（VLESS 出 isp）；目的 **是 CE** 的是 DNS/trampoline 回客户，必须改成 PE 源 MAC + CPE 目的 MAC（出 cpe）。禁止把回给 CE 的包改成 PE 目的 MAC（下联 DNS 会超时）。`eg_isp` 仅对 `ether saddr != CPE MAC` 记 hitch。电缆 DNS inet DNAT 必须覆盖 **iif cpe**（MAC-punt 后查询常从 cpe 奴口上栈）。`inet nat postrouting` 对 **udp/tcp sport 53 必须 `return`，再** 做 hitch `snat to CE`；否则应答源变成 CE、目的也是 CE，下联当 martian 丢掉。CE `/32` 在 `br-trans` 必须 `src <dns_vip>`；trampoline（`snat to ct original ip daddr`）在 original daddr 已是 CE 时必须跳过。hitch 回程命中 `hitch_reply` 后只负责 punt；原本机源地址由同一 conntrack 的 reverse-SNAT 自动恢复。**禁止**再按 `daddr=CE` 添加手工 prerouting DNAT：它会与 reverse-SNAT 竞争，并可能改写不属于本机的客户入站流量。
 - 私网 CE：上游设备继续 NAT/路由；GFC 不另要公网地址。  
@@ -278,7 +281,7 @@ GFC 本机 OUTPUT → SNAT CE + TX 改 MAC → isp
 - 国际 UDP 一期进隧道（易误伤 IPsec NAT-T）  
 - 学习 IP 写入 `TO_CN` / `bypass_ip` / `ext` / `ext_const`  
 - 客户电缆流量 WAN SNAT  
-- `access-control: 0.0.0.0/0 allow`  
+- `access-control: 0.0.0.0/0 allow`（私网多 PC 已由主 `server:` RFC1918 覆盖，不要用开放解析器代替主机表）  
 - MosDNS / sing-box DNS inbound 替代 unbound  
 - 因透明改 kernel-split `auto_route` / `route.final`  
 - 把 `route.default_interface` 全局写死为 `br-trans`（网关/旁路必须仍是 WAN）  
@@ -310,7 +313,9 @@ ip rule | grep 0x2023
 # DNS 劫持 off：上述不再抢；CE→DNS VIP:53 仍进 unbound
 nft list table inet gfc_dns_hijack   # 网关/旁路开关可见；透明另有 punt 规则（表名以当时 NFT_ARCHITECTURE 为准）
 
-# 本机 VLESS：源 IP=CE，源 MAC=CPE；回程命中 hitch，不送到 CPE
+# 本机 VLESS：源 IP=主 CE，源 MAC=主 CPE；回程命中 hitch，不送到 CPE
+
+# 多 PC（cpe 直挂交换机）：两台同时问被劫持的 53，各自收到应答（邻居不是对方 MAC）
 ```
 
 抓包：IPsec 不得进 inet ct；DNS 回包不得从 `gfctun` 出给客户（除非该 DNS 本身走国际上游的是 **盒子→上游** 而非客户应答路径）。
@@ -321,7 +326,8 @@ nft list table inet gfc_dns_hijack   # 网关/旁路开关可见；透明另有 
 
 | 日期 | 说明 |
 |------|------|
-| 2026-09-16 | veth runtime 里程碑：探测口 `gfc-vp0`/`gfc-vp1`；透明+veth 省略 `default_interface`；`LiveMode` 已确认 JSON 盖过 stale env；PE MAC freeze。SKU 仍是单路由型 CE。下一会话：cpe 直挂交换机多 PC。研发 tag `milestone/transparent-veth-runtime-20260916`，不升产品号。 |
+| 2026-09-16 | cpe 直挂交换机多 PC：电缆主机表 IP→MAC；偷流回程按主机；搭车仍一个主 CE；停 CPE last-writer。私网 DNS ACL 用既有 RFC1918，禁止 `0.0.0.0/0`。试编不升号。 |
+| 2026-09-16 | veth runtime 里程碑：探测口 `gfc-vp0`/`gfc-vp1`；透明+veth 省略 `default_interface`；`LiveMode` 已确认 JSON 盖过 stale env；PE MAC freeze。研发 tag `milestone/transparent-veth-runtime-20260916`，不升产品号。 |
 | 2026-09-15 | 实验室闭环：CPE DNS（VIP + 劫持 53）；CE `/32` `src` DNS VIP；trampoline 跳过 original daddr=CE；无 veth 时 MAC-punt + `tc skbedit`。sing-box 透明 MAC-punt 时 `default_interface=br-trans`，切模式 Align JSON。OEM 必须含 `kmod-veth`。 |
 | 2026-09-15 | hitch 回程仅 punt；由 conntrack 自动 reverse-SNAT，删除手工 daddr-CE DNAT |
 | 2026-09-14 | hitch SNAT 不得覆盖 sport 53 |

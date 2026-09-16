@@ -632,6 +632,40 @@ load_trans_gw() { json_get "${GFC_ETC}/transparent-learned.json" gw_ip; }
 load_trans_cpe_mac() { json_get "${GFC_ETC}/transparent-learned.json" cpe_mac; }
 load_trans_pe_mac() { json_get "${GFC_ETC}/transparent-learned.json" pe_mac; }
 
+# IP MAC pairs from learned hosts object. Keys look like "10.0.0.2": {
+load_trans_host_lines() {
+	local f="${GFC_ETC}/transparent-learned.json"
+	[ -f "$f" ] || return 0
+	awk '
+		{
+			if (match($0, /"([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)"[[:space:]]*:[[:space:]]*\{/)) {
+				ip = substr($0, RSTART+1)
+				sub(/".*/, "", ip)
+				next
+			}
+			if (ip != "" && match($0, /"mac"[[:space:]]*:[[:space:]]*"[^"]+"/)) {
+				mac = $0
+				sub(/.*"mac"[[:space:]]*:[[:space:]]*"/, "", mac)
+				sub(/".*/, "", mac)
+				print ip, mac
+				ip = ""
+			}
+		}
+	' "$f"
+}
+
+trans_keep_onlink_host() {
+	local dest="$1" ip hip hmac
+	ip="${dest%%/*}"
+	[ -n "$ip" ] || return 1
+	while read -r hip hmac; do
+		[ "$hip" = "$ip" ] && return 0
+	done <<EOF
+$(load_trans_host_lines)
+EOF
+	return 1
+}
+
 hw_mac() {
 	local dev="$1"
 	[ -n "$dev" ] && [ -f "/sys/class/net/$dev/address" ] && cat "/sys/class/net/$dev/address" || true
@@ -1092,6 +1126,23 @@ apply_trans_addrs() {
 		if [ -n "$cpe" ] && [ -n "$cpe_mac" ]; then
 			bridge fdb replace "$cpe_mac" dev "$cpe" master static 2>/dev/null || true
 		fi
+		if [ -n "$l3" ]; then
+			while read -r hip hmac; do
+				[ -n "$hip" ] || continue
+				is_hitch_ce "$hip" || continue
+				[ "$hip" = "$ce" ] && continue
+				[ "$hip" = "$gw" ] && continue
+				ip route replace "$hip/32" dev "$l3" 2>/dev/null || true
+				if [ -n "$hmac" ]; then
+					ip neigh replace "$hip" lladdr "$hmac" nud permanent dev "$l3" 2>/dev/null || true
+				fi
+				if [ -n "$cpe" ] && [ -n "$hmac" ]; then
+					bridge fdb replace "$hmac" dev "$cpe" master static 2>/dev/null || true
+				fi
+			done <<EOF
+$(load_trans_host_lines)
+EOF
+		fi
 	else
 		# Drop stale APIPA/leftover CE so we do not hitch 169.254.
 		ce=""
@@ -1113,6 +1164,9 @@ apply_trans_addrs() {
 				if [ "$dest" = "$gw" ] || [ "$dest" = "$gw/32" ]; then
 					continue
 				fi
+			fi
+			if trans_keep_onlink_host "$dest"; then
+				continue
 			fi
 			ip route del "$dest" dev "$l3" 2>/dev/null || true
 		done
@@ -1220,6 +1274,14 @@ apply_trans_netdev() {
 	if is_onlink_gw "$ce" "$gw" && no_steal_needs_host "$gw"; then
 		no_steal="$no_steal, $gw"
 	fi
+	while read -r hip hmac; do
+		[ -n "$hip" ] || continue
+		if no_steal_needs_host "$hip"; then
+			no_steal="$no_steal, $hip"
+		fi
+	done <<EOF
+$(load_trans_host_lines)
+EOF
 	dns_vip_rules="
     udp dport 53 ip daddr $vip $punt_end
     tcp dport 53 ip daddr $vip $punt_end"
@@ -1330,14 +1392,37 @@ apply_trans_netdev() {
 	loaded=0
 	last_err=""
 	hitch_used=""
-	for dialect in th l4 th_set l4_set; do
-		case "$dialect" in
-			th) hitch_in="$hitch_in_th"; hitch_upd="$hitch_upd_th"; hitch_local="$hitch_local_th" ;;
-			l4) hitch_in="$hitch_in_l4"; hitch_upd="$hitch_upd_l4"; hitch_local="$hitch_local_l4" ;;
-			th_set) hitch_in="$hitch_in_th_set"; hitch_upd="$hitch_upd_th"; hitch_local="$hitch_local_th" ;;
-			*) hitch_in="$hitch_in_l4_set"; hitch_upd="$hitch_upd_l4"; hitch_local="$hitch_local_l4" ;;
-		esac
-		cat > "$tmp" <<EOF
+	host_map_used=0
+	for hostmap in 1 0; do
+		if [ "$hostmap" = 1 ]; then
+			host_map_decl="
+  map host_mac {
+    type ipv4_addr : ether_addr
+    timeout 2m
+    size 65536
+    flags dynamic,timeout
+  }"
+			host_learn="
+    update @host_mac { ip saddr : ether saddr timeout 2m }"
+			if [ -n "$pe_mac" ]; then
+				host_ret="
+    ip daddr @host_mac ether saddr set $pe_mac ether daddr set ip daddr map @host_mac accept"
+			else
+				host_ret=""
+			fi
+		else
+			host_map_decl=""
+			host_learn=""
+			host_ret=""
+		fi
+		for dialect in th l4 th_set l4_set; do
+			case "$dialect" in
+				th) hitch_in="$hitch_in_th"; hitch_upd="$hitch_upd_th"; hitch_local="$hitch_local_th" ;;
+				l4) hitch_in="$hitch_in_l4"; hitch_upd="$hitch_upd_l4"; hitch_local="$hitch_local_l4" ;;
+				th_set) hitch_in="$hitch_in_th_set"; hitch_upd="$hitch_upd_th"; hitch_local="$hitch_local_th" ;;
+				*) hitch_in="$hitch_in_l4_set"; hitch_upd="$hitch_upd_l4"; hitch_local="$hitch_local_l4" ;;
+			esac
+			cat > "$tmp" <<EOF
 table netdev gfc_trans {
   set hitch_reply {
     type inet_proto . ipv4_addr . inet_service . ipv4_addr . inet_service
@@ -1345,6 +1430,7 @@ table netdev gfc_trans {
     size 65536
     flags dynamic,timeout
   }
+$host_map_decl
   set no_steal_dst {
     type ipv4_addr
     flags interval
@@ -1367,6 +1453,7 @@ $hitch_in
     ether type != ip accept
     ip protocol { 4, 47, 50, 51, 115 } accept
     udp dport { 500, 4500, 1701 } accept
+$host_learn
 $dns_vip_rules
 $dns_steal
 $tcp_steal
@@ -1378,6 +1465,7 @@ $mac_isp
   }
   chain eg_trans {
     type filter hook egress device "br-trans" priority 0; policy accept;
+$host_ret
 $hitch_local
 $mac_trans
   }
@@ -1387,13 +1475,15 @@ $mac_cpe
   }
 }
 EOF
-		nft delete table netdev gfc_trans 2>/dev/null || true
-		if nft -f "$tmp" 2>"$err"; then
-			loaded=1
-			hitch_used="$dialect"
-			break
-		fi
-		last_err="$(tr '\n' ' ' <"$err")"
+			nft delete table netdev gfc_trans 2>/dev/null || true
+			if nft -f "$tmp" 2>"$err"; then
+				loaded=1
+				hitch_used="$dialect"
+				host_map_used="$hostmap"
+				break 2
+			fi
+			last_err="$(tr '\n' ' ' <"$err")"
+		done
 	done
 	rm -f "$tmp" "$err"
 	if [ "$loaded" -ne 1 ]; then
@@ -1405,12 +1495,15 @@ EOF
 		return 1
 	fi
 	fill_netdev_no_steal
+	if [ "$host_map_used" = 1 ]; then
+		fill_netdev_host_mac
+	fi
 	if [ "$punt_mode" = "veth" ]; then
 		clear_trans_tc_ingress
 	else
 		apply_trans_tc_dns_ptype || echo "WARN: tc DNS ptype host failed (OTHERHOST drops steal)" >&2
 	fi
-	echo "transparent netdev gfc_trans: isp=$isp cpe=$cpe hijack=$hijack tun=$tun_up vip=$vip hitch=$hitch_used punt=$punt_mode fwd=$punt_fwd eg_trans=1"
+	echo "transparent netdev gfc_trans: isp=$isp cpe=$cpe hijack=$hijack tun=$tun_up vip=$vip hitch=$hitch_used host_mac=$host_map_used punt=$punt_mode fwd=$punt_fwd eg_trans=1"
 }
 
 fill_netdev_no_steal() {
@@ -1443,6 +1536,17 @@ fill_netdev_no_steal() {
 		nft -f "$tmp" 2>/dev/null || true
 	fi
 	rm -f "$tmp"
+}
+
+fill_netdev_host_mac() {
+	nft list map netdev gfc_trans host_mac >/dev/null 2>&1 || return 0
+	while read -r ip mac; do
+		is_ipv4 "$ip" || continue
+		[ -n "$mac" ] || continue
+		nft add element netdev gfc_trans host_mac { "$ip" : "$mac" timeout 2m } 2>/dev/null || true
+	done <<EOF
+$(load_trans_host_lines)
+EOF
 }
 
 refresh_trans() {
@@ -1491,7 +1595,7 @@ write_bypass_unbound_acl() {
 	tmp="${dest}.tmp.$$"
 	{
 		echo "# Generated by gfc-routing.sh — do not edit"
-		echo "# Extra ACL: bypass customer_hosts or transparent learned CE. Never 0.0.0.0/0."
+		echo "# Extra ACL: bypass customer_hosts or transparent public cable hosts. Never 0.0.0.0/0."
 		if [ "$(load_proxy_mode)" = "bypass" ]; then
 			for token in $(load_customer_host_elements | tr ',' ' '); do
 				token="$(echo "$token" | tr -d '[:space:]')"
@@ -1506,9 +1610,17 @@ write_bypass_unbound_acl() {
 		fi
 		if [ "$(load_proxy_mode)" = "transparent" ]; then
 			ce="$(load_trans_ce)"
-			if is_hitch_ce "$ce"; then
+			if is_hitch_ce "$ce" && ! is_rfc1918 "$ce"; then
 				echo "    access-control: $ce/32 allow"
 			fi
+			while read -r hip hmac; do
+				is_hitch_ce "$hip" || continue
+				is_rfc1918 "$hip" && continue
+				[ "$hip" = "$ce" ] && continue
+				echo "    access-control: $hip/32 allow"
+			done <<EOF
+$(load_trans_host_lines)
+EOF
 		fi
 	} > "$tmp"
 	need_restart=0

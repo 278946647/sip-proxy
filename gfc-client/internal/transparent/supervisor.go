@@ -115,9 +115,9 @@ func (s *Supervisor) onFrame(role Role, frame []byte) {
 	if cur.CECandidates == nil {
 		cur.CECandidates = map[string]int{}
 	}
-	before := cur.State + "|" + cur.CEIP + "|" + cur.CPEMAC + "|" + cur.PEMAC + "|" + cur.GWIP
+	before := cur.State + "|" + cur.CEIP + "|" + cur.CPEMAC + "|" + cur.PEMAC + "|" + cur.GWIP + "|" + cur.HostSig()
 	ApplyFrame(role, frame, &cur)
-	after := cur.State + "|" + cur.CEIP + "|" + cur.CPEMAC + "|" + cur.PEMAC + "|" + cur.GWIP
+	after := cur.State + "|" + cur.CEIP + "|" + cur.CPEMAC + "|" + cur.PEMAC + "|" + cur.GWIP + "|" + cur.HostSig()
 	s.learned = cur
 	if before == after {
 		return

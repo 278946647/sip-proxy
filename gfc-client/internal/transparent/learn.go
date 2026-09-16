@@ -3,6 +3,7 @@ package transparent
 import (
 	"encoding/binary"
 	"net"
+	"sort"
 	"strings"
 	"time"
 )
@@ -55,6 +56,7 @@ func ApplyFrame(role Role, frame []byte, st *Learned) {
 	if !onLinkGW(st.CEIP, st.GWIP) {
 		st.GWIP = ""
 	}
+	syncPrimaryMAC(st)
 	recomputeState(st)
 }
 
@@ -76,9 +78,9 @@ func applyARP(role Role, srcMAC string, payload []byte, st *Learned) {
 	spaStr := spa.String()
 	switch role {
 	case RoleCPE:
-		st.CPEMAC = srcMAC
 		st.LearnedCustomer = true
 		if usableHitchIP(spaStr) && spaStr != st.GWIP {
+			rememberHost(st, spaStr, srcMAC)
 			st.CECandidates[spaStr]++
 			if op == arpOpRequest && tpa != nil && !tpa.IsUnspecified() && usableHitchIP(tpa.String()) {
 				// Host ARPing the gateway — strongest CE signal.
@@ -122,9 +124,9 @@ func applyIPv4(role Role, srcMAC string, payload []byte, st *Learned) {
 	proto := payload[9]
 	switch role {
 	case RoleCPE:
-		st.CPEMAC = srcMAC
 		st.LearnedCustomer = true
 		if usableHitchIP(srcStr) && srcStr != st.GWIP {
+			rememberHost(st, srcStr, srcMAC)
 			st.CECandidates[srcStr]++
 		}
 		if proto == 17 {
@@ -191,8 +193,72 @@ func dhcpOptionIP(opts []byte, code byte) string {
 	return ""
 }
 
+func rememberHost(st *Learned, ip, mac string) {
+	if st == nil || !usableHitchIP(ip) || ip == st.GWIP || strings.TrimSpace(mac) == "" {
+		return
+	}
+	if st.Hosts == nil {
+		st.Hosts = map[string]HostEntry{}
+	}
+	st.Hosts[ip] = HostEntry{MAC: mac, At: time.Now().UTC().Format(time.RFC3339)}
+	pruneHosts(st)
+}
+
+func pruneHosts(st *Learned) {
+	if st == nil || len(st.Hosts) == 0 {
+		return
+	}
+	now := time.Now().UTC()
+	for ip, h := range st.Hosts {
+		if strings.TrimSpace(h.At) == "" {
+			continue
+		}
+		t, err := time.Parse(time.RFC3339, h.At)
+		if err != nil {
+			continue
+		}
+		if now.Sub(t) > HostTTL {
+			delete(st.Hosts, ip)
+		}
+	}
+}
+
+func syncPrimaryMAC(st *Learned) {
+	if st == nil || strings.TrimSpace(st.CEIP) == "" {
+		return
+	}
+	if h, ok := st.Hosts[st.CEIP]; ok && h.MAC != "" {
+		st.CPEMAC = h.MAC
+	}
+}
+
+// PublicACLHosts are extra unbound allows for public interconnect hosts.
+// RFC1918 sources are already allowed in the main server: block.
+func (l Learned) PublicACLHosts() []string {
+	seen := map[string]struct{}{}
+	var out []string
+	add := func(ip string) {
+		ip = strings.TrimSpace(ip)
+		parsed := net.ParseIP(ip)
+		if parsed == nil || parsed.To4() == nil || isRFC1918(parsed.To4()) || !usableHitchIP(ip) {
+			return
+		}
+		if _, ok := seen[ip]; ok {
+			return
+		}
+		seen[ip] = struct{}{}
+		out = append(out, ip)
+	}
+	add(l.CEIP)
+	for ip := range l.Hosts {
+		add(ip)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func recomputeState(st *Learned) {
-	hasCPE := st.CPEMAC != "" || st.CEIP != ""
+	hasCPE := st.CPEMAC != "" || st.CEIP != "" || len(st.Hosts) > 0
 	// GWIP may be learned from a CPE ARP request or DHCP option before any
 	// ISP frame is observed. Only PEMAC proves that the ISP side is present.
 	hasISP := st.PEMAC != ""

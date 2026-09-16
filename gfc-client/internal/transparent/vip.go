@@ -41,6 +41,9 @@ func conflictNets(lanCIDR string, learned Learned, wanIPs, hosts []string) []*ne
 	add(lanCIDR)
 	add(learned.CEIP)
 	add(learned.GWIP)
+	for ip := range learned.Hosts {
+		add(ip)
+	}
 	add(HitchBindIP)
 	for _, w := range wanIPs {
 		add(w)

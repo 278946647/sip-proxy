@@ -1,6 +1,7 @@
 package transparent
 
 import (
+	"sort"
 	"strings"
 	"time"
 )
@@ -47,7 +48,14 @@ type Learned struct {
 	GWIP             string    `json:"gw_ip,omitempty"`
 	LearnedCustomer  bool      `json:"learned_customer"`
 	UpdatedAt        string    `json:"updated_at,omitempty"`
+	Hosts            map[string]HostEntry `json:"hosts,omitempty"`
 	CECandidates     map[string]int `json:"-"`
+}
+
+// HostEntry is one cable host learned on cpe (not the hitch primary fields).
+type HostEntry struct {
+	MAC string `json:"mac"`
+	At  string `json:"at,omitempty"`
 }
 
 func (l Learned) Dual() bool {
@@ -65,6 +73,20 @@ func NormalizeState(raw string) string {
 	default:
 		return StateIdle
 	}
+}
+
+const HostTTL = 30 * time.Minute
+
+func (l Learned) HostSig() string {
+	if len(l.Hosts) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(l.Hosts))
+	for ip, h := range l.Hosts {
+		parts = append(parts, ip+"="+h.MAC)
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, ",")
 }
 
 // DNSConfig is the device-wide hijack switch + transparent VIP.

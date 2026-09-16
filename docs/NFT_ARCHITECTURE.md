@@ -189,7 +189,8 @@ Chain names are API. Never rename. inet names stay as in gateway/bypass. netdev 
 | `ext_const` | `ipv4_addr` | Fixed international DNS upstream IPs |
 | `customer_hosts` | `ipv4_addr`, interval | **Bypass only.** Sources allowed to be marked / DNS-hijacked on WAN. Populated from **device Web UI** (not control plane). |
 | `hitch_reply` | `inet_proto . ipv4_addr . inet_service . ipv4_addr . inet_service`, timeout, dynamic | **Transparent only** (`netdev gfc_trans`). Reverse 5-tuple of box-originated hitchhike. Never a source-port range. |
-| `no_steal_dst` | `ipv4_addr`, interval | **Transparent only** (`netdev gfc_trans`). Destinations that stay L2 (RFC1918, learned **public** CE/GW, `bypass_ip`, and `TO_CN` in split). RFC1918 CE/GW are not listed as hosts (overlap with `10/8` `172.16/12` `192.168/16` is a load error). OpenWrt nft on this SKU has no `auto-merge`. Not written into inet `TO_CN` / `bypass_ip` / `ext`. |
+| `host_mac` | **map** `ipv4_addr : ether_addr`, timeout, dynamic | **Transparent only** (`netdev gfc_trans`). Cable host IP→MAC for stolen DNS/TCP **return**. Refreshed on `in_cpe`. Not a hitch 5-tuple. Not written into inet `TO_CN` / `bypass_ip` / `ext`. |
+| `no_steal_dst` | `ipv4_addr`, interval | **Transparent only** (`netdev gfc_trans`). Destinations that stay L2 (RFC1918, learned **public** cable hosts/GW, `bypass_ip`, and `TO_CN` in split). RFC1918 hosts are not listed as hosts (overlap with `10/8` `172.16/12` `192.168/16` is a load error). OpenWrt nft on this SKU has no `auto-merge`. Not written into inet `TO_CN` / `bypass_ip` / `ext`. |
 | `dns_exclude` | `ipv4_addr`, interval | **Transparent / shared hijack.** Dest IPs whose :53 is never stolen (`dns_hijack_exclude`). |
 
 `ext` must support runtime updates and survive reloads. Never replace with static-only rules.
@@ -447,15 +448,16 @@ Non-nft companions (mandatory with these rules):
 - OEM image **must** ship `kmod-veth` (`veth.ko` in ORIG). Product steal RX is veth `fwd to gfc-ce-fwd`. MAC-punt + `tc skbedit ptype host` is the **no-module fallback**, not the preferred path.
 - Learned CE `/32` on `br-trans` (and hitch L3) **must** use `src <dns_vip>` so unbound replies match DNAT reverse. Kernel picking management LAN creates a new conntrack (`original daddr` = CE) and trampoline then emits `src=CE dst=CE`.
 - Trampoline SNAT (`sport 53` → `ct original ip daddr`) **must skip** when `ct original ip daddr` is already the learned CE.
-- Client sing-box (not nft): transparent `route.default_interface` is `br-trans` when that bridge exists; gateway/bypass stay WAN. See [`SINGBOX_ARCHITECTURE.md`](SINGBOX_ARCHITECTURE.md). Never bind `gfctun` / isp slave / `gfc-ce`.
+- Client sing-box (not nft): transparent `route.default_interface` is `br-trans` **only** for MAC-punt (no `gfc-ce`/`gfc-ce-fwd`); **veth present → omit**. Gateway/bypass stay WAN. See [`TRANSPARENT_MODE.md`](TRANSPARENT_MODE.md). Never bind `gfctun` / isp slave / `gfc-ce`.
 
 ```nft
 # netdev steal + TX MAC. Devices are runtime isp/cpe names (never hardcoded eth0).
 add table netdev gfc_trans
 
 add set netdev gfc_trans hitch_reply { type inet_proto . ipv4_addr . inet_service . ipv4_addr . inet_service; timeout 2m; size 65536; flags dynamic,timeout; }
+add map netdev gfc_trans host_mac { type ipv4_addr : ether_addr; timeout 2m; size 65536; flags dynamic,timeout; }
 add set netdev gfc_trans no_steal_dst { type ipv4_addr; flags interval; }
-# populated: RFC1918, learned public CE/GW (omit hosts already inside RFC1918), bypass_ip copy, and TO_CN copy when routing_mode=split
+# populated: RFC1918, learned public cable hosts/GW (omit hosts already inside RFC1918), bypass_ip copy, and TO_CN copy when routing_mode=split
 # Do not set auto-merge: current ImmortalWrt nft rejects that flag.
 add set netdev gfc_trans dns_exclude { type ipv4_addr; flags interval; }
 
@@ -476,6 +478,8 @@ add rule netdev gfc_trans in_cpe ether type 0x8864 accept
 add rule netdev gfc_trans in_cpe ether type != ip accept
 add rule netdev gfc_trans in_cpe ip protocol { 4, 47, 50, 51, 115 } accept
 add rule netdev gfc_trans in_cpe udp dport { 500, 4500, 1701 } accept
+# Learn cable host MAC before steal so DNS/TCP return can address the initiator (switch+PCs).
+add rule netdev gfc_trans in_cpe update @host_mac { ip saddr : ether saddr timeout 2m }
 # DNS VIP always punted (even when dns_hijack=off)
 add rule netdev gfc_trans in_cpe udp dport 53 ip daddr <dns_vip> ether daddr set <gfc-ce_mac> fwd to "gfc-ce-fwd"
 add rule netdev gfc_trans in_cpe tcp dport 53 ip daddr <dns_vip> ether daddr set <gfc-ce_mac> fwd to "gfc-ce-fwd"
@@ -502,6 +506,9 @@ add rule netdev gfc_trans eg_isp ether saddr != <cpe_mac> ether saddr set <cpe_m
 # Bridged CPE↔PE never ndo_start_xmit on the bridge, so this is local-only.
 # Hitch first, then rewrite CPE+PE so FDB sends the frame out the isp slave.
 add chain netdev gfc_trans eg_trans { type filter hook egress device "br-trans" priority 0; policy accept; }
+# Stolen return to a cable host: dest MAC from host_mac, not the global hitch CPE MAC.
+# `accept` so dest!=primary-CE is not treated as internet hitch (would rewrite dest=PE).
+add rule netdev gfc_trans eg_trans ip daddr @host_mac ether saddr set <pe_mac> ether daddr set ip daddr map @host_mac accept
 add rule netdev gfc_trans eg_trans ip daddr != <ce_ip> meta l4proto { tcp, udp } update @hitch_reply { meta l4proto . ip daddr . th dport . ip saddr . th sport timeout 2m }
 add rule netdev gfc_trans eg_trans ip daddr != <ce_ip> ether saddr set <cpe_mac> ether daddr set <pe_mac>
 add rule netdev gfc_trans eg_trans ip daddr <ce_ip> ether saddr set <pe_mac> ether daddr set <cpe_mac>
@@ -709,7 +716,7 @@ Generated nft code must:
 - Support dynamic interfaces and LAN subnet
 - Support bypass `@customer_hosts` from device Web config (never hardcode; never reuse management `<lan_subnet>` as a substitute for customer hosts)
 - Support transparent `netdev gfc_trans` + `br-trans` / `gfc-ce` / `gfc-dns` from device Web port roles and learned state (never write learned IPs into `TO_CN` / `bypass_ip` / `ext` / `ext_const`)
-- Support runtime-generated sets (especially `ext`, `bypass_ip`, bypass `customer_hosts`, and transparent `hitch_reply`)
+- Support runtime-generated sets (especially `ext`, `bypass_ip`, bypass `customer_hosts`, transparent `hitch_reply`, and transparent map `host_mac`)
 
 Generated code must **never** simplify or replace this architecture with alternate schemes (e.g. `gfc_client_mangle`, `classify`-only chains, skuid bypass, or mark `0x1` for TPROXY on forward nodes).
 

@@ -159,7 +159,45 @@ func TestApplyFrameIPv4LearnsCE(t *testing.T) {
 	}
 }
 
-func TestTaggedAndIPv6Ignored(t *testing.T) {
+func TestCPESecondHostDoesNotRotatePrimaryMAC(t *testing.T) {
+	st := &Learned{}
+	aMAC := []byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x01}
+	bMAC := []byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x0b}
+	a := net.IPv4(10, 50, 0, 2).To4()
+	b := net.IPv4(10, 50, 0, 3).To4()
+	gw := net.IPv4(10, 50, 0, 1).To4()
+	ApplyFrame(RoleCPE, arpFrame(aMAC, a, gw, arpOpRequest), st)
+	if st.CEIP != "10.50.0.2" || st.CPEMAC != "02:00:00:00:00:01" {
+		t.Fatalf("primary after A: %+v", st)
+	}
+	ApplyFrame(RoleCPE, arpFrame(bMAC, b, gw, arpOpRequest), st)
+	if st.CEIP != "10.50.0.2" {
+		t.Fatalf("primary CE must stay sticky, got %+v", st)
+	}
+	if st.CPEMAC != "02:00:00:00:00:01" {
+		t.Fatalf("CPE MAC last-writer rotated to B: %+v", st)
+	}
+	if st.Hosts["10.50.0.3"].MAC != "02:00:00:00:00:0b" {
+		t.Fatalf("host B missing: %+v", st.Hosts)
+	}
+	if st.Hosts["10.50.0.2"].MAC != "02:00:00:00:00:01" {
+		t.Fatalf("host A missing: %+v", st.Hosts)
+	}
+}
+
+func TestPublicACLHostsSkipsRFC1918(t *testing.T) {
+	st := Learned{
+		CEIP: "10.50.0.2",
+		Hosts: map[string]HostEntry{
+			"10.50.0.3": {MAC: "02:00:00:00:00:0b"},
+			"203.0.113.10": {MAC: "02:00:00:00:00:0c"},
+		},
+	}
+	got := st.PublicACLHosts()
+	if len(got) != 1 || got[0] != "203.0.113.10" {
+		t.Fatalf("want only public host, got %v", got)
+	}
+}
 	st := &Learned{}
 	frame := make([]byte, 18)
 	copy(frame[6:12], []byte{1, 2, 3, 4, 5, 6})

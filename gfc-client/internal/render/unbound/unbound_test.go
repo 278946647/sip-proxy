@@ -72,3 +72,9 @@ func TestRenderExtraACLLearnedCE(t *testing.T) {
 		t.Fatal("must not allow all")
 	}
 }
+
+func TestRenderExtraACLEmptyPrivateTransparent(t *testing.T) {
+	got := RenderExtraACL(nil)
+	if strings.Contains(got, "allow") {
+		t.Fatalf("private interconnect uses server RFC1918, extra file must stay empty:\n%s", got)
+	}
