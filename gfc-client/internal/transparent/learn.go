@@ -28,6 +28,12 @@ const (
 	RoleCPE Role = "cpe"
 )
 
+// CEReplaceAfter is how long the hitch MAC may stay silent before a different
+// cable MAC with a usable IP takes the primary slot. Shorter than CEStaleAfter:
+// Plan A (same MAC, shutdown/standby, no other host) never hits this path.
+// Dual-PC both talking keep the sticky primary.
+const CEReplaceAfter = 2 * time.Second
+
 // ApplyFrame updates learned state from one Ethernet frame. Passive only.
 func ApplyFrame(role Role, frame []byte, st *Learned) {
 	if st == nil || len(frame) < ethLen {
@@ -89,6 +95,7 @@ func applyARP(role Role, srcMAC string, payload []byte, st *Learned) {
 				// Host ARPing the gateway — strongest CE signal.
 				st.CECandidates[spaStr] += 5
 			}
+			hotUpdateCEIfSameMAC(st, spaStr, srcMAC)
 		}
 		if spaStr == st.CEIP {
 			st.CEMiss = 0
@@ -190,12 +197,13 @@ func applyIPv4(role Role, srcMAC string, payload []byte, st *Learned) {
 		if usableHitchIP(srcStr) && srcStr != st.GWIP {
 			rememberHost(st, srcStr, srcMAC)
 			st.CECandidates[srcStr]++
+			hotUpdateCEIfSameMAC(st, srcStr, srcMAC)
 		}
 		if srcStr == st.CEIP {
 			st.CEMiss = 0
 		}
 		if proto == 17 {
-			applyDHCP(payload[ihl:], st)
+			applyDHCP(payload[ihl:], srcMAC, st)
 		}
 	case RoleISP:
 		// IPv4 on ISP is transit traffic. PE MAC / GW IP come from ARP;
@@ -203,7 +211,7 @@ func applyIPv4(role Role, srcMAC string, payload []byte, st *Learned) {
 	}
 }
 
-func applyDHCP(udp []byte, st *Learned) {
+func applyDHCP(udp []byte, srcMAC string, st *Learned) {
 	// UDP header 8 + BOOTP yiaddr at offset 16 of BOOTP = UDP payload[16:20]
 	if len(udp) < 8+20 {
 		return
@@ -217,12 +225,32 @@ func applyDHCP(udp []byte, st *Learned) {
 	if len(bootp) < 240 {
 		return
 	}
-	yiaddr := net.IP(bootp[16:20]).To4()
-	if yiaddr != nil && usableHitchIP(yiaddr.String()) {
-		st.CECandidates[yiaddr.String()] += 8
+	chaddr := strings.TrimSpace(srcMAC)
+	if bootp[1] == 1 && bootp[2] >= 6 && len(bootp) >= 34 {
+		if mac := formatMAC(bootp[28:34]); mac != "" {
+			chaddr = mac
+		}
+	}
+	learnDHCPHost := func(ip string) {
+		ip = strings.TrimSpace(ip)
+		if !usableHitchIP(ip) || ip == strings.TrimSpace(st.GWIP) {
+			return
+		}
+		st.CECandidates[ip] += 8
+		if chaddr == "" {
+			return
+		}
+		rememberHost(st, ip, chaddr)
+		hotUpdateCEIfSameMAC(st, ip, chaddr)
+	}
+	if yiaddr := net.IP(bootp[16:20]).To4(); yiaddr != nil {
+		learnDHCPHost(yiaddr.String())
 	}
 	// options after magic cookie 236+4
 	opts := bootp[240:]
+	if req := dhcpOptionIP(opts, 50); req != "" {
+		learnDHCPHost(req)
+	}
 	gw := dhcpOptionIP(opts, 3)
 	if gw != "" && onLinkGW(st.CEIP, gw) && (st.GWIP == "" || !onLinkGW(st.CEIP, st.GWIP)) {
 		st.GWIP = gw
@@ -267,6 +295,33 @@ func rememberHost(st *Learned, ip, mac string) {
 	}
 	st.Hosts[ip] = HostEntry{MAC: mac, At: time.Now().UTC().Format(time.RFC3339)}
 	pruneHosts(st)
+}
+
+func sameMAC(a, b string) bool {
+	return strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b))
+}
+
+// hotUpdateCEIfSameMAC implements "CE DHCP 换址则热更新": the same Ethernet
+// host moved to another unicast IP. A different MAC is not this path.
+func hotUpdateCEIfSameMAC(st *Learned, ip, mac string) {
+	if st == nil || !usableHitchIP(ip) {
+		return
+	}
+	ce := strings.TrimSpace(st.CEIP)
+	if ce == "" || ip == ce {
+		return
+	}
+	primaryMAC := strings.TrimSpace(st.CPEMAC)
+	if h, ok := st.Hosts[ce]; ok && strings.TrimSpace(h.MAC) != "" {
+		primaryMAC = h.MAC
+	}
+	if primaryMAC == "" || !sameMAC(mac, primaryMAC) {
+		return
+	}
+	delete(st.Hosts, ce)
+	delete(st.CECandidates, ce)
+	st.CEIP = ip
+	st.CEMiss = 0
 }
 
 func pruneHosts(st *Learned) {
@@ -325,6 +380,59 @@ func otherFreshHost(st *Learned, ce string, now time.Time) bool {
 	return false
 }
 
+func primaryMAC(st *Learned) string {
+	if st == nil {
+		return ""
+	}
+	ce := strings.TrimSpace(st.CEIP)
+	if h, ok := st.Hosts[ce]; ok && strings.TrimSpace(h.MAC) != "" {
+		return h.MAC
+	}
+	return strings.TrimSpace(st.CPEMAC)
+}
+
+func ceSeenWithin(st *Learned, ce string, now time.Time, window time.Duration) bool {
+	h, ok := st.Hosts[strings.TrimSpace(ce)]
+	if !ok {
+		return false
+	}
+	at, ok := hostSeenAt(h)
+	if !ok {
+		return false
+	}
+	return now.Sub(at) < window
+}
+
+// replacedByNewMAC is a device swap: a fresh cable host whose MAC is not the
+// hitch CPE, and the old hitch identity has been quiet for CEReplaceAfter.
+// Same-MAC standby has no other MAC, so Plan A still holds.
+func replacedByNewMAC(st *Learned, now time.Time) bool {
+	if st == nil {
+		return false
+	}
+	ce := strings.TrimSpace(st.CEIP)
+	cpe := primaryMAC(st)
+	if ce == "" || cpe == "" {
+		return false
+	}
+	if ceSeenWithin(st, ce, now, CEReplaceAfter) {
+		return false
+	}
+	for ip, h := range st.Hosts {
+		if ip == ce {
+			continue
+		}
+		if !hostFresh(st, ip, now) || strings.TrimSpace(h.MAC) == "" {
+			continue
+		}
+		if sameMAC(h.MAC, cpe) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
 // demoteDeadCE retires a hitch IP only on evidence, never on a timer guess.
 // Plan A: a quiet sole CE (shutdown/standby, cpe still up) keeps the hitch —
 // unanswered PE who-has is not enough without another fresh cable host.
@@ -334,7 +442,7 @@ func demoteDeadCE(st *Learned, now time.Time) {
 		return
 	}
 	other := otherFreshHost(st, ce, now)
-	dead := (st.CEMiss >= CEArpMissLimit && other) || (!hostFresh(st, ce, now) && other)
+	dead := (st.CEMiss >= CEArpMissLimit && other) || (!hostFresh(st, ce, now) && other) || replacedByNewMAC(st, now)
 	if !dead {
 		return
 	}

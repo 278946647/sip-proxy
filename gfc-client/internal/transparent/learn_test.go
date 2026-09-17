@@ -186,6 +186,71 @@ func TestCPESecondHostDoesNotRotatePrimaryMAC(t *testing.T) {
 	}
 }
 
+func TestSameMACNewIPHotUpdatesCE(t *testing.T) {
+	st := &Learned{}
+	mac := []byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x01}
+	old := net.IPv4(192, 168, 88, 197).To4()
+	next := net.IPv4(192, 168, 88, 193).To4()
+	gw := net.IPv4(192, 168, 88, 1).To4()
+	ApplyFrame(RoleCPE, arpFrame(mac, old, gw, arpOpRequest), st)
+	if st.CEIP != "192.168.88.197" {
+		t.Fatalf("primary: %+v", st)
+	}
+	ApplyFrame(RoleCPE, arpFrame(mac, next, gw, arpOpRequest), st)
+	if st.CEIP != "192.168.88.193" {
+		t.Fatalf("same-MAC DHCP/ARP rebind must hot-update hitch, got %+v", st)
+	}
+	if st.CPEMAC != "02:00:00:00:00:01" {
+		t.Fatalf("CPE MAC must stay with the host, got %+v", st)
+	}
+	if _, ok := st.Hosts["192.168.88.197"]; ok {
+		t.Fatal("old CE IP must leave the host table after 换址")
+	}
+}
+
+func TestNewMACReplacesQuietPrimaryCE(t *testing.T) {
+	st := &Learned{}
+	oldMAC := []byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x0a}
+	newMAC := []byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x0b}
+	old := net.IPv4(192, 168, 88, 197).To4()
+	next := net.IPv4(192, 168, 88, 193).To4()
+	gw := net.IPv4(192, 168, 88, 1).To4()
+	ApplyFrame(RoleCPE, arpFrame(oldMAC, old, gw, arpOpRequest), st)
+	h := st.Hosts["192.168.88.197"]
+	h.At = time.Now().UTC().Add(-CEReplaceAfter - time.Second).Format(time.RFC3339)
+	st.Hosts["192.168.88.197"] = h
+	ApplyFrame(RoleCPE, arpFrame(newMAC, next, gw, arpOpRequest), st)
+	if st.CEIP != "192.168.88.193" {
+		t.Fatalf("device swap must re-elect hitch, got %+v", st)
+	}
+	if st.CPEMAC != "02:00:00:00:00:0b" {
+		t.Fatalf("primary MAC must follow the new CE: %+v", st)
+	}
+	if _, ok := st.Hosts["192.168.88.197"]; ok {
+		t.Fatal("replaced CE must leave the host table")
+	}
+}
+
+func TestDHCPRequestLearnsHostAndReplacesQuietPrimary(t *testing.T) {
+	st := &Learned{}
+	oldMAC := []byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x0a}
+	newMAC := []byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x0b}
+	old := net.IPv4(192, 168, 88, 197).To4()
+	next := net.IPv4(192, 168, 88, 193).To4()
+	gw := net.IPv4(192, 168, 88, 1).To4()
+	ApplyFrame(RoleCPE, arpFrame(oldMAC, old, gw, arpOpRequest), st)
+	h := st.Hosts["192.168.88.197"]
+	h.At = time.Now().UTC().Add(-CEReplaceAfter - time.Second).Format(time.RFC3339)
+	st.Hosts["192.168.88.197"] = h
+	ApplyFrame(RoleCPE, dhcpRequestFrame(newMAC, next), st)
+	if st.Hosts["192.168.88.193"].MAC != "02:00:00:00:00:0b" {
+		t.Fatalf("DHCP requested IP must enter the host table, got %+v", st.Hosts)
+	}
+	if st.CEIP != "192.168.88.193" {
+		t.Fatalf("DHCP from a new MAC must take hitch after the old CE is quiet, got %+v", st)
+	}
+}
+
 func TestPublicACLHostsSkipsRFC1918(t *testing.T) {
 	st := Learned{
 		CEIP: "10.50.0.2",
@@ -445,4 +510,34 @@ func arpFrame(srcMAC, spa, tpa []byte, op uint16) []byte {
 	buf.Write(make([]byte, 6))
 	buf.Write(tpa)
 	return buf.Bytes()
+}
+
+func dhcpRequestFrame(srcMAC, requested net.IP) []byte {
+	req := requested.To4()
+	bootp := make([]byte, 247)
+	bootp[0] = 1
+	bootp[1] = 1
+	bootp[2] = 6
+	copy(bootp[28:34], srcMAC)
+	copy(bootp[236:240], []byte{99, 130, 83, 99})
+	bootp[240] = 50
+	bootp[241] = 4
+	copy(bootp[242:246], req)
+	bootp[246] = 255
+
+	udpLen := 8 + len(bootp)
+	ipLen := 20 + udpLen
+	frame := make([]byte, 14+ipLen)
+	copy(frame[6:12], srcMAC)
+	binary.BigEndian.PutUint16(frame[12:14], etherIPv4)
+	frame[14] = 0x45
+	binary.BigEndian.PutUint16(frame[16:18], uint16(ipLen))
+	frame[23] = 17
+	copy(frame[30:34], net.IPv4(255, 255, 255, 255).To4())
+	udp := frame[34:]
+	binary.BigEndian.PutUint16(udp[0:2], 68)
+	binary.BigEndian.PutUint16(udp[2:4], 67)
+	binary.BigEndian.PutUint16(udp[4:6], uint16(udpLen))
+	copy(udp[8:], bootp)
+	return frame
 }
