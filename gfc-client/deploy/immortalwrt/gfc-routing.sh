@@ -1406,11 +1406,21 @@ EOF
 		done
 		[ "$_dup" = 1 ] || hitch_src_macs="$hitch_src_macs $_cand"
 	done
+	box_mac_nft=""
+	for m in $hitch_src_macs; do
+		if [ -z "$box_mac_nft" ]; then
+			box_mac_nft="$m"
+		else
+			box_mac_nft="$box_mac_nft, $m"
+		fi
+	done
 	mac_isp=""
 	mac_trans=""
-	if [ -n "$hitch_src_mac" ] && [ -n "$pe_mac" ]; then
+	# Match box hardware MACs only. saddr != hitch rewrites every other
+	# host on the cpe switch (DHCP/ARP) into the hitch identity.
+	if [ -n "$hitch_src_mac" ] && [ -n "$pe_mac" ] && [ -n "$box_mac_nft" ]; then
 		mac_isp="
-    ether saddr != $hitch_src_mac ether saddr set $hitch_src_mac ether daddr set $pe_mac"
+    ether saddr { $box_mac_nft } ether saddr set $hitch_src_mac ether daddr set $pe_mac"
 	fi
 	mac_cpe=""
 	if [ -n "$cpe_hw" ] && [ -n "$pe_mac" ]; then
@@ -1473,20 +1483,12 @@ EOF
     ether saddr set $hitch_src_mac ether daddr set $pe_mac"
 		fi
 	fi
-	if [ -n "$hitch_src_mac" ]; then
+	if [ -n "$box_mac_nft" ]; then
 		hitch_upd_l4="
-    ether saddr != $hitch_src_mac ip protocol tcp update @hitch_reply { meta l4proto . ip daddr . tcp dport . ip saddr . tcp sport timeout 2m }
-    ether saddr != $hitch_src_mac ip protocol udp update @hitch_reply { meta l4proto . ip daddr . udp dport . ip saddr . udp sport timeout 2m }"
+    ether saddr { $box_mac_nft } ip protocol tcp update @hitch_reply { meta l4proto . ip daddr . tcp dport . ip saddr . tcp sport timeout 2m }
+    ether saddr { $box_mac_nft } ip protocol udp update @hitch_reply { meta l4proto . ip daddr . udp dport . ip saddr . udp sport timeout 2m }"
 		hitch_upd_th="
-    ether saddr != $hitch_src_mac meta l4proto { tcp, udp } update @hitch_reply { meta l4proto . ip daddr . th dport . ip saddr . th sport timeout 2m }"
-	else
-		for m in $hitch_src_macs; do
-			hitch_upd_l4="$hitch_upd_l4
-    ether saddr $m ip protocol tcp update @hitch_reply { meta l4proto . ip daddr . tcp dport . ip saddr . tcp sport timeout 2m }
-    ether saddr $m ip protocol udp update @hitch_reply { meta l4proto . ip daddr . udp dport . ip saddr . udp sport timeout 2m }"
-			hitch_upd_th="$hitch_upd_th
-    ether saddr $m meta l4proto { tcp, udp } update @hitch_reply { meta l4proto . ip daddr . th dport . ip saddr . th sport timeout 2m }"
-		done
+    ether saddr { $box_mac_nft } meta l4proto { tcp, udp } update @hitch_reply { meta l4proto . ip daddr . th dport . ip saddr . th sport timeout 2m }"
 	fi
 	loaded=0
 	last_err=""

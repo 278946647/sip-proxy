@@ -215,6 +215,7 @@ Placeholders:
 | `<isp_port>` / `<cpe_port>` | unused | unused | Device-Web port roles; enslaved to `br-trans` |
 | `<dns_vip>` | unused (DNS = LAN IP) | unused (DNS = WAN IP) | Default `172.31.253.53/32` on dummy `gfc-dns` |
 | `<hitch_ip>` / `<hitch_src_mac>` | unused | unused | **Internet hitch identity** (`TRANSPARENT_MODE.md` §4.2/§4.3). Plan A: learned CE / CPE MAC. Plan B: spare management IP / box hardware MAC. Not a new table. |
+| `<box_macs>` | unused | unused | **Transparent `eg_isp` local-TX match only.** Runtime hardware MACs of `<isp_port>`, `br-trans`, and `gfc-ce` (deduped). Never the customer hitch CPE MAC. |
 
 `split` vs `global` applies to **gateway, bypass, and transparent**: `global` omits `@TO_CN return` in prerouting/output classify. Transparent only classifies **stolen** packets (`iif gfc-ce`); L2-passed frames never hit these chains.
 
@@ -495,15 +496,17 @@ add rule netdev gfc_trans in_cpe ip daddr @no_steal_dst accept
 # international TCP only (phase 1); other UDP (QUIC) L2
 add rule netdev gfc_trans in_cpe meta l4proto tcp ether daddr set <gfc-ce_mac> fwd to "gfc-ce-fwd"
 
-# eg_isp: locally originated frames on the isp slave (src MAC != hitch src MAC).
-# Bridged customer CPE→PE already has CPE src MAC — do not hitch/rewrite those.
-# Plan A hitch_src_mac = CPE MAC; Plan B = box hardware MAC.
+# eg_isp: locally originated frames on the isp slave (src MAC in <box_macs>).
+# Bridged customer frames (second PC DHCP/ARP/China UDP) keep L2 intact.
+# `saddr != hitch` is forbidden: hitch is the customer CPE MAC, so that match
+# rewrites every other host on the cpe switch into the hitch identity.
+# Plan A hitch_src_mac = CPE MAC; Plan B = box hardware MAC (SET, not MATCH).
 add chain netdev gfc_trans eg_isp { type filter hook egress device "<isp_port>" priority 0; policy accept; }
 # First concat field must be `meta l4proto`. `{ tcp . ip daddr ...}` is a syntax error
 # on current ImmortalWrt nft (`tcp` inside braces is parsed as TCP header, not inet_proto).
-add rule netdev gfc_trans eg_isp ether saddr != <hitch_src_mac> ip protocol tcp update @hitch_reply { meta l4proto . ip daddr . tcp dport . ip saddr . tcp sport timeout 2m }
-add rule netdev gfc_trans eg_isp ether saddr != <hitch_src_mac> ip protocol udp update @hitch_reply { meta l4proto . ip daddr . udp dport . ip saddr . udp sport timeout 2m }
-add rule netdev gfc_trans eg_isp ether saddr != <hitch_src_mac> ether saddr set <hitch_src_mac> ether daddr set <pe_mac>
+add rule netdev gfc_trans eg_isp ether saddr { <box_macs> } ip protocol tcp update @hitch_reply { meta l4proto . ip daddr . tcp dport . ip saddr . tcp sport timeout 2m }
+add rule netdev gfc_trans eg_isp ether saddr { <box_macs> } ip protocol udp update @hitch_reply { meta l4proto . ip daddr . udp dport . ip saddr . udp sport timeout 2m }
+add rule netdev gfc_trans eg_isp ether saddr { <box_macs> } ether saddr set <hitch_src_mac> ether daddr set <pe_mac>
 
 # eg_trans: local stack xmit on br-trans (dummy fallback / hitch default oif).
 # Bridged CPE↔PE never ndo_start_xmit on the bridge, so this is local-only.
@@ -783,4 +786,4 @@ ip route show table 100
 
 ---
 
-*Document version: 2026-09-15. Maintained by project owner. AI agents must read this file before any nft-related code change.*
+*Document version: 2026-09-17. Maintained by project owner. AI agents must read this file before any nft-related code change. 2026-09-17: `eg_isp` matches `<box_macs>` only (local hitch TX); bridged L2 is unchanged.*
