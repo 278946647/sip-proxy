@@ -1222,8 +1222,13 @@ EOF
 		[ -n "$ce" ] && [ "$ipaddr" = "$ce" ] && continue
 		ip addr del "$cidr" dev gfc-ce 2>/dev/null || true
 	done
+	# Plan A: drop spare leftover on br-trans. Never delete the DNS VIP —
+	# CE /32 is src-VIP so unbound replies reverse-DNAT; wiping VIP makes
+	# trampoline SNAT src=CE dst=CE and clients drop that as a martian.
 	if [ "$hitch_mode" != "spare" ] && ip link show br-trans >/dev/null 2>&1; then
 		ip -4 addr show dev br-trans 2>/dev/null | awk '/inet / { print $2 }' | while read -r cidr; do
+			ipaddr="${cidr%%/*}"
+			[ -n "$vip" ] && [ "$ipaddr" = "$vip" ] && continue
 			ip addr del "$cidr" dev br-trans 2>/dev/null || true
 		done
 	fi
