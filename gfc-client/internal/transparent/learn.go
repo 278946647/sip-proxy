@@ -61,9 +61,14 @@ func ApplyFrame(role Role, frame []byte, st *Learned) {
 	if !usableHitchIP(st.CEIP) {
 		st.CEIP = electCE(st, now)
 	}
-	if !onLinkGW(st.CEIP, st.GWIP) {
-		st.GWIP = ""
-		st.GWStrong = false
+	if strings.TrimSpace(st.CEIP) != "" && strings.TrimSpace(st.GWIP) != "" {
+		// Private-vs-public (onLinkGW) or a different /24 (cable moved) must
+		// drop the old next hop so we do not keep posting to a dead PE MAC.
+		if !onLinkGW(st.CEIP, st.GWIP) || !sameIPv4Slash24(st.CEIP, st.GWIP) {
+			st.GWIP = ""
+			st.GWStrong = false
+			st.PEMAC = ""
+		}
 	}
 	syncPrimaryMAC(st)
 	recomputeState(st)
@@ -118,8 +123,8 @@ func applyARP(role Role, srcMAC string, payload []byte, st *Learned) {
 			}
 			if (target == st.CEIP && st.CEIP != "") || isKnownHost(st, target) {
 				// Only the real next hop ARPs for hosts on our side of the
-				// cable. On a shared lab segment this is what keeps a random
-				// neighbour from being crowned gateway.
+				// cable. A second on-link IP who-has CE (lab vSwitch / VMware
+				// .1) must not steal a GW we already confirmed on this /24.
 				setGW(st, spaStr, true)
 				if st.PEMAC == "" && spaStr == st.GWIP {
 					st.PEMAC = srcMAC
@@ -151,16 +156,23 @@ func isKnownHost(st *Learned, ip string) bool {
 }
 
 // setGW records the on-link next hop. Weak evidence (a CPE-side ARP target)
-// only fills an empty slot; PE-side evidence may always correct it.
+// only fills an empty slot. Strong evidence (ISP who-has CE/host) may fill or
+// confirm the slot, but must not replace an already-chosen GW while the CE
+// still sits on that /24 — that is the lab twin / VMware .1 steal. A cable
+// moved to another /24 clears GW in ApplyFrame, then this may learn again.
 func setGW(st *Learned, gw string, strong bool) {
 	gw = strings.TrimSpace(gw)
 	if st == nil || !onLinkGW(st.CEIP, gw) {
 		return
 	}
-	if !strong && (st.GWStrong || strings.TrimSpace(st.GWIP) != "") {
+	cur := strings.TrimSpace(st.GWIP)
+	if !strong && (st.GWStrong || cur != "") {
 		return
 	}
-	if st.GWIP != "" && st.GWIP != gw {
+	if strong && cur != "" && cur != gw && sameIPv4Slash24(st.CEIP, cur) {
+		return
+	}
+	if cur != "" && cur != gw {
 		// The freeze is scoped to one GW identity: it stops proxy-ARP and lab
 		// twins from rotating the next hop, but a cable moved to another
 		// segment must be able to learn the new PE instead of posting frames
@@ -175,6 +187,18 @@ func setGW(st *Learned, gw string, strong bool) {
 		delete(st.Hosts, gw)
 		delete(st.CECandidates, gw)
 	}
+}
+
+// sameIPv4Slash24 is the L2-segment hint for GW freeze. Spec forbids guessing
+// a LAN prefix to own; this only asks whether CE and GW still share a /24 so
+// a neighbour on the same wire cannot rotate the next hop.
+func sameIPv4Slash24(a, b string) bool {
+	aa := net.ParseIP(strings.TrimSpace(a)).To4()
+	bb := net.ParseIP(strings.TrimSpace(b)).To4()
+	if aa == nil || bb == nil {
+		return false
+	}
+	return aa[0] == bb[0] && aa[1] == bb[1] && aa[2] == bb[2]
 }
 
 func applyIPv4(role Role, srcMAC string, payload []byte, st *Learned) {
