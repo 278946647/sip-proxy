@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"net"
 	"testing"
+	"time"
 )
 
 func TestApplyFrameCPEThenISPReachesDual(t *testing.T) {
@@ -336,6 +337,76 @@ func TestDeadCEDemotedAfterUnansweredISPARP(t *testing.T) {
 	}
 	if _, ok := st.Hosts["192.168.88.191"]; ok {
 		t.Fatal("dead host must not keep a return rule")
+	}
+}
+
+func TestSoleCEKeepsHitchAfterUnansweredISPARP(t *testing.T) {
+	st := &Learned{}
+	ceMAC := []byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x0a}
+	peMAC := []byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x02}
+	ce := net.IPv4(192, 168, 88, 191).To4()
+	gw := net.IPv4(192, 168, 88, 1).To4()
+
+	ApplyFrame(RoleCPE, arpFrame(ceMAC, ce, gw, arpOpRequest), st)
+	if st.CEIP != "192.168.88.191" {
+		t.Fatalf("sole CE not hitched: %+v", st)
+	}
+	for i := 0; i < CEArpMissLimit*2; i++ {
+		ApplyFrame(RoleISP, arpFrame(peMAC, gw, ce, arpOpRequest), st)
+	}
+	if st.CEIP != "192.168.88.191" {
+		t.Fatalf("Plan A: sole CE must keep hitch after unanswered who-has, got %+v", st)
+	}
+	if st.CPEMAC != "02:00:00:00:00:0a" {
+		t.Fatalf("Plan A: CPE MAC must stay, got %+v", st)
+	}
+	if _, ok := st.Hosts["192.168.88.191"]; !ok {
+		t.Fatal("Plan A: sole CE must stay in the host table")
+	}
+}
+
+func TestSoleCEStaleKeepsHitchWithoutOtherHost(t *testing.T) {
+	st := &Learned{
+		CEIP:   "192.168.88.191",
+		CPEMAC: "02:00:00:00:00:0a",
+		Hosts: map[string]HostEntry{
+			"192.168.88.191": {
+				MAC: "02:00:00:00:00:0a",
+				At:  time.Now().UTC().Add(-CEStaleAfter - time.Minute).Format(time.RFC3339),
+			},
+		},
+	}
+	peMAC := []byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x02}
+	ce := net.IPv4(192, 168, 88, 191).To4()
+	gw := net.IPv4(192, 168, 88, 1).To4()
+	ApplyFrame(RoleISP, arpFrame(peMAC, gw, ce, arpOpRequest), st)
+	if st.CEIP != "192.168.88.191" {
+		t.Fatalf("stale sole CE must keep hitch, got %+v", st)
+	}
+}
+
+func TestStaleCEDemotedWhenOtherFresh(t *testing.T) {
+	st := &Learned{
+		CEIP:   "192.168.88.191",
+		CPEMAC: "02:00:00:00:00:0a",
+		Hosts: map[string]HostEntry{
+			"192.168.88.191": {
+				MAC: "02:00:00:00:00:0a",
+				At:  time.Now().UTC().Add(-CEStaleAfter - time.Minute).Format(time.RFC3339),
+			},
+			"192.168.88.189": {
+				MAC: "02:00:00:00:00:0b",
+				At:  time.Now().UTC().Format(time.RFC3339),
+			},
+		},
+		CECandidates: map[string]int{"192.168.88.189": 1},
+	}
+	peMAC := []byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x02}
+	ce := net.IPv4(192, 168, 88, 191).To4()
+	gw := net.IPv4(192, 168, 88, 1).To4()
+	ApplyFrame(RoleISP, arpFrame(peMAC, gw, ce, arpOpRequest), st)
+	if st.CEIP != "192.168.88.189" {
+		t.Fatalf("stale CE with a fresh peer must yield hitch, got %+v", st)
 	}
 }
 

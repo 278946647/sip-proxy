@@ -41,6 +41,8 @@ type PendingSwitch struct {
 	PortsAfter    transparent.Ports       `json:"ports_after,omitempty"`
 	DNSBefore     transparent.DNSConfig   `json:"dns_before,omitempty"`
 	DNSAfter      transparent.DNSConfig   `json:"dns_after,omitempty"`
+	SpareBefore   transparent.SpareConfig `json:"spare_before,omitempty"`
+	SpareAfter    transparent.SpareConfig `json:"spare_after,omitempty"`
 	DataplaneNote string                  `json:"dataplane_note,omitempty"`
 }
 

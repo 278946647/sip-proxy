@@ -105,8 +105,8 @@ func applyARP(role Role, srcMAC string, payload []byte, st *Learned) {
 		if op == arpOpRequest && tpa != nil {
 			target := tpa.String()
 			if target == st.CEIP && st.CEIP != "" {
-				// The next hop cannot deliver to our hitch IP. Repeated misses
-				// are proof the hitched host is gone, not a timing guess.
+				// Unanswered who-has the hitch IP. Demote only if another
+				// cable host is fresh (Plan A: sole CE keeps hitch).
 				st.CEMiss++
 			}
 			if (target == st.CEIP && st.CEIP != "") || isKnownHost(st, target) {
@@ -312,23 +312,29 @@ func hostFresh(st *Learned, ip string, now time.Time) bool {
 	return now.Sub(at) <= CEStaleAfter
 }
 
-// demoteDeadCE retires a hitch IP only on evidence, never on a timer guess:
-// the PE keeps ARPing for it and nothing answers, or the host went silent while
-// another cable host is demonstrably alive. A quiet cable changes nothing.
+func otherFreshHost(st *Learned, ce string, now time.Time) bool {
+	if st == nil {
+		return false
+	}
+	ce = strings.TrimSpace(ce)
+	for ip := range st.Hosts {
+		if ip != ce && hostFresh(st, ip, now) {
+			return true
+		}
+	}
+	return false
+}
+
+// demoteDeadCE retires a hitch IP only on evidence, never on a timer guess.
+// Plan A: a quiet sole CE (shutdown/standby, cpe still up) keeps the hitch —
+// unanswered PE who-has is not enough without another fresh cable host.
 func demoteDeadCE(st *Learned, now time.Time) {
 	ce := strings.TrimSpace(st.CEIP)
 	if ce == "" {
 		return
 	}
-	dead := st.CEMiss >= CEArpMissLimit
-	if !dead && !hostFresh(st, ce, now) {
-		for ip := range st.Hosts {
-			if ip != ce && hostFresh(st, ip, now) {
-				dead = true
-				break
-			}
-		}
-	}
+	other := otherFreshHost(st, ce, now)
+	dead := (st.CEMiss >= CEArpMissLimit && other) || (!hostFresh(st, ce, now) && other)
 	if !dead {
 		return
 	}

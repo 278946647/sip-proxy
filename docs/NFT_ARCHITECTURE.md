@@ -214,6 +214,7 @@ Placeholders:
 | `<tun_iface>` | `gfctun` | `gfctun` | `gfctun` |
 | `<isp_port>` / `<cpe_port>` | unused | unused | Device-Web port roles; enslaved to `br-trans` |
 | `<dns_vip>` | unused (DNS = LAN IP) | unused (DNS = WAN IP) | Default `172.31.253.53/32` on dummy `gfc-dns` |
+| `<hitch_ip>` / `<hitch_src_mac>` | unused | unused | **Internet hitch identity** (`TRANSPARENT_MODE.md` §4.2/§4.3). Plan A: learned CE / CPE MAC. Plan B: spare management IP / box hardware MAC. Not a new table. |
 
 `split` vs `global` applies to **gateway, bypass, and transparent**: `global` omits `@TO_CN return` in prerouting/output classify. Transparent only classifies **stolen** packets (`iif gfc-ce`); L2-passed frames never hit these chains.
 
@@ -434,17 +435,18 @@ Same inet tables `nat` / `gfc_dns_hijack` / `gfc`, same chain names, same mark `
 
 Non-nft companions (mandatory with these rules):
 
-- `br-trans`: slaves `<isp_port>` + `<cpe_port>` only; **no** IP; **never** enslave `<lan_iface>` / `br-lan`
+- `br-trans`: slaves `<isp_port>` + `<cpe_port>` only; **never** enslave `<lan_iface>` / `br-lan`; **no** customer prefix. Plan B may mount the spare management `/32` on `br-trans` **only so the box can answer ARP for that address** — never a customer `/24`.
 - Veth pair `gfc-ce` / `gfc-ce-fwd` when `kmod-veth` loads: `fwd to gfc-ce-fwd` appears as RX on `gfc-ce`. Learned CE `/32` on `gfc-ce` (`noprefixroute`; dest-CE on-link via br-trans so tun replies are not swallowed by `local`)
 - If veth cannot be created: keep dummy `gfc-ce` for hitch-bind. **CPE steal** and **hitch replies** use `ether daddr set <br-trans MAC> accept`. That rewrite does **not** clear `PACKET_OTHERHOST` (set in `eth_type_trans` before netdev); `ip_rcv` drops and `br-trans` `rx_otherhost` climbs. Companion: `tc qdisc ingress` on `<cpe_port>` with `u32 dport 53` → `skbedit ptype host` (tc runs **before** nft netdev). **Do not** `nft fwd` onto ifb: `nft_fwd_netdev` does not set `skb->redirected` / `skb_iif`, and `ifb_xmit` then `kfree_skb`. Do **not** rewrite dest to a macvlan MAC: this SKU has no `bridge` applet, so that address is not a local FDB entry.
 - Dummy `gfc-dns`: DNS VIP `/32` (default `172.31.253.53`)
 - Hitch bind address on `gfc-ce`: `172.31.253.1/32` (reserved pool; not fake-ip `198.18.0.0/15`)
 - `net.bridge.bridge-nf-call-iptables=0` (and ip6/arp if the module is loaded)
 - `net.ipv4.conf.<isp|cpe|br-trans|gfc-ce|gfc-ce-fwd|gfc-dns>.rp_filter=2`
-- `arp_ignore=2` on isp/cpe/`br-trans` so the box never answers CE ARP once a real customer has been learned
+- `arp_ignore=2` on isp/cpe/`br-trans` so the box never answers **CE** ARP once a real customer has been learned. **Spare management IP (Plan B) must be answered** (that `/32` is local). CE `/32` stays out of table `local`.
+- Device Web: isp/cpe roles, `dns_hijack`, exclude list, VIP, **spare management IP/mask/gateway**; confirm-within-timeout rollback (same as bypass)
+- Hitch identity (`<hitch_ip>` / `<hitch_src_mac>`): Plan A = CE + CPE MAC; Plan B (`cpe_port` down or never learned) = spare IP + box hardware MAC. Same `netdev gfc_trans` chains; **do not** add tables. Internet SNAT and `eg_isp`/`eg_trans` internet rewrite use hitch identity. Stolen DNS/TCP **return to a cable host** still uses `<ce_ip>` / `host_mac` / CPE MAC.
 - Fail-open: if `netdev gfc_trans` apply fails, keep `br-trans` forwarding (pure L2)
 - DNS steal fail-open when `gfctun` is down (do not blackhole 53 during install)
-- Device Web: isp/cpe roles, `dns_hijack`, exclude list, VIP; confirm-within-timeout rollback (same as bypass)
 - OEM image **must** ship `kmod-veth` (`veth.ko` in ORIG). Product steal RX is veth `fwd to gfc-ce-fwd`. MAC-punt + `tc skbedit ptype host` is the **no-module fallback**, not the preferred path.
 - Learned CE `/32` on `br-trans` (and hitch L3) **must** use `src <dns_vip>` so unbound replies match DNAT reverse. Kernel picking management LAN creates a new conntrack (`original daddr` = CE) and trampoline then emits `src=CE dst=CE`.
 - Trampoline SNAT (`sport 53` → `ct original ip daddr`) **must skip** when `ct original ip daddr` is already the learned CE.
@@ -493,14 +495,15 @@ add rule netdev gfc_trans in_cpe ip daddr @no_steal_dst accept
 # international TCP only (phase 1); other UDP (QUIC) L2
 add rule netdev gfc_trans in_cpe meta l4proto tcp ether daddr set <gfc-ce_mac> fwd to "gfc-ce-fwd"
 
-# eg_isp: locally originated frames on the isp slave (src MAC != learned CPE).
+# eg_isp: locally originated frames on the isp slave (src MAC != hitch src MAC).
 # Bridged customer CPE→PE already has CPE src MAC — do not hitch/rewrite those.
+# Plan A hitch_src_mac = CPE MAC; Plan B = box hardware MAC.
 add chain netdev gfc_trans eg_isp { type filter hook egress device "<isp_port>" priority 0; policy accept; }
 # First concat field must be `meta l4proto`. `{ tcp . ip daddr ...}` is a syntax error
 # on current ImmortalWrt nft (`tcp` inside braces is parsed as TCP header, not inet_proto).
-add rule netdev gfc_trans eg_isp ether saddr != <cpe_mac> ip protocol tcp update @hitch_reply { meta l4proto . ip daddr . tcp dport . ip saddr . tcp sport timeout 2m }
-add rule netdev gfc_trans eg_isp ether saddr != <cpe_mac> ip protocol udp update @hitch_reply { meta l4proto . ip daddr . udp dport . ip saddr . udp sport timeout 2m }
-add rule netdev gfc_trans eg_isp ether saddr != <cpe_mac> ether saddr set <cpe_mac> ether daddr set <pe_mac>
+add rule netdev gfc_trans eg_isp ether saddr != <hitch_src_mac> ip protocol tcp update @hitch_reply { meta l4proto . ip daddr . tcp dport . ip saddr . tcp sport timeout 2m }
+add rule netdev gfc_trans eg_isp ether saddr != <hitch_src_mac> ip protocol udp update @hitch_reply { meta l4proto . ip daddr . udp dport . ip saddr . udp sport timeout 2m }
+add rule netdev gfc_trans eg_isp ether saddr != <hitch_src_mac> ether saddr set <hitch_src_mac> ether daddr set <pe_mac>
 
 # eg_trans: local stack xmit on br-trans (dummy fallback / hitch default oif).
 # Bridged CPE↔PE never ndo_start_xmit on the bridge, so this is local-only.
@@ -509,8 +512,8 @@ add chain netdev gfc_trans eg_trans { type filter hook egress device "br-trans" 
 # Stolen return to a cable host: dest MAC from host_mac, not the global hitch CPE MAC.
 # `accept` so dest!=primary-CE is not treated as internet hitch (would rewrite dest=PE).
 add rule netdev gfc_trans eg_trans ip daddr @host_mac ether saddr set <pe_mac> ether daddr set ip daddr map @host_mac accept
-add rule netdev gfc_trans eg_trans ip daddr != <ce_ip> meta l4proto { tcp, udp } update @hitch_reply { meta l4proto . ip daddr . th dport . ip saddr . th sport timeout 2m }
-add rule netdev gfc_trans eg_trans ip daddr != <ce_ip> ether saddr set <cpe_mac> ether daddr set <pe_mac>
+add rule netdev gfc_trans eg_trans ip daddr != <hitch_ip> meta l4proto { tcp, udp } update @hitch_reply { meta l4proto . ip daddr . th dport . ip saddr . th sport timeout 2m }
+add rule netdev gfc_trans eg_trans ip daddr != <hitch_ip> ether saddr set <hitch_src_mac> ether daddr set <pe_mac>
 add rule netdev gfc_trans eg_trans ip daddr <ce_ip> ether saddr set <pe_mac> ether daddr set <cpe_mac>
 
 # eg_cpe: DNS / proxy return originated by the box (src MAC = CPE NIC hardware)
@@ -534,8 +537,8 @@ inet delta (existing chains; extra **match** rows only):
 # emits src=CE dst=CE (client drops; looks like DNS timeout).
 add rule inet nat postrouting udp sport 53 return
 add rule inet nat postrouting tcp sport 53 return
-add rule inet nat postrouting oifname "<isp_port>" snat ip to <ce_ip>
-add rule inet nat postrouting oifname "br-trans" ip saddr != <ce_ip> snat ip to <ce_ip>
+add rule inet nat postrouting oifname "<isp_port>" snat ip to <hitch_ip>
+add rule inet nat postrouting oifname "br-trans" ip saddr != <hitch_ip> snat ip to <hitch_ip>
 # Optional trampoline at head: restore the resolver the client asked.
 add rule inet nat postrouting oifname "<cpe_port>" udp sport 53 ct original ip daddr != <ce_ip> snat to ct original ip daddr
 add rule inet nat postrouting oifname "<cpe_port>" tcp sport 53 ct original ip daddr != <ce_ip> snat to ct original ip daddr

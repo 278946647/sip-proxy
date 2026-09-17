@@ -164,6 +164,9 @@ return view.extend({
 		}
 		var ispSelect = ifaceSelect(settings.isp_port);
 		var cpeSelect = ifaceSelect(settings.cpe_port);
+		var spareIp = input(settings.spare_ip || '', '仅拔线/从未学到时出站；可空');
+		var sparePrefix = input(settings.spare_prefix ? String(settings.spare_prefix) : '32', '32');
+		var spareGw = input(settings.spare_gateway || '', '互联网关，可空');
 		var dnsHijackBox = E('input', { 'type': 'checkbox', 'checked': settings.dns_hijack === false ? null : 'checked' });
 		var excludeBox = E('textarea', {
 			'class': 'cbi-input-textarea',
@@ -192,10 +195,23 @@ return view.extend({
 				}, [ '对调' ]) ])
 			]),
 			E('div', { 'class': 'cbi-value' }, [
+				E('label', { 'class': 'cbi-value-title' }, [ '备用管理 IP' ]),
+				E('div', { 'class': 'cbi-value-field' }, [ spareIp ])
+			]),
+			E('div', { 'class': 'cbi-value' }, [
+				E('label', { 'class': 'cbi-value-title' }, [ '备用前缀长度' ]),
+				E('div', { 'class': 'cbi-value-field' }, [ sparePrefix ])
+			]),
+			E('div', { 'class': 'cbi-value' }, [
+				E('label', { 'class': 'cbi-value-title' }, [ '备用网关' ]),
+				E('div', { 'class': 'cbi-value-field' }, [ spareGw ])
+			]),
+			E('div', { 'class': 'cbi-value' }, [
 				E('label', { 'class': 'cbi-value-title' }, [ '学习状态' ]),
 				E('div', { 'class': 'cbi-value-field' }, [
 					(settings.transparent_state || 'idle') +
 					(settings.learned_ce ? ('　CE ' + settings.learned_ce) : '') +
+					(settings.hitch_mode ? ('　hitch ' + settings.hitch_mode + ' ' + (settings.hitch_ip || '')) : '') +
 					(settings.ingress_eligible_hint ? ('　' + settings.ingress_eligible_hint) : '')
 				])
 			])
@@ -307,6 +323,9 @@ return view.extend({
 			if (proxyModeSelect.value === 'transparent') {
 				body.isp_port = ispSelect.value;
 				body.cpe_port = cpeSelect.value;
+				body.spare_ip = spareIp.value;
+				body.spare_prefix = parseInt(sparePrefix.value, 10) || 32;
+				body.spare_gateway = spareGw.value;
 			}
 			request('/settings/proxy-mode', body, 30).then(function(res) {
 				showResult(result, res, '路由模式');

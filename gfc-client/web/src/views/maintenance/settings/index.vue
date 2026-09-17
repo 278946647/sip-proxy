@@ -15,8 +15,11 @@ const form = ref({
   live_mode: 'standard',
   dns_domestic: '',
   dns_intl: '',
-  isp_port: '',
+	isp_port: '',
   cpe_port: '',
+  spare_ip: '',
+  spare_prefix: '32',
+  spare_gateway: '',
   dns_hijack: true,
   dns_hijack_exclude: '',
   wan_address: '',
@@ -51,6 +54,9 @@ async function load() {
       form.value.dns_intl = textValue(res.data.dns_intl, '')
       form.value.isp_port = textValue(res.data.isp_port, '')
       form.value.cpe_port = textValue(res.data.cpe_port, '')
+      form.value.spare_ip = textValue(res.data.spare_ip, '')
+      form.value.spare_prefix = textValue(res.data.spare_prefix, '32') || '32'
+      form.value.spare_gateway = textValue(res.data.spare_gateway, '')
       form.value.dns_hijack = res.data.dns_hijack !== false
       const ex = res.data.dns_hijack_exclude
       form.value.dns_hijack_exclude = Array.isArray(ex) ? ex.join('\n') : textValue(ex, '')
@@ -90,6 +96,9 @@ async function save() {
     if (form.value.proxy_mode === 'transparent') {
       body.isp_port = form.value.isp_port
       body.cpe_port = form.value.cpe_port
+      body.spare_ip = form.value.spare_ip
+      body.spare_prefix = Number(form.value.spare_prefix) || 32
+      body.spare_gateway = form.value.spare_gateway
     }
     const res = await maintenanceApi.updateSettings(body)
     if (!res.ok) {
@@ -184,7 +193,7 @@ onUnmounted(() => {
         <label>customer_hosts<textarea v-model="form.customer_hosts" rows="3" placeholder="每行一个 IPv4 或 CIDR" /></label>
       </template>
       <template v-if="form.proxy_mode === 'transparent'">
-        <p class="hint">isp 接上游、cpe 接客户，编入 br-trans（无互联 IP）。管理 LAN 永不进该桥。已学到客户后不答 CE ARP。</p>
+        <p class="hint">isp 接上游、cpe 接客户，编入 br-trans（无互联 IP）。管理 LAN 永不进该桥。已学到客户后不答 CE ARP。备用 IP 仅拔线或从未学到时使用。</p>
         <label>上游口 isp_port
           <select v-model="form.isp_port">
             <option value="">（选择网卡）</option>
@@ -198,7 +207,10 @@ onUnmounted(() => {
           </select>
         </label>
         <button type="button" @click="swapPorts">对调 isp/cpe</button>
-        <p class="hint">学习 {{ textValue(settings.transparent_state, 'idle') }}　CE {{ textValue(settings.learned_ce, '-') }}　GFC DNS {{ textValue(settings.dns_vip, '172.31.253.53') }}</p>
+        <label>备用管理 IP<input v-model="form.spare_ip" placeholder="仅拔线/从未学到时出站；可空" /></label>
+        <label>备用前缀长度<input v-model="form.spare_prefix" placeholder="32" /></label>
+        <label>备用网关<input v-model="form.spare_gateway" placeholder="互联网关，可空" /></label>
+        <p class="hint">学习 {{ textValue(settings.transparent_state, 'idle') }}　CE {{ textValue(settings.learned_ce, '-') }}　hitch {{ textValue(settings.hitch_mode, '-') }} {{ textValue(settings.hitch_ip, '-') }}　GFC DNS {{ textValue(settings.dns_vip, '172.31.253.53') }}</p>
       </template>
       <label class="row"><input type="checkbox" v-model="form.dns_hijack" /> DNS 劫持（三种模式共用；关后 unbound 不停）</label>
       <label>不劫持目的<textarea v-model="form.dns_hijack_exclude" rows="2" placeholder="内网权威 DNS IPv4，每行一个" /></label>

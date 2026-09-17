@@ -869,6 +869,11 @@ func (s *Server) getSettings(c *gin.Context) {
 	settings["dns_vip"] = pm.DNSVIP
 	settings["transparent_state"] = pm.TransparentState
 	settings["learned_ce"] = pm.LearnedCE
+	settings["hitch_mode"] = pm.HitchMode
+	settings["hitch_ip"] = pm.HitchIP
+	settings["spare_ip"] = pm.SpareIP
+	settings["spare_prefix"] = pm.SparePrefix
+	settings["spare_gateway"] = pm.SpareGateway
 	settings["ingress_eligible_hint"] = pm.IngressEligibleHint
 	settings["interfaces"] = network.ListInterfaces()
 	lanIf := strings.TrimSpace(s.cfg.LanIface)

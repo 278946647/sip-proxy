@@ -31,6 +31,10 @@ type SwitchRequest struct {
 	DNSHijack         *bool
 	DNSHijackExclude  []string
 	DNSVIP            string
+	SpareIP           string
+	SparePrefix       int
+	SpareGateway      string
+	SpareSpecified    bool
 }
 
 type WANConfig struct {
@@ -81,7 +85,17 @@ func ValidateSwitch(req SwitchRequest) error {
 }
 
 func validateTransparent(req SwitchRequest) error {
-	return transparent.ValidatePorts(transparent.Ports{ISP: req.IspPort, CPE: req.CpePort}, req.LANIface)
+	if err := transparent.ValidatePorts(transparent.Ports{ISP: req.IspPort, CPE: req.CpePort}, req.LANIface); err != nil {
+		return err
+	}
+	if !req.SpareSpecified {
+		return nil
+	}
+	return transparent.ValidateSpare(transparent.SpareConfig{
+		IP:      req.SpareIP,
+		Prefix:  req.SparePrefix,
+		Gateway: req.SpareGateway,
+	}, req.LANCIDR)
 }
 
 func validateBypass(req SwitchRequest) error {

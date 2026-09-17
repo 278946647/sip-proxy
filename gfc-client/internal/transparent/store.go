@@ -21,6 +21,14 @@ func dnsPath(cfg *config.Config) string {
 	return filepath.Join(cfg.Paths.Etc, FileDNS)
 }
 
+func sparePath(cfg *config.Config) string {
+	return filepath.Join(cfg.Paths.Etc, FileSpare)
+}
+
+func hitchPath(cfg *config.Config) string {
+	return filepath.Join(cfg.Paths.Etc, FileHitch)
+}
+
 func LoadPorts(cfg *config.Config) Ports {
 	var p Ports
 	raw, err := os.ReadFile(portsPath(cfg))
@@ -92,6 +100,45 @@ func LoadDNS(cfg *config.Config) DNSConfig {
 func SaveDNS(cfg *config.Config, d DNSConfig) error {
 	d = d.Normalized()
 	return writeJSON(dnsPath(cfg), d)
+}
+
+func LoadSpare(cfg *config.Config) SpareConfig {
+	var s SpareConfig
+	if cfg == nil {
+		return s
+	}
+	raw, err := os.ReadFile(sparePath(cfg))
+	if err != nil {
+		return s
+	}
+	if json.Unmarshal(raw, &s) != nil {
+		return SpareConfig{}
+	}
+	return s.Normalized()
+}
+
+func SaveSpare(cfg *config.Config, s SpareConfig) error {
+	return writeJSON(sparePath(cfg), s.Normalized())
+}
+
+func LoadHitch(cfg *config.Config) HitchIdentity {
+	var h HitchIdentity
+	if cfg == nil {
+		return h
+	}
+	raw, err := os.ReadFile(hitchPath(cfg))
+	if err != nil {
+		return h
+	}
+	_ = json.Unmarshal(raw, &h)
+	return h
+}
+
+func SaveHitch(cfg *config.Config, h HitchIdentity) error {
+	if cfg == nil {
+		return nil
+	}
+	return writeJSON(hitchPath(cfg), h)
 }
 
 func writeJSON(path string, v any) error {

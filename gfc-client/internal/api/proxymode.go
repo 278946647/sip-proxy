@@ -62,6 +62,38 @@ func switchRequestFromBody(body map[string]any, lanCIDR string) (proxymode.Switc
 		req.DNSHijackExclude = ex
 	}
 	req.DNSVIP = firstText(body["dns_vip"], body["dnsVip"])
+	if nested, ok := body["spare"].(map[string]any); ok {
+		req.SpareSpecified = true
+		req.SpareIP = firstText(nested["ip"], nested["spare_ip"])
+		req.SpareGateway = firstText(nested["gateway"], nested["gw"])
+		if n, ok := intValue(nested["prefix"]); ok {
+			req.SparePrefix = n
+		}
+	}
+	if v, ok := body["spare_ip"]; ok && v != nil {
+		req.SpareSpecified = true
+		req.SpareIP = textValue(v)
+	}
+	if v := firstText(body["spareIp"]); v != "" {
+		req.SpareSpecified = true
+		req.SpareIP = v
+	}
+	if n, ok := intValue(body["spare_prefix"]); ok {
+		req.SpareSpecified = true
+		req.SparePrefix = n
+	}
+	if n, ok := intValue(body["sparePrefix"]); ok {
+		req.SpareSpecified = true
+		req.SparePrefix = n
+	}
+	if v, ok := body["spare_gateway"]; ok && v != nil {
+		req.SpareSpecified = true
+		req.SpareGateway = textValue(v)
+	}
+	if v := firstText(body["spareGateway"]); v != "" {
+		req.SpareSpecified = true
+		req.SpareGateway = v
+	}
 	return req, nil
 }
 

@@ -55,6 +55,9 @@ func TestSwitchRequestFromBodyTransparent(t *testing.T) {
 		"dns_hijack":              true,
 		"dns_hijack_exclude_text": "10.0.0.53",
 		"dns_vip":                 "172.31.253.53",
+		"spare_ip":                "192.168.33.250",
+		"spare_prefix":            32,
+		"spare_gateway":           "192.168.33.2",
 	}, "192.168.1.0/24")
 	if err != nil {
 		t.Fatal(err)
@@ -67,5 +70,8 @@ func TestSwitchRequestFromBodyTransparent(t *testing.T) {
 	}
 	if len(req.DNSHijackExclude) != 1 {
 		t.Fatalf("exclude=%v", req.DNSHijackExclude)
+	}
+	if !req.SpareSpecified || req.SpareIP != "192.168.33.250" || req.SparePrefix != 32 || req.SpareGateway != "192.168.33.2" {
+		t.Fatalf("spare=%+v", req)
 	}
 }

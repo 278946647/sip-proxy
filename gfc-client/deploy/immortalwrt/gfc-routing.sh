@@ -328,30 +328,30 @@ apply_bypass_policy_host_routes() {
 }
 
 apply_wan_nat() {
-	local proxy_mode masq_match isp ce err
+	local proxy_mode masq_match isp hitch err
 	proxy_mode="$(load_proxy_mode)"
 	masq_match="    oifname \"$WAN_IFACE\" masquerade"
 	if [ "$proxy_mode" = "bypass" ]; then
 		masq_match="    oifname \"$WAN_IFACE\" ip saddr $LAN_CIDR masquerade"
 	elif [ "$proxy_mode" = "transparent" ]; then
 		isp="$(load_trans_isp)"
-		ce="$(load_trans_ce)"
+		hitch="$(load_hitch_ip)"
 		masq_match=""
 		# Hitch SNAT only. DNAT/DNS trampoline are added afterwards so a
 		# syntax miss cannot wipe inet nat (set -e).
-		if is_hitch_ce "$ce"; then
-			# DNS server replies (sport 53) must not hitch-SNAT to CE.
+		if is_hitch_ce "$hitch"; then
+			# DNS server replies (sport 53) must not hitch-SNAT to hitch_ip.
 			# Later oif SNAT would overwrite conntrack un-DNAT / trampoline
 			# and emit src=CE dst=CE; clients drop that as a martian timeout.
 			masq_match="    udp sport 53 return
     tcp sport 53 return"
 			if [ -n "$isp" ]; then
 				masq_match="$masq_match
-    oifname \"$isp\" meta nfproto ipv4 snat ip to $ce"
+    oifname \"$isp\" meta nfproto ipv4 snat ip to $hitch"
 			fi
 			if ip link show br-trans >/dev/null 2>&1; then
 				masq_match="$masq_match
-    oifname \"br-trans\" meta nfproto ipv4 ip saddr != $ce snat ip to $ce"
+    oifname \"br-trans\" meta nfproto ipv4 ip saddr != $hitch snat ip to $hitch"
 			fi
 		fi
 		[ -n "$masq_match" ] || masq_match="    ip saddr $LAN_CIDR accept"
@@ -631,6 +631,28 @@ load_trans_ce() { json_get "${GFC_ETC}/transparent-learned.json" ce_ip; }
 load_trans_gw() { json_get "${GFC_ETC}/transparent-learned.json" gw_ip; }
 load_trans_cpe_mac() { json_get "${GFC_ETC}/transparent-learned.json" cpe_mac; }
 load_trans_pe_mac() { json_get "${GFC_ETC}/transparent-learned.json" pe_mac; }
+load_hitch_mode() { json_get "${GFC_ETC}/transparent-hitch.json" mode; }
+load_spare_ip() { json_get "${GFC_ETC}/transparent-spare.json" ip; }
+
+load_hitch_ip() {
+	local v
+	v="$(json_get "${GFC_ETC}/transparent-hitch.json" hitch_ip)"
+	if is_hitch_ce "$v"; then
+		echo "$v"
+		return
+	fi
+	load_trans_ce
+}
+
+load_hitch_src_mac() {
+	local v
+	v="$(json_get "${GFC_ETC}/transparent-hitch.json" hitch_src_mac | tr 'A-Z' 'a-z')"
+	if [ -n "$v" ]; then
+		echo "$v"
+		return
+	fi
+	load_trans_cpe_mac
+}
 
 # IP MAC pairs from learned hosts object. Keys look like "10.0.0.2": {
 load_trans_host_lines() {
@@ -1102,7 +1124,7 @@ apply_trans_bridge() {
 }
 
 apply_trans_addrs() {
-	local vip ce gw isp cpe cpe_mac pe_mac l3 def need_hitch
+	local vip ce gw isp cpe cpe_mac pe_mac l3 def need_hitch hitch hitch_mode spare
 	vip="$(load_dns_vip)"
 	ce="$(load_trans_ce)"
 	gw="$(load_trans_gw)"
@@ -1110,14 +1132,37 @@ apply_trans_addrs() {
 	cpe="$(load_trans_cpe)"
 	cpe_mac="$(load_trans_cpe_mac)"
 	pe_mac="$(load_trans_pe_mac)"
+	hitch="$(load_hitch_ip)"
+	hitch_mode="$(load_hitch_mode)"
+	spare="$(load_spare_ip)"
 	l3="$(trans_l3_dev)"
 	ip addr replace 172.31.253.1/32 dev gfc-ce 2>/dev/null || true
 	ip addr replace "$vip/32" dev gfc-dns 2>/dev/null || true
+	# Plan B: spare is the box's own address (local, answer ARP). Mount it
+	# before removing the old identity (make-before-break on switchback is
+	# the reverse: CE first, then drop spare below).
+	if [ "$hitch_mode" = "spare" ] && is_hitch_ce "$hitch"; then
+		ip addr replace "$hitch/32" dev gfc-ce 2>/dev/null || true
+		if ip link show br-trans >/dev/null 2>&1; then
+			ip addr replace "$hitch/32" dev br-trans 2>/dev/null || true
+		fi
+		command -v arping >/dev/null 2>&1 && {
+			[ -n "$(hw_mac br-trans)" ] && arping -c 1 -A -I br-trans "$hitch" >/dev/null 2>&1 || true
+			[ -n "$isp" ] && arping -c 1 -A -I "$isp" "$hitch" >/dev/null 2>&1 || true
+		}
+	fi
 	if is_hitch_ce "$ce"; then
 		ip addr replace "$ce/32" dev gfc-ce noprefixroute 2>/dev/null || true
 		# Not in table local: tun replies to the real CPE must not be swallowed.
 		# Hitch returns (iif gfc-ce dest=$ce) need inet nat DNAT to 172.31.253.1.
 		ip route del table local "$ce/32" 2>/dev/null || true
+		# Switchback A: CE is up; drop spare only after CE is mounted.
+		if [ "$hitch_mode" != "spare" ]; then
+			if is_hitch_ce "$spare" && [ "$spare" != "$ce" ]; then
+				ip addr del "$spare/32" dev gfc-ce 2>/dev/null || true
+				ip addr del "$spare/32" dev br-trans 2>/dev/null || true
+			fi
+		fi
 		# Do not route via the enslaved cpe port — L3 must use br-trans.
 		# src must be DNS VIP so unbound replies match DNAT reverse
 		# (dest VIP). Otherwise kernel picks br-lan and postrouting
@@ -1160,6 +1205,27 @@ EOF
 		ip -4 addr show dev gfc-ce 2>/dev/null | awk '/inet 169.254\./ { print $2 }' | while read -r a; do
 			ip addr del "$a" dev gfc-ce 2>/dev/null || true
 		done
+		if [ "$hitch_mode" != "spare" ]; then
+			if is_hitch_ce "$spare"; then
+				ip addr del "$spare/32" dev gfc-ce 2>/dev/null || true
+				ip addr del "$spare/32" dev br-trans 2>/dev/null || true
+			fi
+		fi
+	fi
+	# Drop leftover gfc-ce /32 (old CE after identity change). Keep hitch
+	# bind, DNS VIP, current hitch, and learned CE (customer return).
+	ip -4 addr show dev gfc-ce 2>/dev/null | awk '/inet / { print $2 }' | while read -r cidr; do
+		ipaddr="${cidr%%/*}"
+		[ "$ipaddr" = "172.31.253.1" ] && continue
+		[ -n "$vip" ] && [ "$ipaddr" = "$vip" ] && continue
+		[ -n "$hitch" ] && [ "$ipaddr" = "$hitch" ] && continue
+		[ -n "$ce" ] && [ "$ipaddr" = "$ce" ] && continue
+		ip addr del "$cidr" dev gfc-ce 2>/dev/null || true
+	done
+	if [ "$hitch_mode" != "spare" ] && ip link show br-trans >/dev/null 2>&1; then
+		ip -4 addr show dev br-trans 2>/dev/null | awk '/inet / { print $2 }' | while read -r cidr; do
+			ip addr del "$cidr" dev br-trans 2>/dev/null || true
+		done
 	fi
 	# Drop leftover host routes on br-trans (APIPA, VPN server mistaken as GW).
 	if [ -n "$l3" ]; then
@@ -1169,6 +1235,9 @@ EOF
 				continue
 			fi
 			if [ "$dest" = "$ce" ] || [ "$dest" = "$ce/32" ]; then
+				continue
+			fi
+			if [ -n "$hitch" ] && { [ "$dest" = "$hitch" ] || [ "$dest" = "$hitch/32" ]; }; then
 				continue
 			fi
 			if is_onlink_gw "$ce" "$gw"; then
@@ -1218,7 +1287,7 @@ EOF
 }
 
 apply_trans_netdev() {
-	local isp cpe vip hijack tun_up exclude no_steal ce gw
+	local isp cpe vip hijack tun_up exclude no_steal ce gw hitch_ip hitch_src_mac
 	local isp_mac cpe_hw learned_cpe_mac pe_mac
 	local dns_vip_rules dns_steal tcp_steal mac_isp mac_cpe mac_trans hitch_upd hitch_local exclude_set
 	local tmp err punt_fwd punt_mac punt_end punt_mode hitch_end trans_mac
@@ -1230,6 +1299,8 @@ apply_trans_netdev() {
 	isp_mac="$(hw_mac "$isp")"
 	cpe_hw="$(hw_mac "$cpe")"
 	learned_cpe_mac="$(load_trans_cpe_mac)"
+	hitch_src_mac="$(load_hitch_src_mac)"
+	[ -n "$hitch_src_mac" ] || hitch_src_mac="$learned_cpe_mac"
 	pe_mac="$(load_trans_pe_mac)"
 	[ -n "$isp" ] && [ -n "$cpe" ] || return 1
 	modprobe nft_fwd_netdev 2>/dev/null || true
@@ -1279,8 +1350,13 @@ apply_trans_netdev() {
 	no_steal="10.0.0.0/8, 127.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16"
 	ce="$(load_trans_ce)"
 	gw="$(load_trans_gw)"
+	hitch_ip="$(load_hitch_ip)"
+	[ -n "$hitch_ip" ] || hitch_ip="$ce"
 	if is_hitch_ce "$ce" && no_steal_needs_host "$ce"; then
 		no_steal="$no_steal, $ce"
+	fi
+	if is_hitch_ce "$hitch_ip" && [ "$hitch_ip" != "$ce" ] && no_steal_needs_host "$hitch_ip"; then
+		no_steal="$no_steal, $hitch_ip"
 	fi
 	if is_onlink_gw "$ce" "$gw" && no_steal_needs_host "$gw"; then
 		no_steal="$no_steal, $gw"
@@ -1327,9 +1403,9 @@ EOF
 	done
 	mac_isp=""
 	mac_trans=""
-	if [ -n "$learned_cpe_mac" ] && [ -n "$pe_mac" ]; then
+	if [ -n "$hitch_src_mac" ] && [ -n "$pe_mac" ]; then
 		mac_isp="
-    ether saddr != $learned_cpe_mac ether saddr set $learned_cpe_mac ether daddr set $pe_mac"
+    ether saddr != $hitch_src_mac ether saddr set $hitch_src_mac ether daddr set $pe_mac"
 	fi
 	mac_cpe=""
 	if [ -n "$cpe_hw" ] && [ -n "$pe_mac" ]; then
@@ -1364,33 +1440,40 @@ EOF
 	hitch_local_l4=""
 	hitch_local_th=""
 	mac_trans=""
-	if is_hitch_ce "$ce" && [ -n "$learned_cpe_mac" ] && [ -n "$pe_mac" ]; then
-		# Internet hitch: not dest=CE. DNS/trampoline replies dest=CE must go CPE, not PE.
+	if is_hitch_ce "$hitch_ip" && [ -n "$hitch_src_mac" ] && [ -n "$pe_mac" ]; then
+		# Internet hitch: not dest=hitch_ip. DNS/trampoline replies dest=CE must go CPE, not PE.
+		not_hitch="ip daddr != $hitch_ip"
+		if is_hitch_ce "$ce" && [ "$ce" != "$hitch_ip" ]; then
+			not_hitch="$not_hitch ip daddr != $ce"
+		fi
 		hitch_local_l4="
-    ip daddr != $ce ip protocol tcp update @hitch_reply { meta l4proto . ip daddr . tcp dport . ip saddr . tcp sport timeout 2m }
-    ip daddr != $ce ip protocol udp update @hitch_reply { meta l4proto . ip daddr . udp dport . ip saddr . udp sport timeout 2m }"
+    $not_hitch ip protocol tcp update @hitch_reply { meta l4proto . ip daddr . tcp dport . ip saddr . tcp sport timeout 2m }
+    $not_hitch ip protocol udp update @hitch_reply { meta l4proto . ip daddr . udp dport . ip saddr . udp sport timeout 2m }"
 		hitch_local_th="
-    ip daddr != $ce meta l4proto { tcp, udp } update @hitch_reply { meta l4proto . ip daddr . th dport . ip saddr . th sport timeout 2m }"
+    $not_hitch meta l4proto { tcp, udp } update @hitch_reply { meta l4proto . ip daddr . th dport . ip saddr . th sport timeout 2m }"
 		mac_trans="
-    ip daddr != $ce ether saddr set $learned_cpe_mac ether daddr set $pe_mac
+    ip daddr != $hitch_ip ether saddr set $hitch_src_mac ether daddr set $pe_mac"
+		if is_hitch_ce "$ce" && [ -n "$learned_cpe_mac" ]; then
+			mac_trans="$mac_trans
     ip daddr $ce ether saddr set $pe_mac ether daddr set $learned_cpe_mac"
+		fi
 	else
 		hitch_local_l4="
     ip protocol tcp update @hitch_reply { meta l4proto . ip daddr . tcp dport . ip saddr . tcp sport timeout 2m }
     ip protocol udp update @hitch_reply { meta l4proto . ip daddr . udp dport . ip saddr . udp sport timeout 2m }"
 		hitch_local_th="
     meta l4proto { tcp, udp } update @hitch_reply { meta l4proto . ip daddr . th dport . ip saddr . th sport timeout 2m }"
-		if [ -n "$learned_cpe_mac" ] && [ -n "$pe_mac" ]; then
+		if [ -n "$hitch_src_mac" ] && [ -n "$pe_mac" ]; then
 			mac_trans="
-    ether saddr set $learned_cpe_mac ether daddr set $pe_mac"
+    ether saddr set $hitch_src_mac ether daddr set $pe_mac"
 		fi
 	fi
-	if [ -n "$learned_cpe_mac" ]; then
+	if [ -n "$hitch_src_mac" ]; then
 		hitch_upd_l4="
-    ether saddr != $learned_cpe_mac ip protocol tcp update @hitch_reply { meta l4proto . ip daddr . tcp dport . ip saddr . tcp sport timeout 2m }
-    ether saddr != $learned_cpe_mac ip protocol udp update @hitch_reply { meta l4proto . ip daddr . udp dport . ip saddr . udp sport timeout 2m }"
+    ether saddr != $hitch_src_mac ip protocol tcp update @hitch_reply { meta l4proto . ip daddr . tcp dport . ip saddr . tcp sport timeout 2m }
+    ether saddr != $hitch_src_mac ip protocol udp update @hitch_reply { meta l4proto . ip daddr . udp dport . ip saddr . udp sport timeout 2m }"
 		hitch_upd_th="
-    ether saddr != $learned_cpe_mac meta l4proto { tcp, udp } update @hitch_reply { meta l4proto . ip daddr . th dport . ip saddr . th sport timeout 2m }"
+    ether saddr != $hitch_src_mac meta l4proto { tcp, udp } update @hitch_reply { meta l4proto . ip daddr . th dport . ip saddr . th sport timeout 2m }"
 	else
 		for m in $hitch_src_macs; do
 			hitch_upd_l4="$hitch_upd_l4

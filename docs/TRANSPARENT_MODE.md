@@ -7,7 +7,8 @@
 **权威 sing-box：** [`SINGBOX_ARCHITECTURE.md`](SINGBOX_ARCHITECTURE.md)（kernel-split **不随** `proxy_mode` 改 `auto_route` / `route.final`。透明省略 VLESS/`direct` `bind_interface`。`route.default_interface`：仅透明且 **无 veth**、`br-trans` 存在时为该桥（MAC-punt）；**`gfc-ce`/`gfc-ce-fwd` 存在则省略**（hitch RX 在 `gfc-ce`，禁止 `SO_BINDTODEVICE br-trans`）。网关/旁路仍为 WAN，禁止全局写死 `br-trans`。SINGBOX 正文若仍写「透明一律 br-trans」，以本文与 09-16 交接为准，待确认后改 SINGBOX）  
 **旁路对照：** [`BYPASS_MODE.md`](BYPASS_MODE.md)（旁路 = 客户改网关且 GFC 有 WAN IP；透明 ≠ 旁路）  
 **策略模型：** [`USER_POLICY_ROUTING.md`](USER_POLICY_ROUTING.md)（网关 / 旁路 / 透明同一 `policies[]`，只变入向）  
-**会话交接（下一步入口）：** [`SESSION_HANDOFF_2026-09-16_TRANSPARENT_VETH_RUNTIME.md`](SESSION_HANDOFF_2026-09-16_TRANSPARENT_VETH_RUNTIME.md)（veth runtime 里程碑；cpe 直挂交换机多 PC 规格已写入本文 §4–§7。全量测试排在该功能实验室验收之后）  
+**会话交接（下一步入口）：** [`SESSION_HANDOFF_2026-09-17_TRANSPARENT_HITCH_SPARE.md`](SESSION_HANDOFF_2026-09-17_TRANSPARENT_HITCH_SPARE.md)（方案 A 关机继续搭车 / 方案 B 仅拔线时电缆 DHCP / 切回。**本文 §4.3 已改 DHCP**；交接若仍写手填备用 IP，以本文为准。生成器未改前报 gap，**未「确认修改」点名文件不得写代码**）  
+**上一里程碑：** [`SESSION_HANDOFF_2026-09-16_TRANSPARENT_VETH_RUNTIME.md`](SESSION_HANDOFF_2026-09-16_TRANSPARENT_VETH_RUNTIME.md)（veth runtime；cpe 直挂交换机多 PC 规格已写入本文 §4–§7）  
 **上一实验室闭环：** [`SESSION_HANDOFF_2026-09-15_TRANSPARENT_LAB.md`](SESSION_HANDOFF_2026-09-15_TRANSPARENT_LAB.md)  
 **一期实现批准：** [`SESSION_HANDOFF_2026-09-09_TRANSPARENT_MODE.md`](SESSION_HANDOFF_2026-09-09_TRANSPARENT_MODE.md)  
 **规格讨论交接：** [`SESSION_HANDOFF_2026-08-31_TRANSPARENT_MODE.md`](SESSION_HANDOFF_2026-08-31_TRANSPARENT_MODE.md)
@@ -25,16 +26,30 @@
 | | 网关 `gateway` | 旁路 `bypass` | 透明 `transparent` |
 |--|--|--|--|
 | 客户默认网关 | GFC LAN | GFC WAN IP | **不变**（仍是 ISP / 上游设备） |
-| GFC 互联地址 | 要 | 要（WAN） | **不占用** 客户↔上游互联地址 |
+| GFC 互联地址 | 要 | 要（WAN） | **稳态（方案 A）不占用**；方案 B 仅拔线且 DHCP 成功时临时占用租约 |
 | 客户 inbound 到 CE | NAT 后通常不是原 CE | 不做客户 SNAT | **L2 直达 CE** |
 | IPsec / GRE / IKE | 过网关，易被 NAT | 三层转发 | **当电缆，不偷** |
 | 管理 LAN | 可与客户同口 | 终身独立，禁桥 WAN | **同旁路：独立，禁桥** |
 | 国际 TCP | 分类进 TUN | 同左 | 偷进 **同一套** inet 分类 / `0x2023 → 2022 → gfctun` |
 | 递归 DNS | 劫持 + DHCP 6=LAN | 劫持 + 可问 WAN IP | 默认电缆全拦 53；关劫持后问 **DNS VIP** |
 
-**一句话：** 默认 L2 直通；只把「要代理的国际 TCP」和「要进 unbound 的 DNS」punt 进现有三层栈；盒子本机控制面/VLESS **搭车 CE 地址**，稳态 **不抢 ARP**。
+**一句话：** 默认 L2 直通；只把「要代理的国际 TCP」和「要进 unbound 的 DNS」punt 进现有三层栈；盒子本机控制面/VLESS **搭车下联 IP/MAC（方案 A）**，仅拔线且 DHCP 成功时才用租约身份（方案 B）；稳态 **不抢下联 ARP**。
 
 禁止用 proxy-ARP / 纯三层透明作为产品档或降级档（专线 GTSM / 单跳 BFD / 以太网 OAM / 绑 MAC 会翻车；与「插 /30」是同一类客户）。
+
+### 1.1 术语（设备对照）
+
+单下联 PC 时，**CE 与 CPE 是同一台机器的 IP 与 MAC**，不是两台设备。
+
+| 本文用词 | 是哪个设备 / 哪条属性 |
+|----------|------------------------|
+| **本机 / GFC / 盒子** | GFC 设备自己（实验室 `gfc-test`） |
+| **下联 / 客户设备** | 接在 `cpe_port` 上的主机或客户路由器 |
+| **CE** | 下联在电缆上的 **IPv4**（搭车源 IP） |
+| **CPE MAC** | 该主 CE 的 **以太网源 MAC**（搭车 TX 伪装的源 MAC） |
+| **PE MAC** | 上联设备的 MAC |
+| **GW** | 上联设备的 IPv4（下一跳） |
+| **管理 LAN** | `br-lan` 小网关，只给 SSH/Web；**不是** 客户电缆 |
 
 ---
 
@@ -49,7 +64,7 @@
 | 5 | **`dual` 之前可以没有隧道。** 只要 `cpe_port` 已学到真实客户，**禁止再当该 CE 的 ARP 主人**（即使之后 CPE 口短暂掉线）。 |
 | 6 | 地址只 **被动学习主机**，禁止扫描、禁止把 /30 举例推广成「自动灌整段」。公网互联与 **私网互联适用同一机制**。 |
 | 7 | 不把 isp 口 **硬件 MAC 改成 CPE MAC**（入站会进本机，客户变黑洞）。伪装 MAC **只改本机 TX**（及 DNS/代理回给客户的 TX）。 |
-| 8 | 盒子出站源 IP = 学到的 CE；回程用 **五元组 hitch 表** punt 进本机。禁止用「高位源端口段」代替五元组（与 Windows 临时端口重叠）。 |
+| 8 | 本机出站回程用 **五元组 hitch 表** punt 进本机。禁止用「高位源端口段」代替五元组。出站身份见 **§4.2 方案 A / §4.3 方案 B**（下联在线或电缆仍插的关机/待机 = 伪装 CE/CPE；**仅** `cpe_port` down 且 DHCP 租约成功 = 租约 IP + 本机 MAC）。 |
 | 9 | 一期：国际 **TCP** 进隧道；**ESP / AH / GRE / IPIP / L2TP / UDP 500 / UDP 4500** 永不偷；其它 UDP（含 QUIC）L2 直通。 |
 | 10 | 目的 RFC1918、本链路 CE/GW、`bypass_ip`、`TO_CN`（split 模式）**不偷数据**（DNS 见 §6，与此不同）。 |
 | 11 | **默认劫持全部客户递归 DNS**（含目的为私网网关的 53）。**不**按「目的 RFC1918 就放行 53」。 |
@@ -62,6 +77,7 @@
 | 18 | 软件失败 **fail-open**：透明桥仍转发。硬件旁路继电器为独立 SKU，非本契约。 |
 | 19 | 一期 **IPv6 整帧 L2 直通**，不分类、不劫持 IPv6 DNS。PPPoE 发现/会话 L2 直通，不拆内层（独立模式另开）。 |
 | 20 | 一期默认只处理 **untagged IPv4**；带 802.1Q 的帧默认 L2 直通。设备 Web 可声明「业务 VLAN」，对该 VLAN 做与 untagged 相同的偷流/DNS。 |
+| 21 | **2026-09-17 拍板（同日修订 B）：** 方案 A — 下联关机/待机（网线仍插、cpe 口 up）**继续搭车**，上联 `who-has` 主 CE **不得**在「没有其他新鲜主机」时拆 hitch。方案 B — **仅** `cpe_port` operstate down：本机在电缆上当 **DHCP 客户**；租约成功则用租约 IP + 本机 MAC。DHCP 失败（含静态 /30、无服务器）→ **不手填、不猜地址**，本机在客户电缆上无身份（管理 LAN 若 up 仍可本地登入）。**禁止** cpe 口仍 up 时 DHCP（含待机、从未学到但口 up）。切回 — cpe 口 up 且看到下联第一帧后先恢复 CE hitch，再释放租约；动作目标 ≤200ms；心跳/VLESS 允许重连约 1s。待机 **禁止** 用空闲定时器切 B。不承诺毫秒级发现待机。 |
 
 ---
 
@@ -77,11 +93,11 @@
      \     /
     二层透明桥（无互联 IP、混杂、默认转发）
 
-本机 CE /32 与 DNS VIP：CE 挂 veth `gfc-ce`（对端 `gfc-ce-fwd` 承接 netdev `fwd`）；VIP 挂 dummy `gfc-dns`。禁止在 isp/cpe 口对外抢 CE 的 ARP
+本机 hitch 源 `/32` 与 DNS VIP：hitch 身份（主 CE，或方案 B 的 DHCP 租约）挂 veth `gfc-ce`（对端 `gfc-ce-fwd` 承接 netdev `fwd`）；VIP 挂 dummy `gfc-dns`。禁止在 isp/cpe 口对外抢 **CE** 的 ARP。方案 B 租约是盒子自己的地址，必须能答其 ARP（§4.3）。
 ```
 
 - 两口盒子不做默认 SKU（管理面另走 VLAN/USB 为降级，另开需求）。  
-- 透明桥 **无** 客户互联地址。  
+- 透明桥 **无** 客户互联网段地址（不要给 `br-trans` 配客户 /24）。方案 B 的租约 `/32` 挂 `gfc-ce`（及为答 ARP 所必需的接口），不是把桥配成客户网关。  
 - 管理机可继续把 GFC LAN 当小网关（国内 + 跨境），NAT 仅 `ip saddr <lan_subnet>`（与旁路相同）。
 
 ---
@@ -94,7 +110,7 @@
 |------|------|------|
 | `idle` | 尚未学到两端有用信息 | 纯 L2 转发；不上 VLESS |
 | `cpe_only` | 已学 CPE MAC 和/或 CE IP；isp 未就绪 | **绝不**冒充上游网关、不答 GW 的 ARP；等 isp |
-| `isp_only` | 仅 isp 有学习结果，且 **从未** 学到真实客户 | 允许纯被动学习；**不要求**先上隧道。禁止扫描猜 CE。若产品要 WAN-only 上平台：仅在此状态可临时答 CE ARP；一旦进入过「已学到客户」则永远禁止 |
+| `isp_only` | 仅 isp 有学习结果，且 **从未** 学到真实客户 | 允许纯被动学习；**不要求**先上隧道。禁止扫描猜 CE。cpe 口仍 **up** 时 **禁止 DHCP**（电缆上可能有静默下联）。可临时答 CE ARP；一旦进入过「已学到客户」则永远禁止。cpe 口 **down** 时走 §4.3 |
 | `dual` | isp 与 cpe 均已学到 | 稳态：§5–§7 |
 
 **已学到真实客户** 的定义：`cpe_port` 链路上观察到任一客户 MAC，或观察到任一客户 IP 的 ARP/IPv4 源（主机表非空或已有主 CE）。此后禁止再当 **任何已学电缆主机** 的 ARP 主人（不只主 CE）。
@@ -110,8 +126,12 @@
 - **PE MAC / GW IP** = isp 口入向与对端 ARP。  
 - **GW IP 收敛（强/弱证据）**：**强证据** = isp 口上「为主 CE 或任一已学电缆主机」发起的 ARP request，其发送方即真下一跳；DHCP Option 3 同级。**弱证据** = cpe 口 ARP request 的 `tell` 目标，仅在 GW 为空时填入，且目标若已在电缆主机表中则 **一律拒绝**（那是同网段邻居，不是网关）。强证据可改写弱证据，弱证据永不改写强证据。共享网段（实验室 vSwitch、promisc）上任意邻居的 ARP **不得**当选网关。  
 - **PE MAC 冻结按 GW IP 收敛**：同一 GW IP 内首次填入后冻结，后续声称同一 GW IP 的 ARP **不得**改写（实验室双假网关 / proxy-ARP / VRRP 换 MAC 仍须邻居 FAILED 后再学或 Web 重学）；**GW IP 变更**（换网段、换上联）时清空 PE MAC 重新学习——否则盒子会一直把帧打向本网段不存在的 MAC 且无自愈路径。禁止在同一 GW IP 内改回 last-writer。  
-- **主 CE 存活性（禁止用沉默计时判死）**：链路安静 **不是** 客户下线的证据，不得因「多久没收到帧」就换 CE。只认两类证据：① isp 口连续 `CEArpMissLimit`（默认 5）次 `who-has <主 CE>` 无人应答——下一跳无法投递即为死亡证明，主 CE 任一帧出现即清零；② 主 CE 超过 `CEStaleAfter`（默认 5 分钟）未出现，而电缆主机表中 **另有** 主机在该窗口内活跃。判死后从主机表删除该 IP 并在活跃主机中改选（权重优先、时间次之），无活跃主机则主 CE 置空、停止搭车。两条都不成立时维持现状。  
-- 盒子出 isp 的 hitch **仍只用一个主 CE**（SNAT + TX `src MAC=主 CPE`）。`cpe` 口直挂 L2 交换机、多台 PC：不 punt 的帧仍 L2 一字不改；偷来的 DNS / 国际 TCP 回程 `dst MAC` 用主机表里该目的 IP 的 MAC，而不是全局主 CPE MAC。  
+- **主 CE 存活性（禁止用沉默计时把唯一下联判死）：** 链路安静 **不是** 下联下线的证据，不得因「多久没收到帧」就拆 hitch（方案 A：关机/待机且网线仍插）。判据：  
+  ① isp 口连续 `CEArpMissLimit`（默认 5）次 `who-has <主 CE>` 无人应答，**且** 主机表中 **另有** 在 `CEStaleAfter` 内活跃的主机 → 改选 hitch 到该主机（多 PC 把死机让出来）。**若没有其他新鲜主机：保持搭车，禁止因这些 who-has 清空主 CE。** 盒子自己的 hitch TX（心跳 / VLESS / unbound 出站）视为在刷新上联邻居，不得把上联 who-has 当成「无法投递」而停搭车。主 CE 任一帧出现即清零 miss。  
+  ② 主 CE 超过 `CEStaleAfter`（默认 5 分钟）未出现，而电缆主机表中 **另有** 主机在该窗口内活跃 → 同 ① 改选。  
+  ③ `cpe_port` operstate **down** → 尝试 **方案 B**（§4.3 DHCP）。租约失败则电缆侧无本机身份（可接受），**禁止**因此去抢已学 CE 的 ARP。cpe 口仍 **up**（含待机、从未学到）**不得**走 B、**不得** DHCP。  
+  改选后从主机表删除旧 IP；无活跃主机且未进入 B 时才主 CE 置空。①② 都不成立且 cpe 仍 up 时维持 hitch。  
+- 盒子出 isp 的 hitch **仍只用一个主身份**：方案 A = 一个主 CE（SNAT + TX `src MAC=主 CPE`）；方案 B = DHCP 租约（SNAT + TX `src MAC=本机硬件 MAC`）。`cpe` 口直挂 L2 交换机、多台 PC：不 punt 的帧仍 L2 一字不改；偷来的 DNS / 国际 TCP 回程 `dst MAC` 用主机表里该目的 IP 的 MAC，而不是全局主 CPE MAC。  
 - **永不** 借用 GW/PE 地址。  
 - CE DHCP 换址则热更新；过期地址停止搭车并从主机表删除。  
 - 公网 /30 与私网 `10.x` 互联同一套学习。
@@ -126,7 +146,43 @@
 - **频率上限**：2 秒一次、最多 3 次，随后退避到 30 秒；目标 **只能** 是主 CE 或 GW IP，禁止遍历前缀。
 - **仍然禁止**：自造 IP / 自造 MAC 上线、ICMP/TCP 扫段、对未学到的地址试探。
 
-无客户时的管理面上线，**不得** 用自造地址解决；如需该能力，走「运维显式配置的备用管理 IP（isp 网段空闲地址 + 掩码 + 网关，仅在未学到主 CE 时启用）」，唯一性由运维保证——另行立项，本节不含。
+无客户时的管理面上线，**不得** 自造地址。cpe 口 **down** 时走 **§4.3 DHCP**；口 **up** 时不得 DHCP、不得手填互联 IP 当 B。
+
+### 4.2 方案 A：下联在线或关机/待机（cpe 口仍 up）
+
+下联在线：本机出 isp 伪装 **CE IP + CPE MAC**（现行 hitch）。  
+下联关机/待机、**网线仍插、`cpe_port` operstate=up**：同一套身份 **继续搭车**，没有「切换」。时延 **0**。不答 CE ARP。不靠空闲定时器。**禁止 DHCP。**  
+切回：本已在 hitch；cpe 上第一帧只更新主机表 / `host_mac`（防抖目标 ≤200ms）。
+
+电缆仍 up、但上联已彻底不投递该 CE（少见）：一期 **不** 因此自动切 B。B 的触发只有 §4.3。
+
+### 4.3 方案 B：电缆 DHCP 客户（仅拔线）
+
+**触发（仅此一条）：** `cpe_port` **operstate down**（拔线；发现约 1–50ms）。在 `br-trans`（isp 奴口仍 up）上当 DHCP 客户，向互联要地址。
+
+**不触发：** 待机/关机而 cpe 口仍 up（走方案 A，时延 0，不 DHCP）；空闲定时器；上联 ARP 存活到期；**从未学到但 cpe 口仍 up**（电缆上可能有静默下联，DHCP 会与客户抢池）。
+
+**失败（可接受，不是 bug）：** 无 DHCP 服务器、静态 **/30**（两个主机位是 CE 与 GW，没有第三地址）、超时、租约不可 hitch、租约等于已学 **CE / GW** 或管理 LAN / DNS VIP 池。失败时 **禁止** 手填备用 IP、禁止扫段、禁止抢 CE ARP。本机在客户电缆上无身份：走电缆的心跳 / VLESS / 控制器失联。管理 LAN（`br-lan`）若仍 up，本地 SSH/Web 不受影响。
+
+**手填备用 IP / 掩码 / 网关：不再作为 B 的身份来源。** 现场常不知互联地址；/30 手填是风险点。设备 Web **不要求**填这些字段。已合入的手填字段若仍存在，不得当作 B 启用条件；生成器改前视为 **gap**（以本文为准）。
+
+**身份（仅租约成功）：**
+
+| 项 | 值 |
+|----|-----|
+| 源 IP | DHCP 租约（即 nft `<hitch_ip>`） |
+| 源 MAC | **本机硬件 MAC**（`br-trans` 或 isp 口烧录 MAC；**禁止** CPE MAC） |
+| 目的 MAC | PE MAC（已学则沿用；可对租约 Option 3 网关 ARP，PE freeze 仍按 GW IP） |
+| 网关 | DHCP Option 3；不得用手填猜测 |
+| ARP | **必须答** who-has 租约（盒子自己的地址，进 `local`）。**禁止** 答 CE |
+| 挂载 | 租约 `/32` 在 `gfc-ce`；为让 isp/`br-trans` 能答 ARP，允许把同一 `/32` 挂在 `br-trans` **仅用于 ARP**。禁止给 `br-trans` 配客户网段 |
+| 禁止写入 | 租约 **不得** 写入 inet `TO_CN` / `bypass_ip` / `ext` / `ext_const` |
+
+**动作时延（发现口 down 之后）：** DHCP 发现本身是秒级（上联服务器决定，不计入 GFC ≤200ms 目标）。租约到手后：配地址 + GARP + 刷 hitch SNAT/MAC，目标 **≤200ms**。无租约则不刷 B 身份。
+
+**切回（方案 B → 方案 A）：** `cpe_port` up **且** cpe 口见到下联第一帧（ARP 或 IPv4，源为可用 hitch 主机）。相对该帧发现为毫秒级。然后 **先恢复 CE hitch，再释放 DHCP 租约并撤租约 `/32`**（make-before-break）。动作目标 ≤200ms。**不等** 上联 ARP 表老化。心跳/VLESS 因源 IP 变化允许 **重连一次（约 1s）**。下联自己 DHCP 的秒级不计入 GFC 切换。
+
+**ARP Probe：** §4.1 仍是提案（补 PE MAC / 探主 CE），**不是** 待机切 B 的手段，也不是从未学到时先猜 CE 或代替 DHCP 的手段。
 
 ---
 
@@ -134,10 +190,11 @@
 
 ### 5.1 ARP 主人
 
-| 阶段 | 谁答已学电缆主机的 ARP |
-|------|----------------|
-| 从未学到客户的 `isp_only`（可选 WAN-only） | 盒子可临时答主 CE |
-| 已学到客户之后（含 `dual`、CPE 口后掉线） | **只有客户**；盒子禁止答、禁止 GARP 抢占 **任一已学主机** |
+| 阶段 | 谁答已学电缆主机（CE）的 ARP | 谁答方案 B 租约 |
+|------|------------------------------|-----------------|
+| 从未学到客户的 `isp_only`，cpe **up** | 盒子可临时答主 CE | 禁止 DHCP，无租约 |
+| 从未学到，cpe **down** 且租约成功 | **禁止** 答猜的 CE | 盒子答租约 |
+| 已学到客户之后（含 `dual`、关机/待机、CPE 口 down） | **只有客户**；盒子禁止答、禁止 GARP 抢占 **任一已学主机** | 仅 CPE 口 down 且租约成功：盒子答租约 |
 
 稳态：入站访问这些主机（含对端 IPsec）L2 给对应客户 MAC。非主 CE 的 `/32` 只做 on-link 路由与邻居，**不**配成本机地址。
 
@@ -145,7 +202,8 @@
 
 | 方向 | 改写 |
 |------|------|
-| 本机出 isp（VLESS / 心跳 / unbound 国际上游） | `src MAC = 主 CPE MAC`，`dst MAC = PE MAC`，`src IP = 主 CE` |
+| 本机出 isp（方案 A：VLESS / 心跳 / unbound 国际上游） | `src MAC = 主 CPE MAC`，`dst MAC = PE MAC`，`src IP = 主 CE` |
+| 本机出 isp（方案 B） | `src MAC = 本机硬件 MAC`，`dst MAC = PE MAC`，`src IP = DHCP 租约` |
 | DNS 应答 / 代理回程出 cpe | `src MAC = PE MAC`，`dst MAC = 该目的 IP 在主机表中的 MAC`（netdev map `host_mac`）；表未命中时才回退主 CPE MAC |
 | 客户原有帧 | **一字不改** L2 转发 |
 
@@ -242,9 +300,9 @@
 
 ### 7.3 本机出站搭车
 
-- 源 IP = **主** CE（SNAT 或 bind 在 dummy /32）；本机 **禁止** 对已学电缆主机发 ARP。每个学到的客户 IP 在 `br-trans` 上有 on-link `/32`（**不**进 `local`、**不**把非主 CE 配成本机）。netdev `host_mac` 在 `in_cpe` 入向刷新；`eg_trans` 命中则 `src MAC=PE`、`dst MAC` 查表并 `accept`，禁止把「目的是另一台 PC」的回程当成互联网 hitch 打向 PE。  
+- 源 IP = **当前 hitch 身份**（方案 A = 主 CE；方案 B = DHCP 租约）；方案 A 下本机 **禁止** 对已学电缆主机发 ARP。每个学到的客户 IP 在 `br-trans` 上有 on-link `/32`（**不**进 `local`、**不**把非主 CE 配成本机）。方案 B 租约 **进 `local`**（必须答 ARP）。netdev `host_mac` 在 `in_cpe` 入向刷新；`eg_trans` 命中则 `src MAC=PE`、`dst MAC` 查表并 `accept`，禁止把「目的是另一台 PC」的回程当成互联网 hitch 打向 PE。  
 - 邻居：GW IP → PE MAC 写死在 isp 口。  
-- POP 等基础设施仍在 `bypass_ip`，避免 VLESS 再被偷进 TUN。`output_mangle_route` 对目的 `@bypass_ip` **必须清掉** `0x2023`（在 `meta mark != 0 return` 之前）。仅清 skb mark 不够：透明 VLESS 省略 `bind_interface` 时，套接字 `SO_MARK=0x2023` 在 nft 之前查 FIB，必须另有 `ip rule pref 90 to <bypass_ip> lookup main`（及 table `2022` 的 `/32` 搭车路由），否则 `:8443` 进 `gfctun`。FIB 走 `br-trans` 之后，本机帧在桥上 `xmit`：必须在 **`eg_trans`（device br-trans）** 记 hitch。目的 **不是 CE** 的才改成 CPE 源 MAC + PE 目的 MAC（VLESS 出 isp）；目的 **是 CE** 的是 DNS/trampoline 回客户，必须改成 PE 源 MAC + CPE 目的 MAC（出 cpe）。禁止把回给 CE 的包改成 PE 目的 MAC（下联 DNS 会超时）。`eg_isp` 仅对 `ether saddr != CPE MAC` 记 hitch。电缆 DNS inet DNAT 必须覆盖 **iif cpe**（MAC-punt 后查询常从 cpe 奴口上栈）。`inet nat postrouting` 对 **udp/tcp sport 53 必须 `return`，再** 做 hitch `snat to CE`；否则应答源变成 CE、目的也是 CE，下联当 martian 丢掉。CE `/32` 在 `br-trans` 必须 `src <dns_vip>`；trampoline（`snat to ct original ip daddr`）在 original daddr 已是 CE 时必须跳过。hitch 回程命中 `hitch_reply` 后只负责 punt；原本机源地址由同一 conntrack 的 reverse-SNAT 自动恢复。**禁止**再按 `daddr=CE` 添加手工 prerouting DNAT：它会与 reverse-SNAT 竞争，并可能改写不属于本机的客户入站流量。
+- POP 等基础设施仍在 `bypass_ip`，避免 VLESS 再被偷进 TUN。`output_mangle_route` 对目的 `@bypass_ip` **必须清掉** `0x2023`（在 `meta mark != 0 return` 之前）。仅清 skb mark 不够：透明 VLESS 省略 `bind_interface` 时，套接字 `SO_MARK=0x2023` 在 nft 之前查 FIB，必须另有 `ip rule pref 90 to <bypass_ip> lookup main`（及 table `2022` 的 `/32` 搭车路由），否则 `:8443` 进 `gfctun`。FIB 走 `br-trans` 之后，本机帧在桥上 `xmit`：必须在 **`eg_trans`（device br-trans）** 记 hitch。目的 **不是 hitch 身份** 的才改成 hitch 源 MAC + PE 目的 MAC（VLESS 出 isp）；目的 **是 CE** 的是 DNS/trampoline 回客户，必须改成 PE 源 MAC + CPE 目的 MAC（出 cpe）。禁止把回给 CE 的包改成 PE 目的 MAC（下联 DNS 会超时）。`eg_isp` 仅对 `ether saddr != <hitch_src_mac>` 记 hitch（A 时 hitch_src_mac=CPE MAC；B 时 = 本机硬件 MAC）。电缆 DNS inet DNAT 必须覆盖 **iif cpe**（MAC-punt 后查询常从 cpe 奴口上栈）。`inet nat postrouting` 对 **udp/tcp sport 53 必须 `return`，再** 做 hitch `snat to <hitch_ip>`；否则应答源变成 hitch IP、目的也是客户，下联当 martian 丢掉。CE `/32` 在 `br-trans` 必须 `src <dns_vip>`；trampoline（`snat to ct original ip daddr`）在 original daddr 已是 CE 时必须跳过。hitch 回程命中 `hitch_reply` 后只负责 punt；原本机源地址由同一 conntrack 的 reverse-SNAT 自动恢复。**禁止**再按 `daddr=CE` 添加手工 prerouting DNAT：它会与 reverse-SNAT 竞争，并可能改写不属于本机的客户入站流量。
 - 私网 CE：上游设备继续 NAT/路由；GFC 不另要公网地址。  
 - 在 OUTPUT/SNAT 后写入 hitch 回程五元组（超时跟随连接）。
 
@@ -262,7 +320,7 @@
  └─ punt → inet PREROUTING（现有 gfc 链）→ 用户策略 / TO_CN / mark
               └─ 国际：0x2023 → table 2022 → gfctun
 
-GFC 本机 OUTPUT → SNAT CE + TX 改 MAC → isp
+GFC 本机 OUTPUT → SNAT hitch 身份 + TX 改 MAC → isp
 管理机：LAN 小网关（旁路同款 NAT 限制）
 ```
 
@@ -281,6 +339,7 @@ GFC 本机 OUTPUT → SNAT CE + TX 改 MAC → isp
 | `proxy_mode=transparent` | 一期已开放；仅设备 Web 可写；切换须确认超时回滚（对齐旁路） |
 | 口角色 isp/cpe | 设备 Web |
 | `dns_hijack` / `dns_hijack_exclude` / DNS VIP | 设备 Web |
+| 备用管理 IP / 掩码 / 网关 | **不作为** 方案 B 身份来源（现场常未知；/30 手填是风险）。B = 拔线后 DHCP，失败则电缆侧失联 |
 | 平台 | 只读展示已确认模式与开关；payload **不得** 开局写入 |
 | 策略路由 UI | 透明可与网关/旁路共用；试算须返回 `ingress_eligible`（例如尚未 `dual`） |
 
@@ -291,6 +350,10 @@ GFC 本机 OUTPUT → SNAT CE + TX 改 MAC → isp
 - 管理 LAN 与 isp/cpe 桥接  
 - proxy-ARP / 把 TTL-- 的三层透明当产品模式  
 - 为 CE 在 `dual`（或已学到客户）后应答 ARP  
+- 用空闲定时器把关机/待机切到方案 B（cpe 口仍 up 必须走方案 A）  
+- 在 cpe 口 **up** 时对客户电缆发 DHCP（含待机、从未学到但口 up）  
+- 用手填备用 IP / 扫段 / 抢 CE 代替失败的 DHCP  
+- 把方案 B 租约（或手填备用 IP）写入 `TO_CN` / `bypass_ip` / `ext` / `ext_const`  
 - 扫描猜地址；冒充 GW/PE  
 - 国际 UDP 一期进隧道（易误伤 IPsec NAT-T）  
 - 学习 IP 写入 `TO_CN` / `bypass_ip` / `ext` / `ext_const`  
@@ -327,7 +390,10 @@ ip rule | grep 0x2023
 # DNS 劫持 off：上述不再抢；CE→DNS VIP:53 仍进 unbound
 nft list table inet gfc_dns_hijack   # 网关/旁路开关可见；透明另有 punt 规则（表名以当时 NFT_ARCHITECTURE 为准）
 
-# 本机 VLESS：源 IP=主 CE，源 MAC=主 CPE；回程命中 hitch，不送到 CPE
+# 本机 VLESS：方案 A 源 IP=主 CE、源 MAC=主 CPE；方案 B 源 IP=DHCP 租约、源 MAC=本机；回程命中 hitch
+# 方案 A：下联关机/待机、cpe 口仍 up，盒子心跳/VLESS 仍出 isp（伪装 CE），不对 CE 答 ARP，不 DHCP
+# 方案 B：ip link set cpe down 后尝试 DHCP；成功则出站源=租约；失败则电缆侧无身份（/30 可接受）
+#         cpe up 且下联第一帧后切回 A（先 hitch 再释放租约；≤200ms 动作 + 允许控制面重连 1s）
 
 # 多 PC（cpe 直挂交换机）：两台同时问被劫持的 53，各自收到应答（邻居不是对方 MAC）
 ```
@@ -340,6 +406,8 @@ nft list table inet gfc_dns_hijack   # 网关/旁路开关可见；透明另有 
 
 | 日期 | 说明 |
 |------|------|
+| 2026-09-17 | 方案 B 改电缆 DHCP：仅 `cpe_port` down 时申请租约；失败（含 /30）不手填、电缆侧失联可接受。cpe 口 up（待机/从未学到）禁止 DHCP，走方案 A 或临时答 CE。手填备用 IP 不再作为 B 身份来源。生成器未改前报 gap。试编不升号。 |
+| 2026-09-17 | 拍板方案 A/切回：关机待机（cpe up）继续搭车，上联 who-has 在无其他新鲜主机时不得拆 hitch；切回 make-before-break ≤200ms。术语表 §1.1。试编不升号。 |
 | 2026-09-16 | 学习收敛：GW 强/弱证据（isp 为本侧主机 ARP = 强；cpe `tell` = 弱且不得选中已学主机）；PE 冻结按 GW IP 收敛，换网段清空重学；主 CE 存活性只认「PE 连续 ARP 无应答」或「自身过期且他机新鲜」，禁止沉默计时判死。新增 §4.1 ARP Probe 提案（未实现）。`host_mac` timeout 必须写 key 侧（nft 1.1.1 拒绝值侧 timeout）。 |
 | 2026-09-16 | cpe 直挂交换机多 PC：电缆主机表 IP→MAC；偷流回程按主机；搭车仍一个主 CE；停 CPE last-writer。私网 DNS ACL 用既有 RFC1918，禁止 `0.0.0.0/0`。试编不升号。 |
 | 2026-09-16 | veth runtime 里程碑：探测口 `gfc-vp0`/`gfc-vp1`；透明+veth 省略 `default_interface`；`LiveMode` 已确认 JSON 盖过 stale env；PE MAC freeze。研发 tag `milestone/transparent-veth-runtime-20260916`，不升产品号。 |

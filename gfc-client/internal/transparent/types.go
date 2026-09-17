@@ -24,6 +24,11 @@ const (
 	FilePorts   = "transparent-ports.json"
 	FileLearned = "transparent-learned.json"
 	FileDNS     = "dns-hijack.json"
+	FileSpare   = "transparent-spare.json"
+	FileHitch   = "transparent-hitch.json"
+
+	HitchModeCE    = "ce"
+	HitchModeSpare = "spare"
 )
 
 // Ports is the device-Web isp/cpe role assignment.
@@ -82,8 +87,9 @@ func NormalizeState(raw string) string {
 const HostTTL = 30 * time.Minute
 
 // CEStaleAfter is how long a hitch host may stay silent before a fresher cable
-// host may take the primary slot. CEArpMissLimit is the PE-side proof of death:
-// that many unanswered ARP requests for CEIP retire it immediately.
+// host may take the primary slot. CEArpMissLimit unanswered PE who-has for the
+// primary CE retires it only when another host is fresh in that window (Plan A:
+// a sole CE keeps hitch through shutdown/standby).
 const (
 	CEStaleAfter   = 5 * time.Minute
 	CEArpMissLimit = 5
@@ -118,6 +124,44 @@ func (d DNSConfig) Normalized() DNSConfig {
 		out.VIP = DefaultVIP
 	}
 	return out
+}
+
+// SpareConfig is the device-Web Plan B management address (TRANSPARENT_MODE.md §4.3).
+type SpareConfig struct {
+	IP      string `json:"ip,omitempty"`
+	Prefix  int    `json:"prefix,omitempty"`
+	Gateway string `json:"gateway,omitempty"`
+}
+
+func (s SpareConfig) Normalized() SpareConfig {
+	out := s
+	out.IP = strings.TrimSpace(out.IP)
+	out.Gateway = strings.TrimSpace(out.Gateway)
+	if out.IP == "" {
+		out.Prefix = 0
+		return out
+	}
+	if out.Prefix <= 0 || out.Prefix > 32 {
+		out.Prefix = 32
+	}
+	return out
+}
+
+func (s SpareConfig) Usable() bool {
+	return usableHitchIP(s.Normalized().IP)
+}
+
+// HitchIdentity is the current internet SNAT/TX MAC (Plan A CE or Plan B spare).
+type HitchIdentity struct {
+	Mode   string `json:"mode"`
+	IP     string `json:"hitch_ip,omitempty"`
+	SrcMAC string `json:"hitch_src_mac,omitempty"`
+	PEMAC  string `json:"pe_mac,omitempty"`
+	GWIP   string `json:"gw_ip,omitempty"`
+}
+
+func (h HitchIdentity) Sig() string {
+	return strings.Join([]string{h.Mode, h.IP, h.SrcMAC, h.PEMAC, h.GWIP}, "|")
 }
 
 type Snapshot struct {

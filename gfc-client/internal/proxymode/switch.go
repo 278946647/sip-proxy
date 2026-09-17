@@ -78,6 +78,11 @@ type Status struct {
 	LearnedGW       string                 `json:"learned_gw,omitempty"`
 	LearnedCPEMAC   string                 `json:"learned_cpe_mac,omitempty"`
 	LearnedPEMAC    string                 `json:"learned_pe_mac,omitempty"`
+	HitchMode       string                 `json:"hitch_mode,omitempty"`
+	HitchIP         string                 `json:"hitch_ip,omitempty"`
+	SpareIP         string                 `json:"spare_ip,omitempty"`
+	SparePrefix     int                    `json:"spare_prefix,omitempty"`
+	SpareGateway    string                 `json:"spare_gateway,omitempty"`
 	IngressEligibleHint string             `json:"ingress_eligible_hint,omitempty"`
 }
 
@@ -176,6 +181,12 @@ func (c *Controller) Apply(req SwitchRequest) (Status, error) {
 		portsAfter = transparent.Ports{ISP: req.IspPort, CPE: req.CpePort}.Normalized()
 	}
 
+	spareBefore := transparent.LoadSpare(c.cfg)
+	spareAfter := spareBefore
+	if req.Mode == ModeTransparent && req.SpareSpecified {
+		spareAfter = transparent.SpareConfig{IP: req.SpareIP, Prefix: req.SparePrefix, Gateway: req.SpareGateway}.Normalized()
+	}
+
 	wanAfter := cloneMap(wanCurrent)
 	applyWANNow := false
 	if req.Mode == ModeBypass {
@@ -208,6 +219,8 @@ func (c *Controller) Apply(req SwitchRequest) (Status, error) {
 		PortsAfter:    portsAfter,
 		DNSBefore:     dnsBefore,
 		DNSAfter:      dnsAfter,
+		SpareBefore:   spareBefore,
+		SpareAfter:    spareAfter,
 		DataplaneNote: noteForMode(req.Mode),
 	}
 	if err := SavePending(c.cfg, pending); err != nil {
@@ -225,6 +238,11 @@ func (c *Controller) Apply(req SwitchRequest) (Status, error) {
 	}
 	if req.Mode == ModeTransparent {
 		if err := transparent.SavePorts(c.cfg, portsAfter); err != nil {
+			_ = c.restoreFiles(pending)
+			_ = ClearPending(c.cfg)
+			return Status{}, err
+		}
+		if err := transparent.SaveSpare(c.cfg, spareAfter); err != nil {
 			_ = c.restoreFiles(pending)
 			_ = ClearPending(c.cfg)
 			return Status{}, err
@@ -372,6 +390,7 @@ func (c *Controller) restoreFiles(pending *PendingSwitch) error {
 	}
 	_ = transparent.SavePorts(c.cfg, pending.PortsBefore)
 	_ = transparent.SaveDNS(c.cfg, pending.DNSBefore)
+	_ = transparent.SaveSpare(c.cfg, pending.SpareBefore)
 	return nil
 }
 
@@ -411,6 +430,8 @@ func (c *Controller) statusLocked() Status {
 	dns := transparent.LoadDNS(c.cfg)
 	ports := transparent.LoadPorts(c.cfg)
 	learned := transparent.LoadLearned(c.cfg)
+	spare := transparent.LoadSpare(c.cfg)
+	hitch := transparent.LoadHitch(c.cfg)
 	st := Status{
 		Mode:              mode,
 		DataplaneMode:     NormalizeMode(c.cfg.ProxyMode),
@@ -428,6 +449,11 @@ func (c *Controller) statusLocked() Status {
 		LearnedGW:         learned.GWIP,
 		LearnedCPEMAC:     learned.CPEMAC,
 		LearnedPEMAC:      learned.PEMAC,
+		HitchMode:         hitch.Mode,
+		HitchIP:           hitch.IP,
+		SpareIP:           spare.IP,
+		SparePrefix:       spare.Prefix,
+		SpareGateway:      spare.Gateway,
 	}
 	if mode == ModeTransparent {
 		if learned.Dual() {

@@ -106,10 +106,14 @@ func TestSwitchTransparentApply(t *testing.T) {
 		return nil
 	})
 	st, err := c.Apply(SwitchRequest{
-		Mode:     ModeTransparent,
-		IspPort:  "eth1",
-		CpePort:  "eth2",
-		LANIface: "br-lan",
+		Mode:           ModeTransparent,
+		IspPort:        "eth1",
+		CpePort:        "eth2",
+		LANIface:       "br-lan",
+		SpareSpecified: true,
+		SpareIP:        "192.168.33.250",
+		SparePrefix:    32,
+		SpareGateway:   "192.168.33.2",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -123,6 +127,10 @@ func TestSwitchTransparentApply(t *testing.T) {
 	ports := transparent.LoadPorts(cfg)
 	if ports.ISP != "eth1" || ports.CPE != "eth2" {
 		t.Fatalf("ports=%+v", ports)
+	}
+	spare := transparent.LoadSpare(cfg)
+	if spare.IP != "192.168.33.250" || spare.Prefix != 32 || spare.Gateway != "192.168.33.2" {
+		t.Fatalf("spare=%+v", spare)
 	}
 }
 
