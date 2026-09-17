@@ -208,6 +208,55 @@ func TestSameMACNewIPHotUpdatesCE(t *testing.T) {
 	}
 }
 
+func TestSameMACOffSegmentIPDoesNotStealHitch(t *testing.T) {
+	// VyOS WAN 88.193 leaked WireGuard 172.17.3.74 with the same Ethernet MAC.
+	st := &Learned{}
+	mac := []byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x01}
+	ce := net.IPv4(192, 168, 88, 193).To4()
+	gw := net.IPv4(192, 168, 88, 1).To4()
+	wg := net.IPv4(172, 17, 3, 74).To4()
+	dst := net.IPv4(8, 8, 8, 8).To4()
+	peMAC := []byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x02}
+	ApplyFrame(RoleCPE, arpFrame(mac, ce, gw, arpOpRequest), st)
+	ApplyFrame(RoleISP, arpFrame(peMAC, gw, ce, arpOpReply), st)
+	if st.CEIP != "192.168.88.193" || st.GWIP != "192.168.88.1" {
+		t.Fatalf("setup: %+v", st)
+	}
+	ApplyFrame(RoleCPE, ipv4SrcDstFrame(mac, wg, dst), st)
+	if st.CEIP != "192.168.88.193" {
+		t.Fatalf("WG inner IP must not replace WAN hitch, got %+v", st)
+	}
+	if st.GWIP != "192.168.88.1" || st.PEMAC != "02:00:00:00:00:02" {
+		t.Fatalf("WG leak must not wipe GW/PE, got %+v", st)
+	}
+	if st.Hosts["172.17.3.74"].MAC != "02:00:00:00:00:01" {
+		t.Fatalf("leaked src may stay in host table, got %+v", st.Hosts)
+	}
+	if _, ok := st.Hosts["192.168.88.193"]; !ok {
+		t.Fatal("WAN CE must stay in the host table")
+	}
+}
+
+func TestOffSegmentHitchRecoversToWANIP(t *testing.T) {
+	st := &Learned{}
+	mac := []byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x01}
+	ce := net.IPv4(192, 168, 88, 193).To4()
+	gw := net.IPv4(192, 168, 88, 1).To4()
+	wg := net.IPv4(172, 17, 3, 74).To4()
+	dst := net.IPv4(8, 8, 8, 8).To4()
+	ApplyFrame(RoleCPE, ipv4SrcDstFrame(mac, wg, dst), st)
+	if st.CEIP != "172.17.3.74" {
+		t.Fatalf("first packet may hitch WG IP before WAN ARP, got %+v", st)
+	}
+	ApplyFrame(RoleCPE, arpFrame(mac, ce, gw, arpOpRequest), st)
+	if st.CEIP != "192.168.88.193" {
+		t.Fatalf("on-segment WAN IP must take hitch back, got %+v", st)
+	}
+	if st.GWIP != "192.168.88.1" {
+		t.Fatalf("GW must stay after recover, got %+v", st)
+	}
+}
+
 func TestNewMACReplacesQuietPrimaryCE(t *testing.T) {
 	st := &Learned{}
 	oldMAC := []byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x0a}
@@ -493,6 +542,16 @@ func TestLiveCEKeepsHitchWhenAnswering(t *testing.T) {
 	if st.CEIP != "192.168.88.191" {
 		t.Fatalf("live CE was demoted: %+v", st)
 	}
+}
+
+func ipv4SrcDstFrame(srcMAC, src, dst []byte) []byte {
+	frame := make([]byte, 14+20)
+	copy(frame[6:12], srcMAC)
+	binary.BigEndian.PutUint16(frame[12:14], etherIPv4)
+	frame[14] = 0x45
+	copy(frame[26:30], src)
+	copy(frame[30:34], dst)
+	return frame
 }
 
 func arpFrame(srcMAC, spa, tpa []byte, op uint16) []byte {

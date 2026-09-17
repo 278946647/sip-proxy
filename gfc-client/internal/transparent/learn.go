@@ -62,12 +62,19 @@ func ApplyFrame(role Role, frame []byte, st *Learned) {
 		st.CEIP = electCE(st, now)
 	}
 	if strings.TrimSpace(st.CEIP) != "" && strings.TrimSpace(st.GWIP) != "" {
-		// Private-vs-public (onLinkGW) or a different /24 (cable moved) must
-		// drop the old next hop so we do not keep posting to a dead PE MAC.
+		// Private-vs-public (onLinkGW) or a different /24: prefer an on-segment
+		// cable host (WG leak, inner tunnel src) over wiping GW/PE. Only drop
+		// the next hop when nothing on the learned /24 remains (cable moved).
 		if !onLinkGW(st.CEIP, st.GWIP) || !sameIPv4Slash24(st.CEIP, st.GWIP) {
-			st.GWIP = ""
-			st.GWStrong = false
-			st.PEMAC = ""
+			alt := electCE(st, now)
+			if alt != "" && onLinkGW(alt, st.GWIP) && sameIPv4Slash24(alt, st.GWIP) {
+				st.CEIP = alt
+				st.CEMiss = 0
+			} else {
+				st.GWIP = ""
+				st.GWStrong = false
+				st.PEMAC = ""
+			}
 		}
 	}
 	syncPrimaryMAC(st)
@@ -327,6 +334,8 @@ func sameMAC(a, b string) bool {
 
 // hotUpdateCEIfSameMAC implements "CE DHCP 换址则热更新": the same Ethernet
 // host moved to another unicast IP. A different MAC is not this path.
+// Off-segment sources on the same MAC (typical: WAN SNAT miss, WireGuard
+// inner IP) stay in the host table and must not replace an on-segment hitch.
 func hotUpdateCEIfSameMAC(st *Learned, ip, mac string) {
 	if st == nil || !usableHitchIP(ip) {
 		return
@@ -342,10 +351,32 @@ func hotUpdateCEIfSameMAC(st *Learned, ip, mac string) {
 	if primaryMAC == "" || !sameMAC(mac, primaryMAC) {
 		return
 	}
+	if !sameMACHitchIP(st, ce, ip) {
+		return
+	}
 	delete(st.Hosts, ce)
 	delete(st.CECandidates, ce)
 	st.CEIP = ip
 	st.CEMiss = 0
+}
+
+// sameMACHitchIP is true for a DHCP/ARP rebind on the learned cable /24, or
+// for correcting an off-segment hitch back onto the GW segment. Cross-subnet
+// leaks (172.17 WG while GW is 192.168.88.1) return false.
+func sameMACHitchIP(st *Learned, oldIP, newIP string) bool {
+	gw := strings.TrimSpace(st.GWIP)
+	if gw != "" {
+		oldOn := sameIPv4Slash24(oldIP, gw)
+		newOn := sameIPv4Slash24(newIP, gw)
+		if oldOn && !newOn {
+			return false
+		}
+		if !oldOn && !newOn && !sameIPv4Slash24(oldIP, newIP) {
+			return false
+		}
+		return true
+	}
+	return sameIPv4Slash24(oldIP, newIP)
 }
 
 func pruneHosts(st *Learned) {
@@ -490,6 +521,9 @@ func electCE(st *Learned, now time.Time) string {
 		if ip == st.GWIP || h.MAC == "" || !usableHitchIP(ip) {
 			continue
 		}
+		if gw := strings.TrimSpace(st.GWIP); gw != "" && !sameIPv4Slash24(ip, gw) {
+			continue
+		}
 		at, ok := hostSeenAt(h)
 		if !ok || now.Sub(at) > CEStaleAfter {
 			continue
@@ -565,6 +599,9 @@ func topCandidate(counts map[string]int, gw string) string {
 	bestN := 0
 	for ip, n := range counts {
 		if ip == gw || !usableHitchIP(ip) {
+			continue
+		}
+		if gw != "" && !sameIPv4Slash24(ip, gw) {
 			continue
 		}
 		if n > bestN {
