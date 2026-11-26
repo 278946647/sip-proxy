@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from .awg import apply_awg
 from .env_sync import sync_bootstrap_token
 from .nft_render import render_forward_nft
 from .routes import (
@@ -45,14 +46,18 @@ def _render_nftables(
     tproxy_iface: str | None,
     wan_iface: str | None,
     bypass_cidrs: list[str] | None,
+    awg_iface: str | None = None,
+    awg_port: int | None = None,
 ) -> str:
-    if not tproxy_iface or not wan_iface:
+    if not (tproxy_iface or awg_iface) or not wan_iface:
         return ""
     return render_forward_nft(
         wan_iface=wan_iface,
-        tproxy_iface=tproxy_iface,
+        tproxy_iface=tproxy_iface or awg_iface or "awg0",
         tproxy_port=tproxy_port,
         bypass_cidrs=bypass_cidrs,
+        awg_iface=awg_iface,
+        awg_port=awg_port,
     )
 
 
@@ -72,6 +77,12 @@ def apply_payload(payload: dict[str, Any], config_dir: Path) -> tuple[bool, str]
     else:
         ok, msg = disable_openvpn()
         messages.append(f"vpn: {msg}")
+
+    awg_cfg = payload.get("awg") or {}
+    ok_awg, msg_awg = apply_awg(awg_cfg)
+    messages.append(f"awg: {msg_awg}")
+    if not ok_awg:
+        return False, "; ".join(messages)
 
     static_routes = payload.get("staticRoutes") or []
     ok_r, msg_r = apply_static_routes(static_routes)
@@ -99,6 +110,14 @@ def apply_payload(payload: dict[str, Any], config_dir: Path) -> tuple[bool, str]
     tproxy_iface = (payload.get("tproxyIface") or "").strip() or None
     if not tproxy_iface:
         tproxy_iface = os.environ.get("GFC_TPROXY_IFACE", "").strip() or None
+    awg_cfg = payload.get("awg") or {}
+    awg_iface = None
+    awg_port = None
+    if isinstance(awg_cfg, dict) and awg_cfg.get("enabled"):
+        awg_iface = str(awg_cfg.get("iface") or "awg0")
+        awg_port = int(awg_cfg.get("listenPort") or 0) or None
+        if not tproxy_iface:
+            tproxy_iface = awg_iface
     bypass_cidrs = dataplane.get("bypassCidrs") or []
     if not isinstance(bypass_cidrs, list):
         bypass_cidrs = []
@@ -116,7 +135,9 @@ def apply_payload(payload: dict[str, Any], config_dir: Path) -> tuple[bool, str]
     drift = sync_bootstrap_token(payload.get("bootstrapToken"))
     if drift:
         messages.append(drift)
-    nft = _render_nftables(tproxy_port, tproxy_iface, snat_iface, bypass_cidrs)
+    nft = _render_nftables(
+        tproxy_port, tproxy_iface, snat_iface, bypass_cidrs, awg_iface, awg_port
+    )
     if nft:
         NFTABLES_CONFIG.write_text(nft, encoding="utf-8")
         subprocess.run(

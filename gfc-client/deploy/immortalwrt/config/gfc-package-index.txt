@@ -40,6 +40,8 @@ kmod-crypto-lib-curve25519
 kmod-crypto-kpp
 kmod-crypto-hash
 wireguard-tools
+kmod-amneziawg
+amneziawg-tools
 openvpn-openssl
 #
 # remote-ops / SSH (r16 baseline)

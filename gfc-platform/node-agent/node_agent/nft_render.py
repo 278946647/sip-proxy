@@ -23,6 +23,8 @@ def render_forward_nft(
     tproxy_iface: str,
     tproxy_port: int,
     bypass_cidrs: list[str] | None = None,
+    awg_iface: str | None = None,
+    awg_port: int | None = None,
 ) -> str:
     elems = _fmt_bypass(bypass_cidrs or [])
     bypass_body = "    type ipv4_addr\n    flags interval"
@@ -32,6 +34,18 @@ def render_forward_nft(
   set bypass_ip {{
 {bypass_body}
   }}"""
+    awg_guard = ""
+    awg_rules = ""
+    if awg_iface:
+        if awg_port:
+            awg_guard = f'    iifname "{awg_iface}" udp dport {awg_port} return\n'
+        if awg_iface != tproxy_iface:
+            awg_rules = (
+                f'    iifname "{awg_iface}" meta l4proto tcp meta mark set {TPROXY_MARK} '
+                f"tproxy ip to :{tproxy_port} accept\n"
+                f'    iifname "{awg_iface}" meta l4proto udp meta mark set {TPROXY_MARK} '
+                f"tproxy ip to :{tproxy_port} accept\n"
+            )
     return f"""#!/usr/sbin/nft -f
 # GFC forward node — see docs/NFT_ARCHITECTURE.md
 table inet gfc {{{bypass_block}
@@ -41,9 +55,9 @@ table inet gfc {{{bypass_block}
     ip daddr {{ {RFC1918} }} return
     ip daddr @bypass_ip return
     iifname "{wan_iface}" return
-    iifname "{tproxy_iface}" meta l4proto tcp meta mark set {TPROXY_MARK} tproxy ip to :{tproxy_port} accept
+{awg_guard}    iifname "{tproxy_iface}" meta l4proto tcp meta mark set {TPROXY_MARK} tproxy ip to :{tproxy_port} accept
     iifname "{tproxy_iface}" meta l4proto udp meta mark set {TPROXY_MARK} tproxy ip to :{tproxy_port} accept
-  }}
+{awg_rules}  }}
 
   chain output {{
     type route hook output priority mangle; policy accept;

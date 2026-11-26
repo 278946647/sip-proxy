@@ -44,6 +44,11 @@ class Node(Base):
     static_routes_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     reality_config_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     hysteria2_config_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # AmneziaWG server-side config (keys, port, params, pool); see docs/PAYLOAD_SCHEMA.md
+    awg_config_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    awg_capable: Mapped[bool] = mapped_column(Boolean, default=False)
+    awg_kernel_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    awg_pool_cidr: Mapped[str] = mapped_column(String(64), default="10.66.0.0/16")
 
     traffic_monitor_iface: Mapped[str | None] = mapped_column(String(64), nullable=True)
     traffic_billing_start_at: Mapped[dt.datetime | None] = mapped_column(
@@ -133,6 +138,16 @@ class Line(Base):
     hy2_brutal_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     # JSON array of LivePlatform.id slugs when live_mode == live_catalog.
     live_platforms_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Transport: reality (default) | awg. Only changeable via switch-transport API.
+    transport: Mapped[str] = mapped_column(String(16), default="reality")
+    awg_inner_ip: Mapped[str | None] = mapped_column(String(45), nullable=True)
+    awg_params_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    transport_override: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    transport_updated_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    transport_updated_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    min_firmware_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_by: Mapped[str] = mapped_column(String(64), default="admin")
     created_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: dt.datetime.now(dt.timezone.utc)
@@ -461,3 +476,65 @@ class OperationLog(Base):
     created_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: dt.datetime.now(dt.timezone.utc)
     )
+
+
+class AwgPeer(Base):
+    """One AmneziaWG peer per line (box). Inner /32 is unique per node."""
+
+    __tablename__ = "awg_peers"
+    __table_args__ = (
+        UniqueConstraint("line_id", name="uq_awg_peer_line"),
+        UniqueConstraint("node_id", "inner_ip", name="uq_awg_peer_node_ip"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    line_id: Mapped[int] = mapped_column(
+        ForeignKey("lines.id", ondelete="CASCADE"), index=True
+    )
+    node_id: Mapped[int] = mapped_column(
+        ForeignKey("nodes.id", ondelete="CASCADE"), index=True
+    )
+    inner_ip: Mapped[str] = mapped_column(String(45))
+    public_key: Mapped[str] = mapped_column(String(64))
+    private_key_enc: Mapped[str] = mapped_column(Text)
+    preshared_key_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="active")
+    key_version: Mapped[int] = mapped_column(Integer, default=1)
+    rotated_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    revoked_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: dt.datetime.now(dt.timezone.utc)
+    )
+
+
+class TransportSwitchLog(Base):
+    """Audit for manual transport changes. No automatic writes exist."""
+
+    __tablename__ = "transport_switch_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    line_id: Mapped[int] = mapped_column(
+        ForeignKey("lines.id", ondelete="CASCADE"), index=True
+    )
+    operator_id: Mapped[str] = mapped_column(String(64))
+    from_transport: Mapped[str] = mapped_column(String(16))
+    to_transport: Mapped[str] = mapped_column(String(16))
+    reason_category: Mapped[str] = mapped_column(String(32))
+    reason_text: Mapped[str] = mapped_column(Text)
+    before_state_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    after_state_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    result: Mapped[str] = mapped_column(String(16), default="pending")
+    requested_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: dt.datetime.now(dt.timezone.utc)
+    )
+    applied_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    verified_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)

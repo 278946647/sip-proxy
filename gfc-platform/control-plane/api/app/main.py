@@ -24,7 +24,7 @@ from .platform_secrets import ensure_platform_secrets, get_bootstrap_tokens
 from .db import async_session_factory, engine, get_session
 from .alerts import send_email
 from .migrate import migrate_sqlite
-from .models import Base, ConfigBundle, Line, Node, NodeToken, PlatformUser, SocksProfile
+from .models import AwgPeer, Base, ConfigBundle, Line, Node, NodeToken, PlatformUser, SocksProfile
 from .node_config import build_node_payload, payload_version
 from .node_public_ip import normalize_node_public_ip
 from .live_catalog import (
@@ -231,7 +231,12 @@ async def pull_config(
     socks = (await session.execute(select(SocksProfile))).scalars().all()
     socks_by_id = {s.id: s for s in socks}
     live_catalog = await build_node_live_catalog(session, lines, socks_by_id)
-    payload = build_node_payload(node, lines, socks_by_id, live_catalog)
+    awg_peers = (
+        await session.execute(select(AwgPeer).where(AwgPeer.node_id == node.id))
+    ).scalars().all()
+    payload = build_node_payload(
+        node, lines, socks_by_id, live_catalog, awg_peers=list(awg_peers)
+    )
     reality = payload.get("clientIngress", {}).get("reality") or {}
     reality_json = json.dumps(reality, ensure_ascii=False, separators=(",", ":"))
     hy2 = payload.get("clientIngress", {}).get("hysteria2") or {}

@@ -145,6 +145,15 @@ def _vless_auth_user_route(
     return rule
 
 
+def _awg_source_route(inner_ip: str, *, outbound: str) -> dict[str, Any]:
+    """Route awg0-decapsulated traffic by its unique inner /32 (no auth_user)."""
+    return {
+        "source_ip_cidr": [inner_ip],
+        "action": "route",
+        "outbound": outbound,
+    }
+
+
 def _hy2_auth_user_route(name: str, *, outbound: str) -> dict[str, Any]:
     """Per-line route for hysteria2-in — same auth_user → SOCKS/direct as VLESS."""
     return {
@@ -399,6 +408,9 @@ def _render_client_ingress_only(
             route_out = tag
         user_route_out[name] = route_out
         route_rules.append(_vless_auth_user_route(name, outbound=route_out))
+        inner_ip = (user.get("awgInnerIp") or "").strip()
+        if inner_ip and (user.get("transport") or "reality") == "awg":
+            route_rules.append(_awg_source_route(inner_ip, outbound=route_out))
 
     inbounds: list[dict[str, Any]] = [
         {
@@ -572,6 +584,11 @@ def _append_client_ingress(
             dns_rules.append(_vless_auth_user_route(name, server=primary_dns))
 
         route_rules.append(_vless_auth_user_route(name, outbound=route_out))
+        inner_ip = (user.get("awgInnerIp") or "").strip()
+        if inner_ip and (user.get("transport") or "reality") == "awg":
+            route_rules.append(_awg_source_route(inner_ip, outbound=route_out))
+            if mode == "socks" and outbound.get("host"):
+                dns_rules.append({"source_ip_cidr": [inner_ip], "server": primary_dns})
 
     hy2_inbound = _build_hysteria2_inbound(client_ingress, users_cfg)
     if hy2_inbound:

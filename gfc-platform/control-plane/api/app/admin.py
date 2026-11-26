@@ -35,6 +35,7 @@ from .live_catalog_admin import router as live_catalog_admin_router
 from .artifacts import queue_device_upgrade
 from .models import (
     AlertEvent,
+    AwgPeer,
     ClientDevice,
     ClientDeviceTombstone,
     FlowStat,
@@ -44,6 +45,16 @@ from .models import (
     PlatformUser,
     RuntimeArtifact,
     SocksProfile,
+    TransportSwitchLog,
+)
+from .awg_util import (
+    AwgPoolExhausted,
+    allocate_inner_ip,
+    encrypt_secret,
+    ensure_node_awg_config,
+    generate_keypair,
+    generate_preshared_key,
+    validate_inner_ip,
 )
 from .reality_util import default_reality_config
 from .reverse_ssh import (
@@ -75,8 +86,10 @@ from .schemas import (
     FlowStatOut,
     LineCreateIn,
     LineDetailOut,
+    LineHealthOut,
     LineListItem,
     LineUpdateIn,
+    ReapplyAwgIn,
     NodeTrafficBillingIn,
     NodeTrafficOverviewOut,
     NodeUpdateIn,
@@ -99,6 +112,9 @@ from .schemas import (
     EmailSettingsIn,
     SecuritySettingsIn,
     StaticRouteIn,
+    TransportSwitchIn,
+    TransportSwitchOut,
+    TransportVerifyIn,
     UserIn,
     UserOut,
     UserUpdateIn,
@@ -189,6 +205,77 @@ async def _log_op(
     session.add(
         OperationLog(username=username, action=action, target=target, detail=detail)
     )
+
+
+async def _awg_peers_for_node(
+    session: AsyncSession, node_id: int
+) -> list[AwgPeer]:
+    rows = await session.execute(
+        select(AwgPeer).where(AwgPeer.node_id == node_id)
+    )
+    return list(rows.scalars().all())
+
+
+async def _awg_peer_for_line(
+    session: AsyncSession, line_id: int
+) -> AwgPeer | None:
+    row = await session.execute(
+        select(AwgPeer).where(AwgPeer.line_id == line_id).limit(1)
+    )
+    return row.scalars().first()
+
+
+def _line_health_status(line: Line, node: Node | None) -> str:
+    """Display-only health; never used to change transport."""
+    if (getattr(line, "transport", None) or "reality") != "awg":
+        return "unknown"
+    if not node or not node.last_metrics_json:
+        return "unknown"
+    try:
+        metrics = json.loads(node.last_metrics_json)
+    except (json.JSONDecodeError, TypeError):
+        return "unknown"
+    awg = metrics.get("awg") if isinstance(metrics, dict) else None
+    if not isinstance(awg, dict):
+        return "unknown"
+    peers = awg.get("peers")
+    if not isinstance(peers, list) or not peers:
+        return "unknown"
+    inner = (getattr(line, "awg_inner_ip", None) or "").strip()
+    target = next(
+        (p for p in peers if isinstance(p, dict) and p.get("innerIp") == inner),
+        None,
+    )
+    if target is None:
+        return "unknown"
+    if target.get("ifaceUp") is False:
+        return "critical"
+    age = target.get("handshakeAgeSec")
+    try:
+        age_value = int(age)
+    except (TypeError, ValueError):
+        return "unknown"
+    if age_value <= 0:
+        return "critical"
+    if age_value > 600:
+        return "critical"
+    if age_value > 180:
+        return "degraded"
+    return "healthy"
+
+
+def _transport_snapshot(line: Line) -> dict[str, Any]:
+    return {
+        "line_id": line.id,
+        "tid": line.tid,
+        "name": line.name,
+        "node_id": line.node_id,
+        "transport": getattr(line, "transport", None) or "reality",
+        "transport_override": getattr(line, "transport_override", None),
+        "awg_inner_ip": getattr(line, "awg_inner_ip", None),
+        "awg_params_version": getattr(line, "awg_params_version", None),
+        "min_firmware_version": getattr(line, "min_firmware_version", None),
+    }
 
 
 def _vpn_summary(vpn_raw: str | None) -> dict[str, Any] | None:
@@ -328,6 +415,10 @@ def _line_to_list_item(line: Line) -> LineListItem:
         line_type=line.line_type or "client",
         client_device_id=device.id if device else None,
         client_device_name=device.name if device else None,
+        transport=getattr(line, "transport", None) or "reality",
+        awg_inner_ip=getattr(line, "awg_inner_ip", None),
+        awg_params_version=getattr(line, "awg_params_version", None),
+        health_status=_line_health_status(line, line.node if line.node else None),
     )
 
 
@@ -709,7 +800,8 @@ async def preview_node_config(
     lines = (await session.execute(select(Line).where(Line.node_id == node.id))).scalars().all()
     socks = (await session.execute(select(SocksProfile))).scalars().all()
     socks_by_id = {s.id: s for s in socks}
-    payload = build_node_payload(n, lines, socks_by_id)
+    peers = await _awg_peers_for_node(session, n.id)
+    payload = build_node_payload(n, lines, socks_by_id, awg_peers=peers)
     return {"payload": payload}
 
 
@@ -791,6 +883,7 @@ async def get_line(line_id: int, session: AsyncSession = Depends(get_session)) -
     if (line.line_type or "client") == "client" and node:
         await _sync_line_code(session, line, node)
     resolve_row = await get_line_resolve_row(session, line.id)
+    peer = await _awg_peer_for_line(session, line.id)
     base = _line_to_list_item(line)
     return LineDetailOut(
         **base.model_dump(),
@@ -809,6 +902,10 @@ async def get_line(line_id: int, session: AsyncSession = Depends(get_session)) -
         hy2_port=18443,
         live_resolve_status=resolve_row.status if resolve_row else None,
         live_resolve_at=resolve_row.resolved_at if resolve_row else None,
+        awg_public_key=peer.public_key if peer else None,
+        min_firmware_version=getattr(line, "min_firmware_version", None),
+        transport_updated_at=getattr(line, "transport_updated_at", None),
+        transport_updated_by=getattr(line, "transport_updated_by", None),
     )
 
 
@@ -831,6 +928,20 @@ async def create_line(
         raise HTTPException(400, "forward line requires source_cidrs")
     if line_type == "forward" and body.socks_profile_id is None:
         raise HTTPException(400, "forward line requires socks profile")
+
+    transport = (body.transport or "reality").strip().lower()
+    if transport not in ("reality", "awg"):
+        raise HTTPException(400, "transport 只接受 reality / awg")
+    if transport == "awg" and line_type != "client":
+        raise HTTPException(400, "transport=awg 仅支持 client 线路")
+    awg_cfg: dict[str, Any] | None = None
+    if transport == "awg":
+        awg_cfg = ensure_node_awg_config(
+            node.awg_config_json, node.awg_pool_cidr or "10.66.0.0/16"
+        )
+        node.awg_config_json = json.dumps(awg_cfg, ensure_ascii=False)
+        node.awg_capable = True
+        session.add(node)
 
     tid = await _unique_tid(session, _gen_tid(body.name))
     name = (body.name or "").strip() or tid
@@ -866,12 +977,56 @@ async def create_line(
         status="active",
         is_enabled=True,
         created_by=body.created_by,
+        transport=transport,
+        min_firmware_version=body.min_firmware_version
+        or ("2.2.0" if transport == "awg" else None),
     )
     session.add(line)
     await session.flush()
+    if transport == "awg":
+        assert awg_cfg is not None
+        peer_rows = await _awg_peers_for_node(session, node.id)
+        used = [p.inner_ip for p in peer_rows if (p.status or "active") != "revoked"]
+        try:
+            if body.awg_inner_ip:
+                inner_ip = validate_inner_ip(body.awg_inner_ip)
+                if inner_ip in used:
+                    raise HTTPException(400, f"awg_inner_ip 已被占用: {inner_ip}")
+            else:
+                inner_ip = allocate_inner_ip(
+                    node.awg_pool_cidr or "10.66.0.0/16",
+                    used,
+                    server_inner_ip=str(awg_cfg.get("serverInnerIp") or "").split("/")[0],
+                )
+        except AwgPoolExhausted as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        private_key, public_key = generate_keypair()
+        session.add(
+            AwgPeer(
+                line_id=line.id,
+                node_id=node.id,
+                inner_ip=inner_ip,
+                public_key=public_key,
+                private_key_enc=encrypt_secret(private_key),
+                preshared_key_enc=encrypt_secret(generate_preshared_key()),
+                status="active",
+                key_version=1,
+            )
+        )
+        line.awg_inner_ip = inner_ip
+        line.awg_params_version = int(awg_cfg.get("paramsVersion") or 1)
+        session.add(line)
     if line_type == "client":
         await _sync_line_code(session, line, node, commit=False)
-    await _log_op(session, body.created_by, "create_line", tid, f"node={node.name}")
+    await _log_op(
+        session,
+        body.created_by,
+        "create_line",
+        tid,
+        f"node={node.name} transport={transport}",
+    )
     await session.commit()
     await session.refresh(line)
     return await get_line(line.id, session)
@@ -897,12 +1052,272 @@ async def update_line(
         data["live_platforms_json"] = serialize_line_platforms(platforms)
     if "is_enabled" in data:
         data["status"] = "active" if data["is_enabled"] else "inactive"
+    if data.get("awg_inner_ip"):
+        try:
+            normalized_ip = validate_inner_ip(data["awg_inner_ip"])
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        peer = await _awg_peer_for_line(session, line_id)
+        if peer:
+            dup = (
+                await session.execute(
+                    select(AwgPeer).where(
+                        AwgPeer.node_id == peer.node_id,
+                        AwgPeer.inner_ip == normalized_ip,
+                        AwgPeer.id != peer.id,
+                    )
+                )
+            ).scalars().first()
+            if dup:
+                raise HTTPException(400, f"awg_inner_ip 已被占用: {normalized_ip}")
+            peer.inner_ip = normalized_ip
+            session.add(peer)
+        data["awg_inner_ip"] = normalized_ip
     for k, v in data.items():
         setattr(line, k, v)
     session.add(line)
     await _log_op(session, operator.username, "update_line", line.tid)
     await session.commit()
     return await get_line(line_id, session)
+
+
+@router.post(
+    "/lines/{line_id}/switch-transport",
+    response_model=TransportSwitchOut,
+    dependencies=[Depends(require_action("write_critical"))],
+)
+async def switch_transport(
+    line_id: int,
+    body: TransportSwitchIn,
+    session: AsyncSession = Depends(get_session),
+    operator: PlatformUser = Depends(get_current_user),
+) -> TransportSwitchOut:
+    """Manual transport switch — the only writer of Line.transport (target=reality)."""
+    line = await session.get(Line, line_id)
+    if not line:
+        raise HTTPException(404, "line not found")
+    if not body.confirm_impact:
+        raise HTTPException(400, "confirm_impact 必须为 true")
+    current = getattr(line, "transport", None) or "reality"
+    if current != body.expected_from_transport:
+        raise HTTPException(409, f"transport 已变化: current={current}")
+    if current == "reality":
+        raise HTTPException(400, "当前已是 reality，无需切换")
+    before = _transport_snapshot(line)
+    after = dict(before)
+    now = utc_now()
+    line.transport = "reality"
+    line.transport_override = "reality"
+    line.transport_updated_at = now
+    line.transport_updated_by = operator.username
+    after.update(
+        {
+            "transport": "reality",
+            "transport_override": "reality",
+            "transport_updated_at": now.isoformat(),
+            "transport_updated_by": operator.username,
+        }
+    )
+    log = TransportSwitchLog(
+        line_id=line.id,
+        operator_id=operator.username,
+        from_transport=current,
+        to_transport="reality",
+        reason_category=body.reason_category,
+        reason_text=body.reason_text,
+        before_state_json=json.dumps(before, ensure_ascii=False),
+        after_state_json=json.dumps(after, ensure_ascii=False),
+        result="applied",
+        applied_at=now,
+    )
+    session.add(line)
+    session.add(log)
+    await session.flush()
+    await _log_op(
+        session,
+        operator.username,
+        "switch_transport",
+        line.tid,
+        f"{current}->reality reason={body.reason_category}",
+    )
+    await session.commit()
+    return TransportSwitchOut(
+        switch_id=log.id,
+        line_id=line.id,
+        from_transport=current,
+        to_transport="reality",
+        result=log.result,
+        before_state=before,
+        after_state=after,
+    )
+
+
+@router.post(
+    "/lines/{line_id}/switch-transport/{switch_id}/verify",
+    response_model=TransportSwitchOut,
+    dependencies=[Depends(require_action("write_critical"))],
+)
+async def verify_transport_switch(
+    line_id: int,
+    switch_id: int,
+    body: TransportVerifyIn,
+    session: AsyncSession = Depends(get_session),
+    operator: PlatformUser = Depends(get_current_user),
+) -> TransportSwitchOut:
+    log = await session.get(TransportSwitchLog, switch_id)
+    if not log or log.line_id != line_id:
+        raise HTTPException(404, "switch record not found")
+    log.result = "verified" if body.verified else "failed"
+    log.verified_at = utc_now() if body.verified else None
+    log.note = body.note
+    session.add(log)
+    await _log_op(
+        session,
+        operator.username,
+        "verify_transport_switch",
+        f"line={line_id}",
+        f"switch={switch_id} result={log.result}",
+    )
+    await session.commit()
+    return TransportSwitchOut(
+        switch_id=log.id,
+        line_id=log.line_id,
+        from_transport=log.from_transport,
+        to_transport=log.to_transport,
+        result=log.result,
+        before_state=parse_json_field(log.before_state_json) or {},
+        after_state=parse_json_field(log.after_state_json) or {},
+    )
+
+
+@router.post(
+    "/lines/{line_id}/transport/reapply-awg",
+    response_model=TransportSwitchOut,
+    dependencies=[Depends(require_action("write_critical"))],
+)
+async def reapply_awg(
+    line_id: int,
+    body: ReapplyAwgIn,
+    session: AsyncSession = Depends(get_session),
+    operator: PlatformUser = Depends(get_current_user),
+) -> TransportSwitchOut:
+    """Restore AWG config (not a switch target). Requires an active peer."""
+    line = await session.get(Line, line_id)
+    if not line:
+        raise HTTPException(404, "line not found")
+    if not body.confirm_impact:
+        raise HTTPException(400, "confirm_impact 必须为 true")
+    current = getattr(line, "transport", None) or "reality"
+    if current == "awg":
+        raise HTTPException(400, "当前已是 awg")
+    peer = await _awg_peer_for_line(session, line.id)
+    if not peer or (peer.status or "active") != "active":
+        raise HTTPException(400, "线路没有可用的 AWG peer，请重新创建线路")
+    before = _transport_snapshot(line)
+    now = utc_now()
+    line.transport = "awg"
+    line.transport_override = "awg"
+    line.transport_updated_at = now
+    line.transport_updated_by = operator.username
+    after = {
+        **before,
+        "transport": "awg",
+        "transport_override": "awg",
+        "transport_updated_at": now.isoformat(),
+        "transport_updated_by": operator.username,
+    }
+    log = TransportSwitchLog(
+        line_id=line.id,
+        operator_id=operator.username,
+        from_transport=current,
+        to_transport="awg",
+        reason_category="maintenance",
+        reason_text=body.reason_text,
+        before_state_json=json.dumps(before, ensure_ascii=False),
+        after_state_json=json.dumps(after, ensure_ascii=False),
+        result="applied",
+        applied_at=now,
+    )
+    session.add(line)
+    session.add(log)
+    await session.flush()
+    await _log_op(
+        session, operator.username, "reapply_awg", line.tid, "reality->awg"
+    )
+    await session.commit()
+    return TransportSwitchOut(
+        switch_id=log.id,
+        line_id=line.id,
+        from_transport=current,
+        to_transport="awg",
+        result=log.result,
+        before_state=before,
+        after_state=after,
+    )
+
+
+@router.get("/lines/{line_id}/health", response_model=LineHealthOut)
+async def line_health(
+    line_id: int, session: AsyncSession = Depends(get_session)
+) -> LineHealthOut:
+    line = await session.get(Line, line_id)
+    if not line:
+        raise HTTPException(404, "line not found")
+    node = await session.get(Node, line.node_id)
+    metrics: dict[str, Any] = {}
+    if node and node.last_metrics_json:
+        parsed = parse_json_field(node.last_metrics_json)
+        if isinstance(parsed, dict):
+            awg = parsed.get("awg")
+            if isinstance(awg, dict):
+                peers = awg.get("peers") if isinstance(awg.get("peers"), list) else []
+                inner = getattr(line, "awg_inner_ip", None)
+                metrics = next(
+                    (p for p in peers if isinstance(p, dict) and p.get("innerIp") == inner),
+                    {},
+                )
+    return LineHealthOut(
+        line_id=line.id,
+        transport=getattr(line, "transport", None) or "reality",
+        status=_line_health_status(line, node),
+        metrics=metrics if isinstance(metrics, dict) else {},
+        thresholds={
+            "handshakeAgeWarnSec": 180,
+            "handshakeAgeCritSec": 600,
+            "probeFailCount": 3,
+            "lossWarnPct": 5,
+        },
+        evaluated_at=node.last_seen_at if node else None,
+    )
+
+
+@router.get("/lines/{line_id}/switch-history")
+async def switch_history(
+    line_id: int, session: AsyncSession = Depends(get_session)
+) -> list[dict[str, Any]]:
+    rows = (
+        await session.execute(
+            select(TransportSwitchLog)
+            .where(TransportSwitchLog.line_id == line_id)
+            .order_by(TransportSwitchLog.id.desc())
+            .limit(100)
+        )
+    ).scalars().all()
+    return [
+        {
+            "id": row.id,
+            "from_transport": row.from_transport,
+            "to_transport": row.to_transport,
+            "reason_category": row.reason_category,
+            "reason_text": row.reason_text,
+            "result": row.result,
+            "requested_at": row.requested_at,
+            "applied_at": row.applied_at,
+            "verified_at": row.verified_at,
+            "note": row.note,
+        }
+        for row in rows
+    ]
 
 
 @router.delete("/lines/{line_id}", dependencies=[Depends(require_action("delete"))])
@@ -927,6 +1342,9 @@ async def delete_line(
             "请先在客户端管理中解绑后再删除",
         )
     tid = line.tid
+    peer = await _awg_peer_for_line(session, line.id)
+    if peer:
+        await session.delete(peer)
     await session.delete(line)
     await _log_op(session, operator, "delete_line", tid)
     await session.commit()

@@ -4,6 +4,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import logging
+import re
 import secrets
 from typing import Any
 
@@ -22,7 +23,16 @@ from .client_config import (
 from .line_code import decode_line_code as _decode_line_code
 from .db import get_session
 from .artifacts import artifacts_root, _artifact_to_out
-from .models import ClientDevice, ClientDeviceTombstone, ClientToken, ConfigBundle, FlowStat, Line, RuntimeArtifact
+from .models import (
+    AwgPeer,
+    ClientDevice,
+    ClientDeviceTombstone,
+    ClientToken,
+    ConfigBundle,
+    FlowStat,
+    Line,
+    RuntimeArtifact,
+)
 from .schemas import (
     ClientActivateIn,
     ClientActivateResponse,
@@ -50,6 +60,24 @@ from .timeutil import utc_now
 
 router = APIRouter(prefix="/clients", tags=["clients"])
 logger = logging.getLogger(__name__)
+
+
+def _version_tuple(text: str | None) -> tuple[int, int, int] | None:
+    nums = re.findall(r"\d+", text or "")
+    if not nums:
+        return None
+    padded = (nums + ["0", "0"])[:3]
+    return tuple(int(n) for n in padded)  # type: ignore[return-value]
+
+
+def _device_supports_transport(device: ClientDevice, line: Line) -> bool:
+    """Unknown versions are allowed; only an explicit lower version blocks."""
+    minimum = getattr(line, "min_firmware_version", None) or "2.2.0"
+    current = _version_tuple(getattr(device, "agent_version", None))
+    required = _version_tuple(minimum)
+    if current is None or required is None:
+        return True
+    return current >= required
 
 
 async def _auth_client(
@@ -530,7 +558,26 @@ async def client_config(
         version = client_payload_version(payload)
         return ConfigBundleOut(version=version, payload=payload)
 
-    payload = await build_client_payload_async(device, line, line.node, line.socks_profile, session)
+    awg_peer = None
+    if (getattr(line, "transport", None) or "reality").strip().lower() == "awg":
+        if not _device_supports_transport(device, line):
+            raise HTTPException(
+                409,
+                "unsupported_transport: 设备固件低于 minFirmwareVersion，请先升级固件",
+            )
+        awg_peer = (
+            await session.execute(
+                select(AwgPeer)
+                .where(AwgPeer.line_id == line.id, AwgPeer.status == "active")
+                .limit(1)
+            )
+        ).scalars().first()
+        if not awg_peer:
+            raise HTTPException(409, "awg peer missing for transport=awg line")
+
+    payload = await build_client_payload_async(
+        device, line, line.node, line.socks_profile, session, awg_peer
+    )
     version = client_payload_version(payload)
 
     # Persist generated Hy2 secrets / node TLS if ensure_* filled them.

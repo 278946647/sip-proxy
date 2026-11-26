@@ -146,4 +146,16 @@ def collect_metrics(
     net = sample_network_traffic(config_dir, poll_seconds)
     if net is not None:
         out["network_traffic"] = net
+    if config_dir:
+        bundle = config_dir / "config_bundle.json"
+        if bundle.exists():
+            try:
+                payload = json.loads(bundle.read_text(encoding="utf-8"))
+                awg = payload.get("awg") if isinstance(payload, dict) else None
+                if isinstance(awg, dict) and awg.get("enabled"):
+                    from .awg import collect_awg_metrics
+
+                    out["awg"] = collect_awg_metrics(awg)
+            except (OSError, json.JSONDecodeError):
+                pass
     return out

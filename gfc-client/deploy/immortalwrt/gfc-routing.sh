@@ -79,6 +79,61 @@ if [ -f "$GFC_ROOT/deploy/immortalwrt/lib-gfc-paths.sh" ]; then
 	gfc_resolve_lib
 fi
 BUNDLE="${GFC_LIB:-/etc/gfc-client/lib}/state/config_bundle.json"
+AWG_IFACE="${GFC_AWG_IFACE:-awg0}"
+AWG_MSS="${GFC_AWG_MSS:-1360}"
+
+json_path() {
+	local f="$1" p="$2" key
+	[ -f "$f" ] || return 0
+	if command -v jsonfilter >/dev/null 2>&1; then
+		jsonfilter -i "$f" -e "@.$p" 2>/dev/null || true
+		return 0
+	fi
+	key="${p##*.}"
+	awk -F'"' -v k="$key" '
+		$0 ~ "\"" k "\"" {
+			for (i = 1; i <= NF; i++) if ($i == k && $(i + 2) != "") { print $(i + 2); exit }
+		}
+	' "$f" 2>/dev/null || true
+}
+
+load_transport() {
+	local v
+	v="$(json_path "$BUNDLE" transport | tr 'A-Z' 'a-z')"
+	[ "$v" = "awg" ] && echo "awg" || echo "reality"
+}
+
+load_awg_inner_ip() {
+	json_path "$BUNDLE" awg.innerIp | sed 's#/32$##'
+}
+
+load_awg_endpoint() {
+	json_path "$BUNDLE" awg.endpoint
+}
+
+awg_output_exclude_rule() {
+	local ep
+	[ "$(load_transport)" = "awg" ] || return 0
+	ep="$(load_awg_endpoint)"
+	[ -n "$ep" ] || return 0
+	echo "    ip daddr ${ep%%:*} udp dport ${ep##*:} meta mark set 0x00000000 ct mark set 0x00000000 return"
+}
+
+awg_output_exclude_byst() {
+	local ep
+	[ "$(load_transport)" = "awg" ] || return 0
+	ep="$(load_awg_endpoint)"
+	[ -n "$ep" ] || return 0
+	echo "    ip daddr ${ep%%:*} udp dport ${ep##*:} return"
+}
+
+active_egress_iface() {
+	if [ "$(load_transport)" = "awg" ] && ip link show "$AWG_IFACE" >/dev/null 2>&1; then
+		echo "$AWG_IFACE"
+	else
+		echo "$TUN_IFACE"
+	fi
+}
 
 [ -n "$LAN_IFACE" ] || LAN_IFACE="br-lan"
 [ -n "$LAN_ADDR" ] || LAN_ADDR="192.168.68.1"
@@ -239,6 +294,9 @@ start_direct() {
 stop_rules() {
 	_clear_fwmark_rules
 	_clear_bypass_fib_rules
+	if [ -x "$GFC_ROOT/deploy/immortalwrt/gfc-awg.sh" ]; then
+		sh "$GFC_ROOT/deploy/immortalwrt/gfc-awg.sh" down 2>/dev/null || true
+	fi
 	ip -4 route flush table "$TABLE" 2>/dev/null || true
 	nft delete table inet gfc 2>/dev/null || true
 	nft delete table inet gfc_client_mangle 2>/dev/null || true
@@ -355,6 +413,14 @@ apply_wan_nat() {
 			fi
 		fi
 		[ -n "$masq_match" ] || masq_match="    ip saddr $LAN_CIDR accept"
+	fi
+	if [ "$(load_transport)" = "awg" ]; then
+		awg_inner="$(load_awg_inner_ip)"
+		if [ -n "$awg_inner" ]; then
+			masq_match="$masq_match
+    oifname \"$AWG_IFACE\" meta nfproto ipv4 snat ip to $awg_inner
+    oifname \"$AWG_IFACE\" tcp flags syn tcp option maxseg size set $AWG_MSS"
+		fi
 	fi
 	err="$(mktemp)"
 	nft delete table inet nat 2>/dev/null || true
@@ -1676,8 +1742,8 @@ refresh_trans() {
 	write_bypass_unbound_acl
 	if ip link show "$TUN_IFACE" >/dev/null 2>&1; then
 		# start_rules may have exited on flock/TUN wait before this route existed.
-		ip -4 route replace default dev "$TUN_IFACE" table "$TABLE" || \
-			echo "WARN: policy table $TABLE default via $TUN_IFACE failed" >&2
+		ip -4 route replace default dev "$(active_egress_iface)" table "$TABLE" || \
+			echo "WARN: policy table $TABLE default via $(active_egress_iface) failed" >&2
 		apply_bypass_policy_host_routes
 		apply_bypass_fib_rules
 	fi
@@ -1942,6 +2008,7 @@ $forward_customer
 ${output_customer_rule}
 ${cn_output_rule}
     ip daddr @bypass_ip counter meta mark set 0x00000000 ct mark set 0x00000000 return
+$(awg_output_exclude_rule)
     # --- GFC_USER_OVERLAY_OUTPUT_BEGIN (after bypass_ip / before catch-all mark) ---
     jump output_user_overlay
     # --- GFC_USER_OVERLAY_OUTPUT_END ---
@@ -2023,10 +2090,12 @@ table inet gfc_client_mangle {
     meta mark != 0x00000000 accept
     oif "lo" return
     oifname "$TUN_IFACE" return
+    oifname "$AWG_IFACE" return
     iifname "$TUN_IFACE" return
     meta skuid $SINGBOX_UID return
     meta l4proto tcp tcp sport $SSH_PORT return
     udp dport 123 return
+$(awg_output_exclude_byst)
     oifname "$WAN_IFACE" meta l4proto != tcp jump classify_non_tcp
   }
 
@@ -2041,6 +2110,7 @@ table inet gfc_client_mangle {
     meta mark != 0x00000000 accept
     oif "lo" return
     oifname "$TUN_IFACE" return
+    oifname "$AWG_IFACE" return
     meta skuid $SINGBOX_UID return
     meta l4proto tcp tcp sport $SSH_PORT return
     iifname "$WAN_IFACE" meta l4proto tcp ip daddr != @cn_ip redirect to :$REDIRECT_PORT
@@ -2226,6 +2296,10 @@ start_rules() {
 	if [ "$(load_proxy_mode)" = "transparent" ]; then
 		apply_trans_netdev || echo "WARN: netdev gfc_trans apply failed; L2 fail-open" >&2
 	fi
+	if [ -x "$GFC_ROOT/deploy/immortalwrt/gfc-awg.sh" ]; then
+		sh "$GFC_ROOT/deploy/immortalwrt/gfc-awg.sh" apply || \
+			echo "WARN: awg apply failed; keeping $TUN_IFACE path" >&2
+	fi
 	wait_tun || {
 		echo "WARN: $TUN_IFACE not up; DNS hijack and CN policy set applied, policy route deferred (hotplug 99-gfc-tun will apply when TUN appears)" >&2
 		exit 0
@@ -2235,14 +2309,14 @@ start_rules() {
 	fi
 	_clear_fwmark_rules
 	ip -4 rule add pref 100 fwmark "$MARK" lookup "$TABLE" || echo "WARN: ip rule add fwmark $MARK failed" >&2
-	ip -4 route replace default dev "$TUN_IFACE" table "$TABLE" || echo "WARN: policy table $TABLE default via $TUN_IFACE failed" >&2
+	ip -4 route replace default dev "$(active_egress_iface)" table "$TABLE" || echo "WARN: policy table $TABLE default via $(active_egress_iface) failed" >&2
 	apply_bypass_policy_host_routes
 	apply_bypass_fib_rules
 	ip -4 route flush cache 2>/dev/null || true
 	if [ -x "$GFC_ROOT/deploy/apply-tc-htb.sh" ]; then
 		sh "$GFC_ROOT/deploy/apply-tc-htb.sh" apply 2>/dev/null || true
 	fi
-	echo "gfc routing: scheme=$ROUTING_SCHEME proxy=$(load_proxy_mode) mode=$(load_routing_mode) lan=$LAN_IFACE wan=$WAN_IFACE cidr=$LAN_CIDR mark=$MARK table=$TABLE redirect=$REDIRECT_PORT ssh=$SSH_PORT priority=$NFT_PRIORITY output=$OUTPUT_POLICY mosdns_uid=$MOSDNS_UID singbox_uid=$SINGBOX_UID cn=$CN_LIST bypass=$BYPASS_AUDIT"
+	echo "gfc routing: scheme=$ROUTING_SCHEME proxy=$(load_proxy_mode) mode=$(load_routing_mode) transport=$(load_transport) lan=$LAN_IFACE wan=$WAN_IFACE cidr=$LAN_CIDR mark=$MARK table=$TABLE redirect=$REDIRECT_PORT ssh=$SSH_PORT priority=$NFT_PRIORITY output=$OUTPUT_POLICY mosdns_uid=$MOSDNS_UID singbox_uid=$SINGBOX_UID cn=$CN_LIST bypass=$BYPASS_AUDIT"
 }
 
 acquire_action_lock

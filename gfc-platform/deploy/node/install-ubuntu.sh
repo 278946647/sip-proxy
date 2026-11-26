@@ -58,6 +58,30 @@ apt-get update -qq
 apt-get install -y -qq python3 python3-venv python3-pip curl rsync nftables openvpn \
   iproute2 systemd ca-certificates logrotate
 
+# AmneziaWG is optional: never block the existing reality service on failure.
+# Set GFC_AWG_SKIP_INSTALL=1 when the kernel module is managed out-of-band.
+if [[ "${GFC_AWG_SKIP_INSTALL:-0}" != "1" ]]; then
+  echo "==> Install AmneziaWG (kernel kmod preferred, DKMS fallback)"
+  if command -v awg >/dev/null 2>&1 && modinfo amneziawg >/dev/null 2>&1; then
+    echo "    AWG already present: $(awg --version 2>/dev/null | head -1 || echo unknown)"
+  else
+    apt-get install -y -qq software-properties-common >/dev/null 2>&1 || true
+    if add-apt-repository -y ppa:amnezia/ppa >/dev/null 2>&1; then
+      apt-get update -qq || true
+      if apt-get install -y -qq amneziawg; then
+        echo "    AWG installed: $(awg --version 2>/dev/null | head -1 || echo unknown)"
+      else
+        echo "    WARN: amneziawg package install failed; reality service unaffected"
+      fi
+    else
+      echo "    WARN: cannot add amneziawg PPA; install kmod + awg-quick manually"
+    fi
+  fi
+  if ! modinfo amneziawg >/dev/null 2>&1; then
+    echo "    WARN: kernel module amneziawg missing — awg lines will fail until installed"
+  fi
+fi
+
 mkdir -p "$GFC_ROOT" /etc/gfc-node /var/log/gfc-node \
   "$GFC_ROOT/node-agent/state/dataplane"
 

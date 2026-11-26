@@ -6,7 +6,8 @@ import json
 import uuid
 from typing import Any
 
-from .models import Line, Node, SocksProfile
+from .models import AwgPeer, Line, Node, SocksProfile
+from .awg_util import decrypt_secret, ensure_node_awg_config
 from .platform_secrets import get_primary_bootstrap_token
 from .reality_util import ensure_node_reality_config
 from .hy2_util import (
@@ -135,6 +136,8 @@ def _build_client_ingress(
                 "livePlatforms": parse_line_platforms(line),
                 "hy2Password": hy2_password,
                 "hy2Brutal": bool(getattr(line, "hy2_brutal_enabled", True)),
+                "transport": getattr(line, "transport", None) or "reality",
+                "awgInnerIp": getattr(line, "awg_inner_ip", None),
                 "outbound": outbound,
             }
         )
@@ -184,11 +187,44 @@ def build_node_payload(
     lines: list[Line],
     socks_by_id: dict[int, SocksProfile],
     live_catalog: dict[str, Any] | None = None,
+    awg_peers: list[AwgPeer] | None = None,
 ) -> dict[str, Any]:
     rules = _build_forward_rules(lines, socks_by_id)
     client_ingress = _build_client_ingress(lines, socks_by_id)
     reality = ensure_node_reality_config(node.reality_config_json)
     hy2 = ensure_node_hy2_config(node.hysteria2_config_json)
+    awg_raw = getattr(node, "awg_config_json", None)
+    if awg_raw or awg_peers:
+        awg = ensure_node_awg_config(
+            awg_raw,
+            getattr(node, "awg_pool_cidr", None) or "10.66.0.0/16",
+        )
+    else:
+        awg = {
+            "enabled": False,
+            "iface": "awg0",
+            "listenPort": 51820,
+            "serverInnerIp": "",
+            "serverPrivateKey": "",
+            "serverPublicKey": "",
+            "mtu": 1408,
+            "paramsVersion": 1,
+            "obfuscation": {},
+            "checksum": "",
+        }
+    awg_peer_rows: list[dict[str, Any]] = []
+    for peer in awg_peers or []:
+        if (peer.status or "active") != "active":
+            continue
+        awg_peer_rows.append(
+            {
+                "lineId": peer.line_id,
+                "innerIp": peer.inner_ip,
+                "publicKey": peer.public_key,
+                "presharedKey": decrypt_secret(peer.preshared_key_enc) or None,
+            }
+        )
+    awg_enabled = bool(awg.get("enabled", True) and awg_peer_rows)
     try:
         old_hy2 = json.loads(node.hysteria2_config_json or "{}")
     except (json.JSONDecodeError, TypeError):
@@ -224,15 +260,34 @@ def build_node_payload(
                     auto_cidrs.append(c)
             static_routes = _merge_static_routes(static_routes, auto_cidrs, tproxy_iface)
 
+    if awg_enabled and not tproxy_iface:
+        # No other tunnel ingress; AWG decap traffic is the TPROXY ingress.
+        tproxy_iface = str(awg.get("iface") or "awg0")
+
     if client_ingress["users"] and not node.reality_config_json:
         pass  # persisted when line is created on control plane
 
     payload: dict[str, Any] = {
+        "configSchemaVersion": 2,
         "nodeId": node.id,
         "nodeName": node.name,
         "connectMode": connect_mode,
+        "transport": "awg" if awg_enabled else "reality",
         "vpn": vpn,
         "tproxyIface": tproxy_iface,
+        "awg": {
+            "enabled": awg_enabled,
+            "iface": str(awg.get("iface") or "awg0"),
+            "listenPort": int(awg.get("listenPort") or 51820),
+            "serverInnerIp": str(awg.get("serverInnerIp") or ""),
+            "serverPrivateKey": str(awg.get("serverPrivateKey") or ""),
+            "serverPublicKey": str(awg.get("serverPublicKey") or ""),
+            "mtu": int(awg.get("mtu") or 1408),
+            "paramsVersion": int(awg.get("paramsVersion") or 1),
+            "obfuscation": dict(awg.get("obfuscation") or {}),
+            "checksum": str(awg.get("checksum") or ""),
+            "peers": awg_peer_rows,
+        },
         "bootstrapToken": get_primary_bootstrap_token(),
         "staticRoutes": static_routes,
         "clientIngress": {

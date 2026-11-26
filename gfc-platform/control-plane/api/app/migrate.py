@@ -27,6 +27,12 @@ def _migrate_sync(sync_conn: Connection) -> None:
         "static_routes_json": "ALTER TABLE nodes ADD COLUMN static_routes_json TEXT",
         "reality_config_json": "ALTER TABLE nodes ADD COLUMN reality_config_json TEXT",
         "hysteria2_config_json": "ALTER TABLE nodes ADD COLUMN hysteria2_config_json TEXT",
+        "awg_config_json": "ALTER TABLE nodes ADD COLUMN awg_config_json TEXT",
+        "awg_capable": "ALTER TABLE nodes ADD COLUMN awg_capable BOOLEAN DEFAULT 0",
+        "awg_kernel_version": "ALTER TABLE nodes ADD COLUMN awg_kernel_version VARCHAR(64)",
+        "awg_pool_cidr": (
+            "ALTER TABLE nodes ADD COLUMN awg_pool_cidr VARCHAR(64) DEFAULT '10.66.0.0/16'"
+        ),
     }
     line_cols = {
         "tid": "ALTER TABLE lines ADD COLUMN tid VARCHAR(64)",
@@ -48,6 +54,15 @@ def _migrate_sync(sync_conn: Connection) -> None:
         "hy2_password": "ALTER TABLE lines ADD COLUMN hy2_password VARCHAR(128)",
         "hy2_brutal_enabled": "ALTER TABLE lines ADD COLUMN hy2_brutal_enabled BOOLEAN DEFAULT 1",
         "live_platforms_json": "ALTER TABLE lines ADD COLUMN live_platforms_json TEXT",
+        "transport": "ALTER TABLE lines ADD COLUMN transport VARCHAR(16) DEFAULT 'reality'",
+        "awg_inner_ip": "ALTER TABLE lines ADD COLUMN awg_inner_ip VARCHAR(45)",
+        "awg_params_version": "ALTER TABLE lines ADD COLUMN awg_params_version INTEGER",
+        "transport_override": "ALTER TABLE lines ADD COLUMN transport_override VARCHAR(16)",
+        "transport_updated_at": "ALTER TABLE lines ADD COLUMN transport_updated_at DATETIME",
+        "transport_updated_by": "ALTER TABLE lines ADD COLUMN transport_updated_by VARCHAR(64)",
+        "min_firmware_version": (
+            "ALTER TABLE lines ADD COLUMN min_firmware_version VARCHAR(32)"
+        ),
     }
     node_traffic_cols = {
         "traffic_monitor_iface": "ALTER TABLE nodes ADD COLUMN traffic_monitor_iface VARCHAR(64)",
@@ -392,6 +407,69 @@ def _migrate_sync(sync_conn: Connection) -> None:
             text(
                 "CREATE INDEX IF NOT EXISTS idx_live_capture_platform "
                 "ON live_capture_candidates(platform_id, status)"
+            )
+        )
+
+    if not _table_exists(sync_conn, "awg_peers"):
+        sync_conn.execute(
+            text(
+                """
+                CREATE TABLE awg_peers (
+                    id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                    line_id INTEGER NOT NULL,
+                    node_id INTEGER NOT NULL,
+                    inner_ip VARCHAR(45) NOT NULL,
+                    public_key VARCHAR(64) NOT NULL,
+                    private_key_enc TEXT NOT NULL,
+                    preshared_key_enc TEXT,
+                    status VARCHAR(16) DEFAULT 'active',
+                    key_version INTEGER DEFAULT 1,
+                    rotated_at DATETIME,
+                    revoked_at DATETIME,
+                    created_at DATETIME,
+                    FOREIGN KEY(line_id) REFERENCES lines (id) ON DELETE CASCADE,
+                    FOREIGN KEY(node_id) REFERENCES nodes (id) ON DELETE CASCADE,
+                    UNIQUE (line_id),
+                    UNIQUE (node_id, inner_ip)
+                )
+                """
+            )
+        )
+        sync_conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS idx_awg_peers_node "
+                "ON awg_peers(node_id, status)"
+            )
+        )
+
+    if not _table_exists(sync_conn, "transport_switch_logs"):
+        sync_conn.execute(
+            text(
+                """
+                CREATE TABLE transport_switch_logs (
+                    id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                    line_id INTEGER NOT NULL,
+                    operator_id VARCHAR(64) NOT NULL,
+                    from_transport VARCHAR(16) NOT NULL,
+                    to_transport VARCHAR(16) NOT NULL,
+                    reason_category VARCHAR(32) NOT NULL,
+                    reason_text TEXT NOT NULL,
+                    before_state_json TEXT,
+                    after_state_json TEXT,
+                    result VARCHAR(16) DEFAULT 'pending',
+                    requested_at DATETIME,
+                    applied_at DATETIME,
+                    verified_at DATETIME,
+                    note TEXT,
+                    FOREIGN KEY(line_id) REFERENCES lines (id) ON DELETE CASCADE
+                )
+                """
+            )
+        )
+        sync_conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS idx_transport_switch_line "
+                "ON transport_switch_logs(line_id, requested_at)"
             )
         )
 

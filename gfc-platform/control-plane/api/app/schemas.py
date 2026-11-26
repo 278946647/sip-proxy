@@ -185,6 +185,9 @@ class LineCreateIn(BaseModel):
     remark: str | None = None
     socks_remark: str | None = None
     created_by: str = "admin"
+    transport: str = Field(default="reality", pattern="^(reality|awg)$")
+    awg_inner_ip: str | None = Field(default=None, pattern=r"^([0-9]{1,3}\.){3}[0-9]{1,3}(/32)?$")
+    min_firmware_version: str | None = None
 
 
 class LineUpdateIn(BaseModel):
@@ -205,6 +208,8 @@ class LineUpdateIn(BaseModel):
     name: str | None = None
     flow_stats_enabled: bool | None = None
     socks_udp_over_tcp: bool | None = None
+    awg_inner_ip: str | None = Field(default=None, pattern=r"^([0-9]{1,3}\.){3}[0-9]{1,3}(/32)?$")
+    min_firmware_version: str | None = None
 
 
 class LineListItem(BaseModel):
@@ -227,6 +232,10 @@ class LineListItem(BaseModel):
     line_type: str
     client_device_id: int | None = None
     client_device_name: str | None = None
+    transport: str = "reality"
+    awg_inner_ip: str | None = None
+    awg_params_version: int | None = None
+    health_status: str = "unknown"
 
 
 class LineDetailOut(LineListItem):
@@ -246,6 +255,49 @@ class LineDetailOut(LineListItem):
     hy2_port: int = 18443
     live_resolve_status: str | None = None
     live_resolve_at: dt.datetime | None = None
+    awg_public_key: str | None = None
+    min_firmware_version: str | None = None
+    transport_updated_at: dt.datetime | None = None
+    transport_updated_by: str | None = None
+
+
+class TransportSwitchIn(BaseModel):
+    target: str = Field(pattern="^reality$")
+    reason_category: str = Field(
+        pattern="^(udp_blocked|packet_loss|latency|maintenance|other)$"
+    )
+    reason_text: str = Field(min_length=1, max_length=2000)
+    confirm_impact: bool
+    expected_from_transport: str = Field(pattern="^(reality|awg)$")
+
+
+class TransportSwitchOut(BaseModel):
+    switch_id: int
+    line_id: int
+    from_transport: str
+    to_transport: str
+    result: str
+    before_state: dict[str, Any] = Field(default_factory=dict)
+    after_state: dict[str, Any] = Field(default_factory=dict)
+
+
+class TransportVerifyIn(BaseModel):
+    verified: bool = True
+    note: str | None = None
+
+
+class ReapplyAwgIn(BaseModel):
+    reason_text: str = Field(min_length=1, max_length=2000)
+    confirm_impact: bool
+
+
+class LineHealthOut(BaseModel):
+    line_id: int
+    transport: str
+    status: str = "unknown"
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    thresholds: dict[str, Any] = Field(default_factory=dict)
+    evaluated_at: dt.datetime | None = None
 
 
 class LivePlatformOut(BaseModel):

@@ -5,6 +5,7 @@ import hashlib
 import json
 from typing import Any
 
+from .awg_util import decrypt_secret, ensure_node_awg_config
 from .hy2_util import (
     HY2_DEFAULT_PORT,
     HY2_DEFAULT_SNI,
@@ -99,8 +100,9 @@ async def build_client_payload_async(
     node: Node,
     socks: SocksProfile | None,
     session: Any,
+    awg_peer: Any | None = None,
 ) -> dict[str, Any]:
-    payload = build_client_payload(device, line, node, socks)
+    payload = build_client_payload(device, line, node, socks, awg_peer)
     live_ip = await build_client_live_ip(session, device.line_id or 0, line)
     if live_ip:
         if int(live_ip.get("lineId") or 0) != line.id:
@@ -115,6 +117,7 @@ def build_client_payload(
     line: Line,
     node: Node,
     socks: SocksProfile | None,
+    awg_peer: Any | None = None,
 ) -> dict[str, Any]:
     reality = ensure_node_reality_config(node.reality_config_json)
     hy2 = ensure_node_hy2_config(node.hysteria2_config_json)
@@ -150,7 +153,7 @@ def build_client_payload(
     bw = int(line.bandwidth_mbps or 5)
     hy2_mbps = brutal_mbps(bw, enabled=brutal_on)
 
-    return {
+    payload: dict[str, Any] = {
         "deviceId": device.id,
         "deviceName": device.name,
         "lineId": line.id,
@@ -191,6 +194,43 @@ def build_client_payload(
             "intlServer": "1.1.1.1",
             "domesticServer": "223.5.5.5",
         },
+    }
+
+    transport = (getattr(line, "transport", None) or "reality").strip().lower()
+    if transport == "awg":
+        if not awg_peer:
+            raise ValueError("awg line has no active AwgPeer")
+        payload["configSchemaVersion"] = 3
+        payload["transport"] = "awg"
+        payload["autoSwitch"] = False
+        payload["manualSwitchTargets"] = ["reality"]
+        payload["minFirmwareVersion"] = (
+            getattr(line, "min_firmware_version", None) or "2.2.0"
+        )
+        payload["awg"] = _build_awg_client_block(line, node, awg_peer)
+    return payload
+
+
+def _build_awg_client_block(line: Line, node: Node, awg_peer: Any) -> dict[str, Any]:
+    awg_cfg = ensure_node_awg_config(
+        getattr(node, "awg_config_json", None),
+        getattr(node, "awg_pool_cidr", None) or "10.66.0.0/16",
+    )
+    endpoint_host = (node.public_ip or "").strip()
+    if not endpoint_host:
+        raise ValueError("awg line requires node public_ip")
+    return {
+        "iface": "awg0",
+        "innerIp": awg_peer.inner_ip,
+        "endpoint": f"{endpoint_host}:{int(awg_cfg.get('listenPort') or 51820)}",
+        "privateKey": decrypt_secret(awg_peer.private_key_enc),
+        "serverPublicKey": str(awg_cfg.get("serverPublicKey") or ""),
+        "presharedKey": decrypt_secret(awg_peer.preshared_key_enc) or None,
+        "paramsVersion": int(awg_cfg.get("paramsVersion") or 1),
+        "obfuscation": dict(awg_cfg.get("obfuscation") or {}),
+        "checksum": str(awg_cfg.get("checksum") or ""),
+        "mtu": int(awg_cfg.get("mtu") or 1408),
+        "persistentKeepalive": 25,
     }
 
 
