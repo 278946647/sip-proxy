@@ -17,6 +17,7 @@ from typing import Any
 AWG_IFACE = "awg0"
 AWG_DIR = Path(os.environ.get("GFC_AWG_DIR", "/etc/amnezia/amneziawg"))
 AWG_CONF = AWG_DIR / "awg0.conf"
+AWG_SETCONF = AWG_DIR / "awg0.setconf"
 AWG_STATE = AWG_DIR / "awg0.applied"
 
 _REQUIRED_PARAMS = ("jc", "jmin", "jmax", "s1", "s2", "h1", "h2", "h3", "h4")
@@ -64,29 +65,42 @@ def validate_awg_config(awg: dict[str, Any]) -> list[str]:
     return errors
 
 
-def render_awg_config(awg: dict[str, Any]) -> str:
+def render_awg_config(awg: dict[str, Any], *, setconf_only: bool = False) -> str:
+    """Render awg0.conf; setconf_only drops Address/MTU/Table/PostUp for `awg setconf`."""
     cfg = _interface(awg)
     params = cfg["obfuscation"]
-    lines = [
-        "[Interface]",
-        f"Address = {cfg['serverInnerIp']}",
-        f"ListenPort = {cfg['listenPort']}",
-        f"MTU = {cfg['mtu']}",
-        f"PrivateKey = {cfg['privateKey']}",
-        # Table=auto installs a /32 return route for every peer.
-        "Table = auto",
-        f"Jc = {int(params.get('jc', 0))}",
-        f"Jmin = {int(params.get('jmin', 0))}",
-        f"Jmax = {int(params.get('jmax', 0))}",
-        f"S1 = {int(params.get('s1', 0))}",
-        f"S2 = {int(params.get('s2', 0))}",
-        f"H1 = {int(params.get('h1', 0))}",
-        f"H2 = {int(params.get('h2', 0))}",
-        f"H3 = {int(params.get('h3', 0))}",
-        f"H4 = {int(params.get('h4', 0))}",
-        "PostUp = sysctl -w net.ipv4.ip_forward=1",
-        "PostDown = true",
-    ]
+    lines = ["[Interface]"]
+    if not setconf_only:
+        lines.extend(
+            [
+                f"Address = {cfg['serverInnerIp']}",
+                f"MTU = {cfg['mtu']}",
+                # Table=auto installs a /32 return route for every peer.
+                "Table = auto",
+            ]
+        )
+    lines.extend(
+        [
+            f"ListenPort = {cfg['listenPort']}",
+            f"PrivateKey = {cfg['privateKey']}",
+            f"Jc = {int(params.get('jc', 0))}",
+            f"Jmin = {int(params.get('jmin', 0))}",
+            f"Jmax = {int(params.get('jmax', 0))}",
+            f"S1 = {int(params.get('s1', 0))}",
+            f"S2 = {int(params.get('s2', 0))}",
+            f"H1 = {int(params.get('h1', 0))}",
+            f"H2 = {int(params.get('h2', 0))}",
+            f"H3 = {int(params.get('h3', 0))}",
+            f"H4 = {int(params.get('h4', 0))}",
+        ]
+    )
+    if not setconf_only:
+        lines.extend(
+            [
+                "PostUp = sysctl -w net.ipv4.ip_forward=1",
+                "PostDown = true",
+            ]
+        )
     for name in ("s3", "s4"):
         if name in params:
             lines.append(f"{name.upper()} = {int(params[name])}")
@@ -116,6 +130,78 @@ def _run(cmd: list[str]) -> tuple[bool, str]:
     return r.returncode == 0, (r.stderr or r.stdout or "").strip()
 
 
+def _add_setconf_routes(setconf_path: Path) -> None:
+    try:
+        text = setconf_path.read_text(encoding="utf-8")
+    except OSError:
+        return
+    for line in text.splitlines():
+        if not line.startswith("AllowedIPs = "):
+            continue
+        for cidr in line.split("=", 1)[1].split(","):
+            cidr = cidr.strip()
+            if cidr:
+                _run(["ip", "route", "replace", cidr, "dev", AWG_IFACE])
+
+
+def _manual_up(awg: dict[str, Any], setconf_path: Path) -> tuple[bool, str]:
+    """Fallback when awg-quick is not shipped: ip + awg setconf, same as OpenWrt."""
+    cfg = _interface(awg)
+    _run(["modprobe", "amneziawg"])
+    if awg_iface_up():
+        _run(["ip", "link", "del", AWG_IFACE])
+    steps = [
+        ["ip", "link", "add", "dev", AWG_IFACE, "type", "amneziawg"],
+        ["ip", "addr", "add", cfg["serverInnerIp"], "dev", AWG_IFACE],
+        ["ip", "link", "set", "dev", AWG_IFACE, "mtu", str(cfg["mtu"]), "up"],
+        ["sysctl", "-w", "net.ipv4.ip_forward=1"],
+        ["awg", "setconf", AWG_IFACE, str(setconf_path)],
+    ]
+    for cmd in steps:
+        ok, msg = _run(cmd)
+        if not ok:
+            return False, f"{' '.join(cmd[:3])}: {msg}"
+    _add_setconf_routes(setconf_path)
+    return True, ""
+
+
+def _restore(backup: Path, setconf_backup: Path) -> None:
+    try:
+        old_text = backup.read_text(encoding="utf-8")
+        old_addr = ""
+        old_mtu = 1408
+        for line in old_text.splitlines():
+            if line.startswith("Address = "):
+                old_addr = line.split("=", 1)[1].strip()
+            elif line.startswith("MTU = "):
+                try:
+                    old_mtu = int(line.split("=", 1)[1].strip())
+                except ValueError:
+                    old_mtu = 1408
+        if not old_addr:
+            return
+        shutil.copy2(backup, AWG_CONF)
+        shutil.copy2(setconf_backup, AWG_SETCONF)
+        os.chmod(AWG_CONF, 0o600)
+        os.chmod(AWG_SETCONF, 0o600)
+        if shutil.which("awg-quick"):
+            _run(["awg-quick", "up", AWG_IFACE])
+        else:
+            _manual_up(
+                {
+                    "serverInnerIp": old_addr,
+                    "mtu": old_mtu,
+                    "peers": [],
+                    "obfuscation": {},
+                    "listenPort": 51820,
+                    "serverPrivateKey": "",
+                },
+                AWG_SETCONF,
+            )
+    except OSError:
+        pass
+
+
 def apply_awg(awg: dict[str, Any] | None) -> tuple[bool, str]:
     """Render + apply awg0. Idempotent; restores the previous config on failure."""
     if not awg or not awg.get("enabled"):
@@ -125,38 +211,47 @@ def apply_awg(awg: dict[str, Any] | None) -> tuple[bool, str]:
         return False, "awg config invalid: " + "; ".join(errors)
 
     text = render_awg_config(awg)
+    setconf_text = render_awg_config(awg, setconf_only=True)
     AWG_DIR.mkdir(parents=True, exist_ok=True)
     os.chmod(AWG_DIR, 0o700)
     backup = AWG_DIR / "awg0.conf.bak"
-    if AWG_CONF.exists():
+    setconf_backup = AWG_DIR / "awg0.setconf.bak"
+    if AWG_CONF.exists() and AWG_SETCONF.exists():
         try:
-            if AWG_CONF.read_text(encoding="utf-8") == text and awg_iface_up():
+            unchanged = (
+                AWG_CONF.read_text(encoding="utf-8") == text
+                and AWG_SETCONF.read_text(encoding="utf-8") == setconf_text
+            )
+            if unchanged and awg_iface_up():
                 return True, f"awg unchanged ({AWG_IFACE} up)"
             shutil.copy2(AWG_CONF, backup)
+            shutil.copy2(AWG_SETCONF, setconf_backup)
         except OSError:
             pass
-    tmp = AWG_DIR / "awg0.conf.tmp"
-    tmp.write_text(text, encoding="utf-8")
-    os.chmod(tmp, 0o600)
-    tmp.replace(AWG_CONF)
-    os.chmod(AWG_CONF, 0o600)
 
-    if awg_iface_up():
-        _run(["awg-quick", "down", AWG_IFACE])
-    ok, msg = _run(["awg-quick", "up", AWG_IFACE])
+    for path, body in ((AWG_CONF, text), (AWG_SETCONF, setconf_text)):
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(body, encoding="utf-8")
+        os.chmod(tmp, 0o600)
+        tmp.replace(path)
+        os.chmod(path, 0o600)
+
+    if shutil.which("awg-quick"):
+        if awg_iface_up():
+            _run(["awg-quick", "down", AWG_IFACE])
+        ok, msg = _run(["awg-quick", "up", AWG_IFACE])
+        detail = "awg-quick up failed: " + msg
+    else:
+        ok, msg = _manual_up(awg, AWG_SETCONF)
+        detail = "manual ip/awg setconf failed: " + msg
+
     if ok:
         AWG_STATE.write_text(
             str(int(awg.get("paramsVersion") or 0)), encoding="utf-8"
         )
         return True, f"awg0 up (port {_interface(awg)['listenPort']})"
-    if backup.exists():
-        try:
-            shutil.copy2(backup, AWG_CONF)
-            os.chmod(AWG_CONF, 0o600)
-            _run(["awg-quick", "up", AWG_IFACE])
-        except OSError:
-            pass
-    return False, "awg-quick up failed: " + msg
+    _restore(backup, setconf_backup)
+    return False, detail
 
 
 def peers_dump() -> list[dict[str, Any]]:

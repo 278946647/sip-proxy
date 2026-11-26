@@ -176,7 +176,7 @@ merge_gfc_config() {
     kmod-wireguard kmod-udptunnel4 kmod-udptunnel6 \
     kmod-crypto-lib-chacha20poly1305 kmod-crypto-lib-chacha20 kmod-crypto-lib-poly1305 \
     kmod-crypto-lib-curve25519 kmod-crypto-kpp kmod-crypto-hash \
-    wireguard-tools openvpn-openssl kmod-amneziawg amneziawg-tools bash; do
+    wireguard-tools openvpn-openssl kmod-amneziawg amneziawg-tools; do
     grep -q "^CONFIG_PACKAGE_${pkg}=y$" "$merged" \
       || die "merge skipped required CONFIG_PACKAGE_${pkg}=y (Kconfig missing? feeds install parted/luci/openssh?)"
   done
@@ -261,7 +261,7 @@ verify_dotconfig() {
     kmod-wireguard kmod-udptunnel4 kmod-udptunnel6 \
     kmod-crypto-lib-chacha20poly1305 kmod-crypto-lib-chacha20 kmod-crypto-lib-poly1305 \
     kmod-crypto-lib-curve25519 kmod-crypto-kpp kmod-crypto-hash \
-    wireguard-tools openvpn-openssl kmod-amneziawg amneziawg-tools bash; do
+    wireguard-tools openvpn-openssl kmod-amneziawg amneziawg-tools; do
     grep -q "^CONFIG_PACKAGE_${pkg}=y$" .config || die ".config missing CONFIG_PACKAGE_${pkg}=y"
     # Must use if/then: under set -e, "grep -q && die" returns 1 when absent and aborts the script.
     if grep -qE "^# CONFIG_PACKAGE_${pkg} is not set$" .config; then
@@ -450,6 +450,42 @@ build_packages() {
     || die "losetup ipk not produced — use CONFIG_PACKAGE_losetup=y"
   compile_r16_service_baseline
   compile_oem_vpn_packages
+  compile_awg_packages
+}
+
+# AmneziaWG: external src-git feed, incremental build does NOT build new =y pkgs.
+# kmod-amneziawg is compiled against this tree's kernel (no vermagic mismatch).
+compile_awg_packages() {
+  local kmod_tgt="" tools_tgt="" cand
+  cd "$IMT_SRC"
+  log "compile kmod-amneziawg / amneziawg-tools (AWG dataplane)"
+  for cand in package/feeds/awg/kmod-amneziawg package/feeds/*/kmod-amneziawg; do
+    [[ -d "$cand" ]] && kmod_tgt="$cand" && break
+  done
+  for cand in package/feeds/awg/amneziawg-tools package/feeds/*/amneziawg-tools; do
+    [[ -d "$cand" ]] && tools_tgt="$cand" && break
+  done
+  if [[ -z "$kmod_tgt" || -z "$tools_tgt" ]]; then
+    log "AWG feed packages not installed — registering feed"
+    IMT_SRC="$IMT_SRC" bash "$GFC_DEPLOY/scripts/setup-amneziawg-feed.sh" install
+    for cand in package/feeds/awg/kmod-amneziawg package/feeds/*/kmod-amneziawg; do
+      [[ -d "$cand" ]] && kmod_tgt="$cand" && break
+    done
+    for cand in package/feeds/awg/amneziawg-tools package/feeds/*/amneziawg-tools; do
+      [[ -d "$cand" ]] && tools_tgt="$cand" && break
+    done
+  fi
+  [[ -n "$kmod_tgt" ]] || die "kmod-amneziawg missing under package/feeds (run setup-amneziawg-feed.sh)"
+  [[ -n "$tools_tgt" ]] || die "amneziawg-tools missing under package/feeds (run setup-amneziawg-feed.sh)"
+  make "${kmod_tgt}/compile" -j"$JOBS" V=s \
+    || die "kmod-amneziawg compile failed (check kernel headers / module API)"
+  make "${tools_tgt}/compile" -j"$JOBS" V=s \
+    || die "amneziawg-tools compile failed"
+  find bin -name 'kmod-amneziawg_*.ipk' -print | grep -q . \
+    || die "kmod-amneziawg ipk not produced — compile target ${kmod_tgt} failed?"
+  find bin -name 'amneziawg-tools_*.ipk' -print | grep -q . \
+    || die "amneziawg-tools ipk not produced — compile target ${tools_tgt} failed?"
+  log "AWG ipks present: kmod-amneziawg + amneziawg-tools (awg binary)"
 }
 
 # r16-necessary services newly pinned in gfc-packages.config — must be compiled
@@ -1559,9 +1595,13 @@ verify_manifest() {
   log "ORIG trans kmods: $dummy_ko $veth_ko $fwd_ko"
   for pkg in kmod-wireguard kmod-udptunnel4 kmod-udptunnel6 \
     kmod-crypto-lib-chacha20poly1305 kmod-crypto-lib-curve25519 \
-    wireguard-tools openvpn-openssl kmod-amneziawg amneziawg-tools bash; do
+    wireguard-tools openvpn-openssl; do
     grep -qE "^${pkg}( |$)" "$manifest" \
       || die "manifest missing ${pkg} (OEM future VPN — check CONFIG_PACKAGE_${pkg}=y)"
+  done
+  for pkg in kmod-amneziawg amneziawg-tools; do
+    grep -qE "^${pkg}( |$)" "$manifest" \
+      || die "manifest missing ${pkg} (AWG — check CONFIG_PACKAGE_${pkg}=y and compile_awg_packages)"
   done
   wg_ko="$(find "$orig/lib/modules" \( -name 'wireguard.ko' -o -name 'wireguard.ko.gz' -o -name 'wireguard.ko.xz' \) 2>/dev/null | head -1)"
   [[ -n "$wg_ko" ]] || die "ORIG missing wireguard.ko — CONFIG_PACKAGE_kmod-wireguard=y did not ship"
@@ -1577,6 +1617,11 @@ verify_manifest() {
     || die "ORIG missing wg binary — CONFIG_PACKAGE_wireguard-tools=y did not ship"
   [[ -x "$orig/usr/sbin/openvpn" || -x "$orig/usr/bin/openvpn" ]] \
     || die "ORIG missing openvpn binary — CONFIG_PACKAGE_openvpn-openssl=y did not ship"
+  awg_ko="$(find "$orig/lib/modules" \( -name 'amneziawg.ko' -o -name 'amneziawg.ko.gz' -o -name 'amneziawg.ko.xz' \) 2>/dev/null | head -1)"
+  [[ -n "$awg_ko" ]] || die "ORIG missing amneziawg.ko — kmod-amneziawg did not ship (compile_awg_packages)"
+  [[ -x "$orig/usr/bin/awg" || -x "$orig/usr/sbin/awg" ]] \
+    || die "ORIG missing awg binary — CONFIG_PACKAGE_amneziawg-tools=y did not ship"
+  log "ORIG AWG: $awg_ko awg=$(ls "$orig/usr/bin/awg" "$orig/usr/sbin/awg" 2>/dev/null | head -1)"
   log "ORIG VPN: $wg_ko wg=$(ls "$orig/usr/bin/wg" "$orig/usr/sbin/wg" 2>/dev/null | head -1) openvpn=$(ls "$orig/usr/sbin/openvpn" "$orig/usr/bin/openvpn" 2>/dev/null | head -1)"
   log "manifest VPN lines:"
   grep -E '^(kmod-wireguard|kmod-udptunnel4|kmod-udptunnel6|kmod-crypto-lib-chacha20poly1305|kmod-crypto-lib-curve25519|wireguard-tools|openvpn-openssl) ' "$manifest" || true
