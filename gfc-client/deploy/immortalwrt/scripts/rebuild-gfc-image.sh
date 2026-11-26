@@ -176,7 +176,7 @@ merge_gfc_config() {
     kmod-wireguard kmod-udptunnel4 kmod-udptunnel6 \
     kmod-crypto-lib-chacha20poly1305 kmod-crypto-lib-chacha20 kmod-crypto-lib-poly1305 \
     kmod-crypto-lib-curve25519 kmod-crypto-kpp kmod-crypto-hash \
-    wireguard-tools openvpn-openssl kmod-amneziawg amneziawg-tools; do
+    wireguard-tools openvpn-openssl kmod-amneziawg amneziawg-tools bash; do
     grep -q "^CONFIG_PACKAGE_${pkg}=y$" "$merged" \
       || die "merge skipped required CONFIG_PACKAGE_${pkg}=y (Kconfig missing? feeds install parted/luci/openssh?)"
   done
@@ -261,7 +261,7 @@ verify_dotconfig() {
     kmod-wireguard kmod-udptunnel4 kmod-udptunnel6 \
     kmod-crypto-lib-chacha20poly1305 kmod-crypto-lib-chacha20 kmod-crypto-lib-poly1305 \
     kmod-crypto-lib-curve25519 kmod-crypto-kpp kmod-crypto-hash \
-    wireguard-tools openvpn-openssl kmod-amneziawg amneziawg-tools; do
+    wireguard-tools openvpn-openssl kmod-amneziawg amneziawg-tools bash; do
     grep -q "^CONFIG_PACKAGE_${pkg}=y$" .config || die ".config missing CONFIG_PACKAGE_${pkg}=y"
     # Must use if/then: under set -e, "grep -q && die" returns 1 when absent and aborts the script.
     if grep -qE "^# CONFIG_PACKAGE_${pkg} is not set$" .config; then
@@ -1559,7 +1559,7 @@ verify_manifest() {
   log "ORIG trans kmods: $dummy_ko $veth_ko $fwd_ko"
   for pkg in kmod-wireguard kmod-udptunnel4 kmod-udptunnel6 \
     kmod-crypto-lib-chacha20poly1305 kmod-crypto-lib-curve25519 \
-    wireguard-tools openvpn-openssl kmod-amneziawg amneziawg-tools; do
+    wireguard-tools openvpn-openssl kmod-amneziawg amneziawg-tools bash; do
     grep -qE "^${pkg}( |$)" "$manifest" \
       || die "manifest missing ${pkg} (OEM future VPN — check CONFIG_PACKAGE_${pkg}=y)"
   done

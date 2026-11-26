@@ -23,6 +23,7 @@ libcap
 libcap-bin
 ca-bundle
 ip-full
+bash
 tc-tiny
 kmod-sched-core
 kmod-ifb
