@@ -453,12 +453,65 @@ build_packages() {
   compile_awg_packages
 }
 
-# AmneziaWG: external src-git feed, incremental build does NOT build new =y pkgs.
-# kmod-amneziawg is compiled against this tree's kernel (no vermagic mismatch).
-compile_awg_packages() {
-  local kmod_tgt="" tools_tgt="" cand
+# Locate the AWG feed output dir: bin/packages/<ARCH_PACKAGES>/awg
+# (feed packages land under per-feed subdirs when CONFIG_PER_FEED_REPO=y).
+awg_output_dir() {
   cd "$IMT_SRC"
-  log "compile kmod-amneziawg / amneziawg-tools (AWG dataplane)"
+  local d arch
+  for d in bin/packages/*/awg; do
+    [[ -d "$d" ]] && { printf '%s\n' "$IMT_SRC/$d"; return 0; }
+  done
+  arch="$(detect_opkg_arch)"
+  printf '%s/bin/packages/%s/awg\n' "$IMT_SRC" "$arch"
+}
+
+# Remove every stale AmneziaWG ipk (any arch / any old vermagic) and the AWG
+# feed's Packages index, so opkg can never resolve a bogus leftover candidate
+# and `find bin -name '*amneziawg*.ipk'` cannot pass a stale file off as fresh.
+clean_awg_output() {
+  cd "$IMT_SRC"
+  local awg_dir
+  awg_dir="$(awg_output_dir)"
+  log "clean stale awg ipks + index (awg_dir=$awg_dir)"
+  find bin -type f -name 'kmod-amneziawg_*.ipk' -delete 2>/dev/null || true
+  find bin -type f -name 'amneziawg-tools_*.ipk' -delete 2>/dev/null || true
+  mkdir -p "$awg_dir"
+  find "$awg_dir" -maxdepth 1 -type f \( \
+    -name 'Packages' -o -name 'Packages.gz' -o -name 'Packages.manifest' \
+    -o -name 'Packages.sig' -o -name 'index.json' \
+  \) -delete 2>/dev/null || true
+}
+
+# Rebuild opkg Packages indexes so a freshly compiled feed ipk is actually
+# visible to make package/install. make <pkg>/compile alone does NOT regenerate
+# the index, and package/install's merge-index only rebuilds the merged index
+# when it is missing — so drop the merged index to force a rebuild.
+refresh_opkg_indexes() {
+  cd "$IMT_SRC"
+  log "refresh opkg package indexes (make package/index)"
+  make package/index -j1 V=s >/dev/null 2>&1 \
+    || log "WARN: make package/index exited nonzero (non-fatal if indexes still regenerate)"
+  local p d
+  while IFS= read -r p; do
+    d="$(dirname "$p")"
+    # Merged index dir holds symlinks to per-feed ipks; per-feed dirs hold real ipks.
+    if find "$d" -maxdepth 1 -type l -name '*.ipk' 2>/dev/null | grep -q .; then
+      log "drop stale merged index to force rebuild: $p"
+      rm -f "$p" "${p}.gz" "${p}.manifest" "${p}.sig" "${d}/index.json" 2>/dev/null || true
+    fi
+  done < <(find bin/packages -maxdepth 2 -type f -name Packages 2>/dev/null)
+}
+
+# AmneziaWG: external src-git feed, incremental build does NOT build new =y pkgs.
+# First compile here is for EARLY FAILURE detection (kernel module API compat).
+# The kmod ABI is re-guaranteed against the *refreshed* kernel vermagic by
+# rebuild_awg_after_kernel_refresh() right before make package/install.
+compile_awg_packages() {
+  local kmod_tgt="" tools_tgt="" cand awg_dir
+  cd "$IMT_SRC"
+  awg_dir="$(awg_output_dir)"
+  log "compile kmod-amneziawg / amneziawg-tools (AWG dataplane) -> $awg_dir"
+  clean_awg_output
   for cand in package/feeds/awg/kmod-amneziawg package/feeds/*/kmod-amneziawg; do
     [[ -d "$cand" ]] && kmod_tgt="$cand" && break
   done
@@ -481,11 +534,77 @@ compile_awg_packages() {
     || die "kmod-amneziawg compile failed (check kernel headers / module API)"
   make "${tools_tgt}/compile" -j"$JOBS" V=s \
     || die "amneziawg-tools compile failed"
-  find bin -name 'kmod-amneziawg_*.ipk' -print | grep -q . \
-    || die "kmod-amneziawg ipk not produced — compile target ${kmod_tgt} failed?"
-  find bin -name 'amneziawg-tools_*.ipk' -print | grep -q . \
-    || die "amneziawg-tools ipk not produced — compile target ${tools_tgt} failed?"
+  # Verify in the CORRECT feed output dir, not any random bin/ leftover match.
+  find "$awg_dir" -maxdepth 1 -type f -name 'kmod-amneziawg_*.ipk' | grep -q . \
+    || die "kmod-amneziawg ipk not produced in $awg_dir — compile target ${kmod_tgt} failed?"
+  find "$awg_dir" -maxdepth 1 -type f -name 'amneziawg-tools_*.ipk' | grep -q . \
+    || die "amneziawg-tools ipk not produced in $awg_dir — compile target ${tools_tgt} failed?"
   log "AWG ipks present: kmod-amneziawg + amneziawg-tools (awg binary)"
+  refresh_opkg_indexes
+}
+
+# kmod-amneziawg is an OUT-OF-TREE feed kmod: unlike in-tree kmods (rebuilt by
+# prepare_package_install_abi's make package/kernel/linux/compile), it is NOT
+# rebuilt when the kernel is cleaned+refreshed. If the vermagic changed, its
+# Depends: kernel (=6.6.x~OLDHASH) no longer matches the current kernel, and
+# make package/install fails with "cannot find dependency kmod-amneziawg" + the
+# misleading "incompatible with the architectures configured" (see the note
+# above prepare_package_install_abi). Recompile + reindex right before
+# package/install so the ABI always matches the refreshed kernel.
+rebuild_awg_after_kernel_refresh() {
+  cd "$IMT_SRC"
+  local hash awg_dir kmod_tgt="" tools_tgt="" cand ipk dep tools_ipk
+  hash="$(read_build_vermagic)" || die "no .vermagic under build_dir — cannot match awg kmod ABI"
+  awg_dir="$(awg_output_dir)"
+  log "rebuild awg kmod/tools against current kernel vermagic=${hash} (awg_dir=$awg_dir)"
+
+  # Fast path: existing ipks already match the current vermagic → only reindex.
+  ipk="$(find "$awg_dir" -maxdepth 1 -type f -name 'kmod-amneziawg_*.ipk' 2>/dev/null | head -1)"
+  if [[ -n "$ipk" ]]; then
+    dep="$(tar -xOf "$ipk" ./control.tar.gz 2>/dev/null | tar -xzO ./control 2>/dev/null \
+      || tar -xOf "$ipk" control.tar.gz 2>/dev/null | tar -xzO control 2>/dev/null || true)"
+    if printf '%s\n' "$dep" | grep -F "$hash" >/dev/null 2>&1; then
+      tools_ipk="$(find "$awg_dir" -maxdepth 1 -type f -name 'amneziawg-tools_*.ipk' 2>/dev/null | head -1)"
+      if [[ -n "$tools_ipk" ]]; then
+        log "awg ipks already match vermagic ${hash} — skip recompile, refresh index only"
+        refresh_opkg_indexes
+        log "awg index entries:"
+        grep -A14 -E '^Package: (kmod-amneziawg|amneziawg-tools)$' "$awg_dir/Packages" 2>/dev/null || true
+        return 0
+      fi
+    fi
+  fi
+
+  clean_awg_output
+  for cand in package/feeds/awg/kmod-amneziawg package/feeds/*/kmod-amneziawg; do
+    [[ -d "$cand" ]] && kmod_tgt="$cand" && break
+  done
+  for cand in package/feeds/awg/amneziawg-tools package/feeds/*/amneziawg-tools; do
+    [[ -d "$cand" ]] && tools_tgt="$cand" && break
+  done
+  [[ -n "$kmod_tgt" ]] || die "kmod-amneziawg missing under package/feeds (run setup-amneziawg-feed.sh)"
+  [[ -n "$tools_tgt" ]] || die "amneziawg-tools missing under package/feeds (run setup-amneziawg-feed.sh)"
+  # clean first: package stamps may say "already compiled" against the OLD kernel.
+  make "${kmod_tgt}/clean" -j1 V=s >/dev/null 2>&1 || true
+  make "${kmod_tgt}/compile" -j"$JOBS" V=s \
+    || die "kmod-amneziawg compile failed after kernel refresh (check kernel headers / module API)"
+  make "${tools_tgt}/clean" -j1 V=s >/dev/null 2>&1 || true
+  make "${tools_tgt}/compile" -j"$JOBS" V=s \
+    || die "amneziawg-tools compile failed after kernel refresh"
+
+  ipk="$(find "$awg_dir" -maxdepth 1 -type f -name 'kmod-amneziawg_*.ipk' 2>/dev/null | head -1)"
+  [[ -n "$ipk" ]] || die "kmod-amneziawg ipk not produced in $awg_dir after refresh"
+  dep="$(tar -xOf "$ipk" ./control.tar.gz 2>/dev/null | tar -xzO ./control 2>/dev/null \
+    || tar -xOf "$ipk" control.tar.gz 2>/dev/null | tar -xzO control 2>/dev/null || true)"
+  printf '%s\n' "$dep" | grep -F "$hash" >/dev/null 2>&1 \
+    || die "kmod-amneziawg ipk control missing vermagic ${hash} — ABI mismatch with current kernel: $(basename "$ipk")"
+  find "$awg_dir" -maxdepth 1 -type f -name 'amneziawg-tools_*.ipk' | grep -q . \
+    || die "amneziawg-tools ipk not produced in $awg_dir after refresh"
+  log "awg kmod ABI OK: $(basename "$ipk") matches kernel vermagic ${hash}"
+
+  refresh_opkg_indexes
+  log "awg index entries:"
+  grep -A14 -E '^Package: (kmod-amneziawg|amneziawg-tools)$' "$awg_dir/Packages" 2>/dev/null || true
 }
 
 # r16-necessary services newly pinned in gfc-packages.config — must be compiled
@@ -1110,6 +1229,10 @@ require_rootfs_populated() {
 install_rootfs() {
   cd "$IMT_SRC"
   prepare_package_install_abi
+  # prepare_package_install_abi may clean+rebuild the kernel, changing the
+  # vermagic. The out-of-tree kmod-amneziawg is NOT rebuilt by that step, so
+  # recompile + reindex it here (ABI-verified) before opkg installs the rootfs.
+  rebuild_awg_after_kernel_refresh
   log "package/install -> populate $ROOTFS_DIR (+ snapshot $ROOTFS_ORIG_DIR)"
   make package/install -j1 V=s
   require_rootfs_populated "$ROOTFS_DIR"
