@@ -25,6 +25,9 @@ BASE_TREE_PACKAGES=(
 # GFC src-link feed
 GFC_FEED_PACKAGES=(gfc-client luci-app-gfc)
 
+# AmneziaWG source feed (src-git, NOT packages/luci): kmod + userspace tools.
+AWG_FEED_PACKAGES=(kmod-amneziawg amneziawg-tools)
+
 # packages / luci feeds
 FEED_PACKAGES=(
   sing-box unbound-daemon unbound-checkconf autossh libcap libcap-bin luci-base
@@ -120,6 +123,12 @@ feeds_install_pkg() {
 diagnose_missing() {
   local name=$1
   log "diagnose missing: $name"
+  if [[ "$name" == "kmod-amneziawg" || "$name" == "amneziawg-tools" ]]; then
+    log "  category: AWG src-git feed (not packages/luci)"
+    log "  fix:  bash $ROOT/scripts/setup-amneziawg-feed.sh"
+    log "  then: bash $ROOT/scripts/rebuild-gfc-image.sh"
+    return 0
+  fi
   if is_base_tree_package "$name"; then
     log "  category: OpenWrt base tree (not a feed package)"
     log "  try: grep -i '${name}' $IMT_SRC/tmp/.packageinfo | head"
@@ -136,6 +145,19 @@ diagnose_missing() {
   fi
 }
 
+ensure_awg_feed() {
+  # AWG kmod/tools come from a src-git feed, not packages/luci. Register once,
+  # idempotently, when they are not yet in packageinfo.
+  local pkg need=0
+  for pkg in "${AWG_FEED_PACKAGES[@]}"; do
+    package_available "$pkg" || need=1
+  done
+  if [[ "$need" -eq 1 ]]; then
+    log "AWG packages missing from packageinfo — registering amneziawg feed"
+    IMT_SRC="$IMT_SRC" bash "$ROOT/scripts/setup-amneziawg-feed.sh" install
+  fi
+}
+
 ensure_package_index() {
   [[ -f "$INDEX" ]] || die "missing index: $INDEX"
   cd "$IMT_SRC"
@@ -146,6 +168,8 @@ ensure_package_index() {
   if ! package_in_packageinfo gfc-client; then
     die "gfc-client not in tmp/.packageinfo — run setup-immortalwrt-feed.sh register-feed first"
   fi
+
+  ensure_awg_feed
 
   local missing=() pkg
   while IFS= read -r pkg; do
