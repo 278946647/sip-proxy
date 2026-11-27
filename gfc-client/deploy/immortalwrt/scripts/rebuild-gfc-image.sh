@@ -478,17 +478,22 @@ awg_kmod_output_dir() {
 # Find the freshly built kmod-amneziawg ipk. Prefer the target dir (the real
 # nonshared landing spot); fall back to the feed dir and a recursive bin/ scan
 # so a layout change never silently breaks the lookup.
+# IMPORTANT: always return 0 (empty output when not found). Callers run under
+# `set -euo pipefail`; if this returned non-zero, `ipk="$(find_awg_kmod_ipk)"`
+# would exit the whole build silently (no ERROR line). Also `|| true` on each
+# find|head pipeline: with pipefail a missing dir makes the pipeline non-zero.
 find_awg_kmod_ipk() {
-  cd "$IMT_SRC"
+  cd "$IMT_SRC" || return 0
   local p tdir fdir
   tdir="bin/targets/x86/64/packages"
   fdir="$(awg_output_dir)"
-  p="$(find "$tdir" -maxdepth 1 -type f -name 'kmod-amneziawg_*.ipk' 2>/dev/null | head -1)"
+  p="$(find "$tdir" -maxdepth 1 -type f -name 'kmod-amneziawg_*.ipk' 2>/dev/null | head -1 || true)"
   [[ -n "$p" ]] && { printf '%s/%s\n' "$IMT_SRC" "$p"; return 0; }
-  p="$(find "$fdir" -maxdepth 1 -type f -name 'kmod-amneziawg_*.ipk' 2>/dev/null | head -1)"
+  p="$(find "$fdir" -maxdepth 1 -type f -name 'kmod-amneziawg_*.ipk' 2>/dev/null | head -1 || true)"
   [[ -n "$p" ]] && { printf '%s\n' "$p"; return 0; }
-  p="$(find bin -type f -name 'kmod-amneziawg_*.ipk' 2>/dev/null | head -1)"
+  p="$(find bin -type f -name 'kmod-amneziawg_*.ipk' 2>/dev/null | head -1 || true)"
   [[ -n "$p" ]] && printf '%s/%s\n' "$IMT_SRC" "$p"
+  return 0
 }
 
 # Print the awg index entries from BOTH the feed index (amneziawg-tools) and the
