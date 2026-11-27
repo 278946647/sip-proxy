@@ -929,11 +929,12 @@ async def create_line(
     if line_type == "forward" and body.socks_profile_id is None:
         raise HTTPException(400, "forward line requires socks profile")
 
-    transport = (body.transport or "reality").strip().lower()
+    transport = (body.transport or "awg").strip().lower()
     if transport not in ("reality", "awg"):
         raise HTTPException(400, "transport 只接受 reality / awg")
+    # AWG 仅适用于客户端线路；转发线路(VyOS 源 IP) 仍走 reality。
     if transport == "awg" and line_type != "client":
-        raise HTTPException(400, "transport=awg 仅支持 client 线路")
+        transport = "reality"
     awg_cfg: dict[str, Any] | None = None
     if transport == "awg":
         awg_cfg = ensure_node_awg_config(
@@ -1201,7 +1202,10 @@ async def reapply_awg(
     session: AsyncSession = Depends(get_session),
     operator: PlatformUser = Depends(get_current_user),
 ) -> TransportSwitchOut:
-    """Restore AWG config (not a switch target). Requires an active peer."""
+    """Switch a line to AWG. Provisions an AWG peer on the node when the line
+    (created as reality) has none yet, so an already-running line can move onto
+    AWG without recreating it (recreating would change tid / client_uuid and
+    break the box's existing line code)."""
     line = await session.get(Line, line_id)
     if not line:
         raise HTTPException(404, "line not found")
@@ -1212,7 +1216,41 @@ async def reapply_awg(
         raise HTTPException(400, "当前已是 awg")
     peer = await _awg_peer_for_line(session, line.id)
     if not peer or (peer.status or "active") != "active":
-        raise HTTPException(400, "线路没有可用的 AWG peer，请重新创建线路")
+        # Reality line with no live AWG peer yet: provision one now instead of
+        # forcing a recreate. Mirrors the transport=awg branch of create_line.
+        node = await session.get(Node, line.node_id)
+        if not node:
+            raise HTTPException(400, "line node not found")
+        awg_cfg = ensure_node_awg_config(
+            node.awg_config_json, node.awg_pool_cidr or "10.66.0.0/16"
+        )
+        node.awg_config_json = json.dumps(awg_cfg, ensure_ascii=False)
+        node.awg_capable = True
+        session.add(node)
+        existing = await _awg_peers_for_node(session, node.id)
+        used = [p.inner_ip for p in existing if (p.status or "active") != "revoked"]
+        try:
+            inner_ip = allocate_inner_ip(
+                node.awg_pool_cidr or "10.66.0.0/16",
+                used,
+                server_inner_ip=str(awg_cfg.get("serverInnerIp") or "").split("/")[0],
+            )
+        except (AwgPoolExhausted, ValueError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+        private_key, public_key = generate_keypair()
+        peer = AwgPeer(
+            line_id=line.id,
+            node_id=node.id,
+            inner_ip=inner_ip,
+            public_key=public_key,
+            private_key_enc=encrypt_secret(private_key),
+            preshared_key_enc=encrypt_secret(generate_preshared_key()),
+            status="active",
+            key_version=1,
+        )
+        session.add(peer)
+        line.awg_inner_ip = inner_ip
+        line.awg_params_version = int(awg_cfg.get("paramsVersion") or 1)
     before = _transport_snapshot(line)
     now = utc_now()
     line.transport = "awg"

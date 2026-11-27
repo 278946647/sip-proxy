@@ -46,6 +46,10 @@ export type LineListItem = {
   lineType: string;
   clientDeviceId: number | null;
   clientDeviceName: string | null;
+  transport: "reality" | "awg";
+  awgInnerIp: string | null;
+  awgParamsVersion: number | null;
+  healthStatus: string;
 };
 
 export type PaginatedLines = {
@@ -367,6 +371,10 @@ export function mapLineItem(raw: Record<string, unknown>): LineListItem {
     lineType: (raw.line_type as string) || "client",
     clientDeviceId: (raw.client_device_id as number | null) ?? null,
     clientDeviceName: (raw.client_device_name as string | null) ?? null,
+    transport: raw.transport === "awg" ? "awg" : "reality",
+    awgInnerIp: (raw.awg_inner_ip as string | null) ?? null,
+    awgParamsVersion: (raw.awg_params_version as number | null) ?? null,
+    healthStatus: (raw.health_status as string) || "unknown",
   };
 }
 

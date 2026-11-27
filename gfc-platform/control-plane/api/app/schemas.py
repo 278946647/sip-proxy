@@ -185,7 +185,7 @@ class LineCreateIn(BaseModel):
     remark: str | None = None
     socks_remark: str | None = None
     created_by: str = "admin"
-    transport: str = Field(default="reality", pattern="^(reality|awg)$")
+    transport: str = Field(default="awg", pattern="^(reality|awg)$")
     awg_inner_ip: str | None = Field(default=None, pattern=r"^([0-9]{1,3}\.){3}[0-9]{1,3}(/32)?$")
     min_firmware_version: str | None = None
 

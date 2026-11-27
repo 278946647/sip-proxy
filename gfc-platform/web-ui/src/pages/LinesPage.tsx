@@ -42,6 +42,8 @@ export function LinesPage() {
   const [loading, setLoading] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [form] = Form.useForm();
+  const transportValue = Form.useWatch("transport", form);
+  const lineTypeValue = Form.useWatch("lineType", form);
   const perms = permissionsFromUser(getUser());
   const writable = canWrite(getUser());
 
@@ -96,6 +98,7 @@ export function LinesPage() {
       const created = await apiPost<Record<string, unknown>>("/admin/lines", {
         name: v.name,
         line_type: v.lineType || "client",
+        transport: v.transport || "awg",
         source_cidrs: v.sourceCidrs
           ? (v.sourceCidrs as string).split(",").map((s) => s.trim()).filter(Boolean)
           : [],
@@ -222,6 +225,22 @@ export function LinesPage() {
             render: (v: number) => <Tag color="purple">{v}Mbps</Tag>,
           },
           {
+            title: "传输",
+            dataIndex: "transport",
+            render: (t: string, r) => (
+              <Space size={4}>
+                <Tag color={t === "awg" ? "geekblue" : "default"}>
+                  {t === "awg" ? "AWG" : "Reality"}
+                </Tag>
+                {t === "awg" && r.awgInnerIp ? (
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    {r.awgInnerIp}
+                  </Typography.Text>
+                ) : null}
+              </Space>
+            ),
+          },
+          {
             title: "客户端",
             dataIndex: "clientDeviceName",
             render: (name: string | null, r) =>
@@ -298,13 +317,38 @@ export function LinesPage() {
         <Form
           form={form}
           layout="vertical"
-          initialValues={{ bandwidthMbps: 5, country: "", lineType: "client" }}
+          initialValues={{ bandwidthMbps: 5, country: "", lineType: "client", transport: "awg" }}
         >
           <Form.Item name="lineType" label="线路类型" rules={[{ required: true }]}>
             <Select
+              onChange={(v) => {
+                // AWG 只支持客户端线路：切到转发线路时回退 Reality
+                if (v === "forward") form.setFieldValue("transport", "reality");
+              }}
               options={[
-                { label: "客户端线路 (VLESS+REALITY)", value: "client" },
-                { label: "转发线路 (VyOS 源 IP)", value: "forward" },
+                { label: "客户端线路", value: "client" },
+                {
+                  label: "转发线路 (VyOS 源 IP)",
+                  value: "forward",
+                  disabled: transportValue === "awg",
+                },
+              ]}
+            />
+          </Form.Item>
+          <Form.Item
+            name="transport"
+            label="传输方式"
+            rules={[{ required: true }]}
+            extra="默认走 AWG 隧道（抗 UDP 封锁）；Reality/VLESS 仅作回退。创建时会为线路分配一个隧道内层 /32。"
+          >
+            <Select
+              disabled={lineTypeValue === "forward"}
+              onChange={(v) => {
+                if (v === "awg") form.setFieldValue("lineType", "client");
+              }}
+              options={[
+                { label: "AWG 隧道（默认）", value: "awg" },
+                { label: "Reality / VLESS（回退）", value: "reality" },
               ]}
             />
           </Form.Item>
